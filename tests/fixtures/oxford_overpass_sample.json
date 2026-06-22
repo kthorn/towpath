@@ -1,0 +1,75 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API (test fixture, hand-curated)",
+  "osm3s": {
+    "timestamp_osm_base": "2026-06-21T12:00:00Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available for users under the Open Database License (ODbL)."
+  },
+  "elements": [
+    {
+      "type": "way", "id": 1001,
+      "tags": {"waterway": "canal", "name": "Oxford Canal"},
+      "geometry": [
+        {"lat": 51.7500, "lon": -1.2600},
+        {"lat": 51.7510, "lon": -1.2610},
+        {"lat": 51.7520, "lon": -1.2620}
+      ]
+    },
+    {
+      "type": "way", "id": 1002,
+      "tags": {"waterway": "canal", "name": "Oxford Canal", "maxwidth": "2.1", "maxdraught": "0.9"},
+      "geometry": [
+        {"lat": 51.7520, "lon": -1.2620},
+        {"lat": 51.7530, "lon": -1.2630}
+      ]
+    },
+    {
+      "type": "way", "id": 1003,
+      "tags": {"waterway": "lock", "name": "Hayfield Lock"},
+      "geometry": [
+        {"lat": 51.7530, "lon": -1.2630},
+        {"lat": 51.7540, "lon": -1.2640}
+      ]
+    },
+    {
+      "type": "way", "id": 1004,
+      "tags": {"waterway": "canal", "name": "Old Arm (disused)", "disused:waterway": "canal"},
+      "geometry": [
+        {"lat": 51.7600, "lon": -1.2700},
+        {"lat": 51.7610, "lon": -1.2710}
+      ]
+    },
+    {
+      "type": "way", "id": 1005,
+      "tags": {"waterway": "derelict_canal", "name": "Abandoned Branch"},
+      "geometry": [
+        {"lat": 51.7700, "lon": -1.2800},
+        {"lat": 51.7710, "lon": -1.2810}
+      ]
+    },
+    {
+      "type": "way", "id": 1006,
+      "tags": {"waterway": "canal", "name": "Duke's Cut", "tunnel": "yes"},
+      "geometry": [
+        {"lat": 51.7400, "lon": -1.2500},
+        {"lat": 51.7410, "lon": -1.2510}
+      ]
+    },
+    {
+      "type": "node", "id": 2001, "lat": 51.7535, "lon": -1.2635,
+      "tags": {"waterway": "lock_gate"}
+    },
+    {
+      "type": "node", "id": 2002, "lat": 51.7540, "lon": -1.2640,
+      "tags": {"lock": "yes"}
+    },
+    {
+      "type": "node", "id": 2003, "lat": 51.7450, "lon": -1.2550,
+      "tags": {"mooring": "yes"}
+    },
+    {
+      "type": "node", "id": 2004, "lat": 51.7480, "lon": -1.2580,
+      "tags": {"amenity": "pub", "name": "The Navigation"}
+    }
+  ]
+}
