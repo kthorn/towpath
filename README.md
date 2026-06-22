@@ -13,6 +13,26 @@ uv run pytest
 uv run ruff check .
 ```
 
+## Regional ingest (dev / scaffolding)
+
+The Overpass reader is **scaffolding** for early development on a small dataset
+(Oxford Canal). It is replaced by a pyosmium bulk reader over the Geofabrik GB
+PBF in design step 6.
+
+Fetch the Oxford extract and print the summarize() report (network required):
+
+```bash
+uv run pound-ingest oxford
+# or, also writing the features IR:
+uv run pound-ingest oxford --out pound/data/oxford_canal_waterways.json
+```
+
+Network tests are skipped by default; run them explicitly:
+
+```bash
+uv run pytest --run-network
+```
+
 ## Data attribution
 
 OSM data is © OpenStreetMap contributors, licensed ODbL. Derived artifacts
