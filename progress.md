@@ -49,6 +49,13 @@
   - Status: DONE
   - Notes: Added pure `pound/ingest/summarize.py` consuming WaterwayFeatures IR and returning a validation report dict with exact keys required by design §4.3/§7.1. 6 new tests cover counts by kind, lock_count semantics (lock ways + lock nodes, not lock_gate), routable-missing-dims, tunnel/movable flags, and provenance. Full suite 58 passed/1 skipped; ruff clean.
 
+## Completed
+
+- Task 8: Dev CLI (`pound-ingest oxford`) + README usage section
+  - Commit: `7115547`
+  - Status: DONE
+  - Notes: Added `pound/ingest/cli.py` with argparse entry point, `--out` flag, and monkeypatchable tests. README updated with ingest usage section. Full suite 60 passed/1 network skipped; ruff clean. Optional live Overpass fetch attempted but failed with HTTP 406 Not Acceptable; skipped per brief instructions and noted in task report.
+
 ## Next
 
-- Task 8: (awaiting brief)
+- Task 9+ (not yet planned)
