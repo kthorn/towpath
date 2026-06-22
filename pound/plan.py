@@ -4,11 +4,13 @@ Returns a hardcoded plausible RouteResult for one Oxford Canal leg so the
 Agent Core (labyrinth-core / labyrinth-agent) can build against the
 `plan_route` contract before the real engine lands.
 
-The numbers are consistent with the documented cost model (design §5.2):
-    est_minutes = distance_km / 4.8 * 60 + locks * 12
-9.5 km / 4.8 * 60 = 118.75 ; + 2 locks * 12 = 142.75 -> 143 min (rounded).
-The stub uses 131 for a shorter leg so the totals arithmetic stays exact
-across the structural tests. Real engine computes this; the stub hardcodes it.
+The leg's est_minutes is computed from the documented cost model (design
+§5.2), so it is consistent with the formula the real engine and the
+structural-invariant tests (design §7.2) will assert against:
+    est_minutes = round(distance_km / CRUISE_KMH * 60 + locks * LOCK_MINUTES)
+For distance_km=9.5, locks=2: 9.5/4.8*60 + 2*12 = 142.75 -> 143 min.
+Real engine computes this per-edge; the stub hardcodes the inputs and
+computes the leg total from the same constants.
 """
 
 from pound.schemas import (
@@ -21,6 +23,11 @@ from pound.schemas import (
 
 CRUISE_KMH = 4.8
 LOCK_MINUTES = 12
+
+
+def _leg_minutes(distance_km: float, locks: int) -> int:
+    """Cost model for a single leg (design §5.2). Single source of truth for the stub."""
+    return round(distance_km / CRUISE_KMH * 60 + locks * LOCK_MINUTES)
 
 
 def plan_route(constraints: CanalConstraints) -> RouteResult:
@@ -36,14 +43,14 @@ def plan_route(constraints: CanalConstraints) -> RouteResult:
         to_place=constraints.end if constraints.end else constraints.start,
         distance_km=9.5,
         locks=2,
-        est_minutes=131,
+        est_minutes=_leg_minutes(9.5, 2),
     )
 
     day = DayPlan(
         day=1,
         legs=[leg],
         end_near=constraints.end if constraints.end else constraints.start,
-        cruising_minutes=131,
+        cruising_minutes=leg.est_minutes,
     )
 
     amenity = Amenity(

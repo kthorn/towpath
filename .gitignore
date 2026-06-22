@@ -22,3 +22,6 @@ pound/data/*
 # editor
 .vscode/
 .idea/
+
+# SDD per-run progress tracking (not project artifact)
+progress.md
