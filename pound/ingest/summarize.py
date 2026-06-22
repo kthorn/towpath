@@ -15,15 +15,14 @@ def summarize(features: WaterwayFeatures) -> dict:
     ways_by_kind = Counter(w.kind.value for w in features.ways)
     nodes_by_kind = Counter(n.kind.value for n in features.nodes)
 
-    lock_count = sum(
-        1 for w in features.ways if w.kind == WaterwayKind.LOCK
-    ) + sum(1 for n in features.nodes if n.kind.value == "lock")
+    lock_count = sum(1 for w in features.ways if w.kind == WaterwayKind.LOCK) + sum(
+        1 for n in features.nodes if n.kind.value == "lock"
+    )
 
     def _has_any_dim(w) -> bool:
         d = w.dimensions
         return any(
-            v is not None
-            for v in (d.max_beam_m, d.max_length_m, d.max_draft_m, d.max_height_m)
+            v is not None for v in (d.max_beam_m, d.max_length_m, d.max_draft_m, d.max_height_m)
         )
 
     routable_missing_dims = sum(

@@ -36,9 +36,7 @@ def _lock_way(osm_id):
 
 
 def _node(osm_id, kind):
-    return WaterwayNode(
-        osm_id=osm_id, lat=51.75, lon=-1.26, tags={}, kind=kind
-    )
+    return WaterwayNode(osm_id=osm_id, lat=51.75, lon=-1.26, tags={}, kind=kind)
 
 
 def test_summarize_counts_ways_by_kind():
@@ -111,7 +109,8 @@ def test_summarize_tunnel_and_movable_bridge_flags():
 
 def test_summarize_provenance_fields():
     feats = WaterwayFeatures(
-        ways=[], nodes=[],
+        ways=[],
+        nodes=[],
         source="overpass",
         fetched_at="2026-06-21T12:00:00+00:00",
         bbox=(51.70, -1.35, 51.80, -1.20),
