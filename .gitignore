@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# venvs
+.venv/
+venv/
+
+# test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Large data extracts — never commit the full GB build (design §10)
+pound/data/*
+!pound/data/.gitkeep
+
+# editor
+.vscode/
+.idea/
