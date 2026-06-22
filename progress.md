@@ -38,10 +38,17 @@
 ## Completed
 
 - Task 6: Overpass reader + curated fixture
-  - Commit: `PENDING`
+  - Commit: `07d0c4f`
   - Status: DONE
   - Notes: Thin Overpass JSON scaffolding reader added (`pound/ingest/overpass.py`); curated fixture at `tests/fixtures/oxford_overpass_sample.json` with canal/lock/derelict/disused/dimensions/tunnel/lock_gate/mooring and pub node deliberately dropped. parse() is pure; fetch_raw/fetch_oxford confined to network functions. 11 new overpass tests pass, network test skipped by default, full suite 52 passed/1 skipped; ruff clean.
 
+## Completed
+
+- Task 7: summarize() report -> dict
+  - Commit: `be8a221`
+  - Status: DONE
+  - Notes: Added pure `pound/ingest/summarize.py` consuming WaterwayFeatures IR and returning a validation report dict with exact keys required by design §4.3/§7.1. 6 new tests cover counts by kind, lock_count semantics (lock ways + lock nodes, not lock_gate), routable-missing-dims, tunnel/movable flags, and provenance. Full suite 58 passed/1 skipped; ruff clean.
+
 ## Next
 
-- Task 7: (awaiting brief)
+- Task 8: (awaiting brief)
