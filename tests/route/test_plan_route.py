@@ -14,8 +14,7 @@ from tests.fixtures import oxford_fixture_path
 def _plan(**kwargs):
     with open(oxford_fixture_path()) as f:
         raw = json.load(f)
-    features = parse(raw["elements"], None)
-    features.fetched_at = raw["osm3s"]["timestamp_osm_base"]
+    features = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
     g, _ = attach_locks(build_graph(features), features)
     constraints = CanalConstraints(start="Oxford", end="Hayfield", days=1, **kwargs)
     return plan_route(constraints, _graph=g, _features=features)
@@ -73,8 +72,7 @@ def test_graph_source_date_from_metadata():
 def test_ring_raises_not_implemented():
     with open(oxford_fixture_path()) as f:
         raw = json.load(f)
-    features = parse(raw["elements"], None)
-    features.fetched_at = raw["osm3s"]["timestamp_osm_base"]
+    features = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
     g, _ = attach_locks(build_graph(features), features)
     with pytest.raises(NotImplementedError, match="rings not yet supported"):
         plan_route(CanalConstraints(start="Oxford", end=None, days=1), _graph=g, _features=features)
@@ -99,8 +97,7 @@ def _long_plan(days: int, hours_per_day: float):
 
     with open(oxford_fixture_path()) as f:
         raw = json.load(f)
-    features = parse(raw["elements"], None)
-    features.fetched_at = raw["osm3s"]["timestamp_osm_base"]
+    features = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
     g, _ = attach_locks(build_graph(features), features)
     g = copy.deepcopy(g)
     for _, _, d in g.edges(data=True):
