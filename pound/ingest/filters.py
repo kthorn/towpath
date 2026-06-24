@@ -94,4 +94,6 @@ def classify_node(tags: dict[str, str] | None) -> NodeKind | None:
         return NodeKind.MOORING
     if tags.get("leisure") == "marina":
         return NodeKind.MARINA
+    if "place" in tags:
+        return NodeKind.PLACE
     return None
