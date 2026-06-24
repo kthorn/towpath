@@ -68,7 +68,6 @@ def plan_route(
         return time_min(
             d["length_m"],
             d.get("locks", 0),
-            1 if d.get("has_movable_bridge") else 0,
         )
 
     path = nx.shortest_path(graph, start_node, end_node, weight=weight)
