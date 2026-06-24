@@ -19,6 +19,9 @@ htmlcov/
 pound/data/*
 !pound/data/.gitkeep
 
+# Build artifacts — serialized graph outputs (design §4.4)
+pound/artifacts/
+
 # editor
 .vscode/
 .idea/
