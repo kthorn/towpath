@@ -27,6 +27,15 @@ uv run pound-ingest oxford
 uv run pound-ingest oxford --out pound/data/oxford_canal_waterways.json
 ```
 
+### Build the graph artifact
+
+```bash
+uv run pound-ingest build oxford --out pound/artifacts/oxford.pkl
+```
+
+Produces a pickled NetworkX graph with provenance metadata, ready for
+`plan_route` to load at request time.
+
 Network tests are skipped by default; run them explicitly:
 
 ```bash

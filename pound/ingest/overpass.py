@@ -129,4 +129,5 @@ def parse(
 def fetch_oxford() -> WaterwayFeatures:
     """Live network: fetch the Oxford Canal extract and parse it."""
     raw = fetch_raw(OXFORD_BBOX)
-    return parse(raw["elements"], OXFORD_BBOX)
+    osm_timestamp = raw.get("osm3s", {}).get("timestamp_osm_base")
+    return parse(raw["elements"], OXFORD_BBOX, osm_timestamp=osm_timestamp)
