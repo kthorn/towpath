@@ -25,9 +25,16 @@ _DIMENSION_ALIASES: dict[str, tuple[str, ...]] = {
 
 
 def classify_way(tags: dict[str, str] | None) -> WaterwayKind | None:
-    """Classify a way by its waterway/lock tags. None => not a waterway we keep."""
+    """Classify a way by its waterway/lock tags. None => not a waterway we keep.
+
+    lock=yes is checked first: UK staircases (Bingley, Foxton) tag each chamber
+    as waterway=canal + lock=yes (one way per chamber), so without this ordering
+    the lock signal is shadowed and a whole staircase would count as 0 locks.
+    """
     if not tags:
         return None
+    if tags.get("lock") == "yes":
+        return WaterwayKind.LOCK
     ww = tags.get("waterway", "")
     if ww == "canal":
         return WaterwayKind.CANAL
@@ -36,8 +43,6 @@ def classify_way(tags: dict[str, str] | None) -> WaterwayKind | None:
     if ww == "fairway":
         return WaterwayKind.FAIRWAY
     if ww == "lock":
-        return WaterwayKind.LOCK
-    if tags.get("lock") == "yes":
         return WaterwayKind.LOCK
     return None
 
