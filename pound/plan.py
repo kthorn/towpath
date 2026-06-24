@@ -13,6 +13,13 @@ Real engine computes this per-edge; the stub hardcodes the inputs and
 computes the leg total from the same constants.
 """
 
+from pound.route.cost import (
+    CRUISE_KMH,  # noqa: F401  re-exported for structural-invariant tests
+    LOCK_MINUTES,  # noqa: F401  re-exported for structural-invariant tests
+)
+from pound.route.cost import (
+    time_min as _leg_minutes_raw,
+)
 from pound.schemas import (
     Amenity,
     CanalConstraints,
@@ -20,14 +27,6 @@ from pound.schemas import (
     RouteLeg,
     RouteResult,
 )
-
-CRUISE_KMH = 4.8
-LOCK_MINUTES = 12
-
-
-def _leg_minutes(distance_km: float, locks: int) -> int:
-    """Cost model for a single leg (design §5.2). Single source of truth for the stub."""
-    return round(distance_km / CRUISE_KMH * 60 + locks * LOCK_MINUTES)
 
 
 def plan_route(constraints: CanalConstraints) -> RouteResult:
@@ -43,7 +42,7 @@ def plan_route(constraints: CanalConstraints) -> RouteResult:
         to_place=constraints.end if constraints.end else constraints.start,
         distance_km=9.5,
         locks=2,
-        est_minutes=_leg_minutes(9.5, 2),
+        est_minutes=round(_leg_minutes_raw(9500.0, 2)),
     )
 
     day = DayPlan(
