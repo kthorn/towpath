@@ -24,8 +24,7 @@ def main(argv: list[str] | None = None) -> None:
         "--out",
         default=None,
         help=(
-            "path to write the WaterwayFeatures JSON"
-            " (e.g. pound/data/oxford_canal_waterways.json)"
+            "path to write the WaterwayFeatures JSON (e.g. pound/data/oxford_canal_waterways.json)"
         ),
     )
     args = parser.parse_args(argv)
