@@ -23,5 +23,8 @@ pound/data/*
 .vscode/
 .idea/
 
+# git worktrees (local isolation for feature work)
+.worktrees/
+
 # SDD per-run progress tracking (not project artifact)
 progress.md
