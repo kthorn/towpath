@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2.11",
   "requests>=2.31", # offline ingest ONLY; never on the request-time path
+  "networkx>=3.3",
 ]
 
 [project.optional-dependencies]
