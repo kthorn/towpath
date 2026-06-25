@@ -70,6 +70,14 @@
     {
       "type": "node", "id": 2004, "lat": 51.7480, "lon": -1.2580,
       "tags": {"amenity": "pub", "name": "The Navigation"}
+    },
+    {
+      "type": "node", "id": 3001, "lat": 51.7500, "lon": -1.2600,
+      "tags": {"place": "city", "name": "Oxford"}
+    },
+    {
+      "type": "node", "id": 3002, "lat": 51.7540, "lon": -1.2640,
+      "tags": {"place": "hamlet", "name": "Hayfield"}
     }
   ]
 }

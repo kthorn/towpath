@@ -29,6 +29,7 @@ class NodeKind(StrEnum):
     MOVABLE_BRIDGE = "movable_bridge"
     MOORING = "mooring"
     MARINA = "marina"  # forward-compat; amenities/marinas are design step 5, not this plan
+    PLACE = "place"
     OTHER = "other"
 
 

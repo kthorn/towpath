@@ -1,0 +1,25 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API (test fixture, hand-curated staircase)",
+  "osm3s": {
+    "timestamp_osm_base": "2026-06-22T12:00:00Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available to users under the Open Database License (ODbL)."
+  },
+  "elements": [
+    {"type": "way", "id": 5101,
+     "tags": {"waterway": "canal", "lock": "yes", "lock_name": "Staircase Bottom Lock", "lock:type": "staircase_lock", "name": "Test Canal"},
+     "geometry": [{"lat": 52.0000, "lon": -1.0000}, {"lat": 52.0010, "lon": -1.0010}]},
+    {"type": "way", "id": 5102,
+     "tags": {"waterway": "canal", "lock": "yes", "lock_name": "Staircase Middle Lock", "lock:type": "staircase_lock", "name": "Test Canal"},
+     "geometry": [{"lat": 52.0010, "lon": -1.0010}, {"lat": 52.0020, "lon": -1.0020}]},
+    {"type": "way", "id": 5103,
+     "tags": {"waterway": "canal", "lock": "yes", "lock_name": "Staircase Top Lock", "lock:type": "staircase_lock", "name": "Test Canal"},
+     "geometry": [{"lat": 52.0020, "lon": -1.0020}, {"lat": 52.0030, "lon": -1.0030}]},
+    {"type": "node", "id": 6001, "lat": 52.0000, "lon": -1.0000,
+     "tags": {"place": "hamlet", "name": "Staircase Bottom"}},
+    {"type": "node", "id": 6002, "lat": 52.0030, "lon": -1.0030,
+     "tags": {"place": "hamlet", "name": "Staircase Top"}},
+    {"type": "node", "id": 6003, "lat": 52.0010, "lon": -1.0010,
+     "tags": {"waterway": "lock_gate"}}
+  ]
+}

@@ -63,8 +63,14 @@ def parse(
     elements: list[dict],
     bbox: tuple[float, float, float, float] | None,
     source: str = "overpass",
+    osm_timestamp: str | None = None,
 ) -> WaterwayFeatures:
-    """Pure: turn Overpass `elements` into a WaterwayFeatures IR via `filters`."""
+    """Pure: turn Overpass `elements` into a WaterwayFeatures IR via `filters`.
+
+    Args:
+        osm_timestamp: OSM base timestamp from `osm3s.timestamp_osm_base`, used
+            for provenance. Falls back to the current time when not provided.
+    """
     ways: list[WaterwayWay] = []
     nodes: list[WaterwayNode] = []
     for el in elements:
@@ -115,7 +121,7 @@ def parse(
         ways=ways,
         nodes=nodes,
         source=source,
-        fetched_at=datetime.now(UTC).isoformat(),
+        fetched_at=osm_timestamp if osm_timestamp is not None else datetime.now(UTC).isoformat(),
         bbox=bbox,
     )
 
@@ -123,4 +129,5 @@ def parse(
 def fetch_oxford() -> WaterwayFeatures:
     """Live network: fetch the Oxford Canal extract and parse it."""
     raw = fetch_raw(OXFORD_BBOX)
-    return parse(raw["elements"], OXFORD_BBOX)
+    osm_timestamp = raw.get("osm3s", {}).get("timestamp_osm_base")
+    return parse(raw["elements"], OXFORD_BBOX, osm_timestamp=osm_timestamp)

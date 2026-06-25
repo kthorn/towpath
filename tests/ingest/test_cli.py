@@ -1,5 +1,7 @@
 import json
+from pathlib import Path
 
+from pound.graph.artifact import load_artifact
 from pound.ingest import cli
 from pound.ingest.ir import (
     NodeKind,
@@ -9,6 +11,8 @@ from pound.ingest.ir import (
     WaterwayWay,
     WayDimensions,
 )
+from pound.ingest.overpass import parse
+from tests.fixtures import oxford_fixture_path
 
 
 def _sample_features() -> WaterwayFeatures:
@@ -62,3 +66,16 @@ def test_cli_rejects_unknown_region(monkeypatch):
         assert exc.code != 0
     else:
         raise AssertionError("expected SystemExit for unknown region")
+
+
+def test_build_subcommand_writes_artifact(tmp_path: Path, monkeypatch):
+    raw = json.loads(Path(oxford_fixture_path()).read_text())
+    features = parse(raw["elements"], None)
+    monkeypatch.setattr(cli, "fetch_oxford", lambda: features)
+    out = tmp_path / "oxford.pkl"
+    rc = cli.main(["build", "oxford", "--out", str(out)])
+    assert rc == 0
+    assert out.exists()
+    g, meta = load_artifact(out)
+    assert g.number_of_edges() > 0
+    assert "validation" in meta
