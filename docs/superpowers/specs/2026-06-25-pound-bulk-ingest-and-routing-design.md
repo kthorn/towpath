@@ -1,7 +1,8 @@
 # Pound — Bulk Ingest, Production Loading & Minimal Routing (Scope D) Design
 
-> **Status:** Design (pre-implementation). Brainstormed 2026-06-25; pending
-> `writing-plans`. Supersedes the Scope C deferral notes (`d4f0233`):
+> **Status:** Refined (pre-implementation). Brainstormed 2026-06-25; refined
+> via pi-refine (deepseek/v4-pro → qwen3.6-plus → kimi-k2.6) 2026-06-25;
+> pending `writing-plans`. Supersedes the Scope C deferral notes (`d4f0233`):
 > production artifact loading, real-data ingest, and a playable routing
 > surface all land here.
 
@@ -143,20 +144,40 @@ round-trips to the same `WaterwayFeatures` shape as the Overpass reader, any
 divergence fails loudly):
 
 ```
-w/waterway=canal,river,fairway,lock,derelict_canal,lock_gate
+w/waterway=canal,river,fairway,lock,derelict_canal
 w/disused:waterway, abandoned:waterway
 w/lock=yes
-w/bridge:movable, bridge=movable
-w/maxwidth, maxlength, maxdraft, maxheight, width, maxdraught, depth
-n/waterway=lock_gate, lock=yes, mooring, leisure=marina
+n/waterway=lock_gate,mooring
+n/lock=yes
+n/leisure=marina
 n/place
 ```
 
 Rationale: navigable waterway ways + derelict/disused markers (so `filters`
-can EXCLUDE them by default, design §3.1) + maxdim tags on ways + lock/lock
-gate/movable-bridge/mooring nodes + **every `place=*` node** for the
+can EXCLUDE them by default, design §3.1) + **every `place=*` node** for the
 comprehensive gazetteer. `n/place` is load-bearing — without it the
 gazetteer is empty and `pound-plan` cannot resolve any name.
+
+Notes on what is deliberately *absent* from the way filter (corrected after
+review — bare key-only way lines pull non-waterway ways as noise):
+
+- **No `w/waterway=lock_gate`** — `lock_gate` is a **node** tag, not a way
+  tag; that line would match zero ways. `n/waterway=lock_gate` captures it.
+- **No `w/bridge:movable` / `w/bridge=movable`** — bare bridge lines match
+  roads with movable bridges that `classify_way` then drops. Movable-bridge
+  *waterway* ways are already kept wholesale by `w/waterway=…`, and their
+  `bridge:movable` tag travels with them; no separate line is needed.
+- **No `w/maxwidth`/`maxlength`/etc.** — same reasoning: dimension tags ride
+  on the kept waterway ways (osmium keeps the full way with all its tags),
+  so bare dimension lines (which would also pull roads with `width=`) are
+  redundant and noisy.
+- **`w/lock=yes` stays** — it catches lock-tagged ways that carry `lock=yes`
+  but no `waterway` key (the `classify_way` `lock=yes`-first branch keeps
+  them); chambers with `waterway=canal + lock=yes` are already matched by
+  `w/waterway=canal`, so this line covers the lock-without-waterway edge
+case.
+- **Node lines split by key** (`n/lock=yes` and `n/leisure=marina` separate
+  from `n/waterway=…`) to keep the tags-filter syntax one key per line.
 
 ### OQ-D2 — connectivity: node-ref primary, coordinate-snap fallback (reported)
 
@@ -170,11 +191,16 @@ With `node_ids` filled, two ways to join way-ends:
   crossings where two waterways touch in coordinates but aren't actually
   connected.
 
-**Decision:** node-ref equality primary; any way-end not joined to at least
-one neighbor triggers a tolerance-snap candidate; both the node-ref-joined
-edges and the tolerance-snapped edges flow into the `validate_graph` report
-(Scope C's `validate/connectivity.py`, augmented — see §5). Tolerance-snap is
-a **candidate generator, not an authority** (R3): false joins at aqueducts
+**Decision:** node-ref equality primary; a way-end **not** already joined to
+at least one neighbor via a shared node id triggers a coordinate
+tolerance-snap candidate. Tolerance-snap fires only for still-unjoined
+ends — never re-fires for ends already connected, and build never emits a
+duplicate/parallel edge between an already-connected node pair (a snap that
+would collapse onto an existing edge is recorded as unresolved in the report
+rather than added). Both the node-ref-joined edges and the tolerance-snapped
+edges flow into the `validate_graph` report (Scope C's
+`validate/connectivity.py`, augmented — see §5). Tolerance-snap is a
+**candidate generator, not an authority** (R3): false joins at aqueducts
 cannot be self-resolved, so they are surfaced for manual curation rather than
 silently shipped.
 
@@ -192,9 +218,12 @@ A small, human-authored, diff-friendly file in the repo:
 
 Applied after node-ref equality, before/instead of tolerance-snap for the
 cases it covers. `split` entries suppress a tolerance-snap false positive (the
-aqueduct case); `join` entries connect genuine gaps in OSM. The file is
-likely empty or near-empty for the first England build — the *mechanism* ships
-so curation has somewhere to land. A maintenance object that grows with
+aqueduct case); `join` entries connect genuine gaps in OSM. Because `pound/data/*` is gitignored (the big PBF lives there) with only
+`!pound/data/.gitkeep` whitelisted, the implementation adds
+`!pound/data/overrides.json` to `.gitignore` so the overrides file can
+actually be committed. The file is likely empty or near-empty for the first
+England build — the *mechanism* ships so curation has somewhere to land.
+A maintenance object that grows with
 coverage (accepted editorial work — the alternative is silent wrong routes,
 which is worse in a routing engine).
 
@@ -219,12 +248,26 @@ pickle can't say what's in it). Three things now ride in the artifact:
   before; `validation` carries the augmented `validate_graph` report (§5).
 
 One file, one load. `load_artifact(path) -> (graph, metadata)`; the gazetteer
-is on `graph.graph["gazetteer"]`. `WaterwayFeatures` is **not** persisted — it
-served its purpose at build time (graph + gazetteer derive from it), and
-re-pickling it would carry tens of MB to recover data now in the graph. This
-is the "what do we throw away" answer: we throw away `WaterwayFeatures`
-itself, but only *after*Breadcrumb the gazetteer and node names into the
-artifact.
+is on `graph.graph["gazetteer"]`. `save_artifact` needs **no change** —
+NetworkX pickles the whole graph including `graph.graph`-level attributes, so
+the embedded gazetteer rides along for free: build sets
+`graph.graph["gazetteer"] = build_gazetteer(features)` before saving, and
+`load_artifact` returns it already in place. `WaterwayFeatures` is **not**
+persisted — it served its purpose at build time (graph + gazetteer derive
+from it), and re-pickling it would carry tens of MB to recover data now in
+the graph. This is the "what do we throw away" answer: we throw away
+`WaterwayFeatures` itself, but only *after*Breadcrumb the gazetteer and node
+names into the artifact.
+
+**Duplicate place names are real** at ~30k places (multiple "Newton"s,
+"High Street"s). The build does **not** silently last-write-wins: it tracks
+name collisions, and a colliding gazetteer entry becomes a *list* of
+candidate node keys. `validate_graph` reports them as
+`ambiguous_place_names: list[str]` (auditable curation input), and
+`resolve_place` raises a clear error on an ambiguous name ("'Newton' matches
+N places; specify a nearby town or a more specific name") rather than
+routing from the wrong one. Unambiguous common town names — the normal
+`pound-plan` input — resolve exactly as before.
 
 ### Contract evolution — `plan_route` becomes pure by construction
 
@@ -253,10 +296,15 @@ This is the Scope A contract change accepted deliberately. Three types:
   LLM, hermetic by construction.** The Scope C `_graph`/`_features` test kwargs
   go away — tests inject the loaded artifact (or an in-memory graph) instead,
   which is honest. A `plan_route_from_constraints(c: CanalConstraints, *,
-  graph, resolver) -> RouteResult` **convenience** is kept as the
+  graph, resolver) -> RouteResult` **convenience** lives in
+  `pound/route/plan.py` alongside the pure `plan_route` and is the
   `CanalConstraints → resolve → plan_route` bridge the CLI uses and the Agent
   Core originally targeted, so the contract evolution is additive, not
-  breaking, at the convenience layer.
+  breaking, at the convenience layer. It **replaces** the current Scope C
+  `plan_route(CanalConstraints, _graph=…, _features=…)` — that kwarg-injected
+  entry point is removed entirely (not kept alongside); the CLI and any
+  Agent Core caller now go through `plan_route_from_constraints`, or through
+  `resolve_place` then pure `plan_route` directly.
 
 **Contract migration note (for the design doc):** the §1 frozen contract
 changes from `plan_route(CanalConstraints) -> RouteResult` to
@@ -276,6 +324,41 @@ gazetteer), but with a documented seam for a future network geocoder.
    `plan_route_from_constraints(c, *, graph, resolver)` convenience so the
    CLI/Agent Core path is unchanged at the convenience layer; the underlying
    `plan_route(resolved)` is pure.
+
+### Error behavior & build hard-fail
+
+Four inherited-behavior correctness gaps that the production CLI will surface
+on real data, fixed in this scope:
+
+- **No-path-under-dimensions is a clear error, not a traceback.** Scope C's
+  `plan_route` pre-checks `nx.has_path` *unweighted*, then runs
+  `nx.shortest_path(weight=eligibility_weight)`; if the graph is connected
+  but boat dimensions block every eligible path, `has_path` returns `True` and
+  the weighted search raises an **uncaught** `NetworkXNoPath`. The unweighted
+  pre-check is removed (it lies under dimension filtering); the search's
+  `NetworkXNoPath` is caught and converted to `ValueError("no path between
+  '<start>' and '<end>' meets the boat's dimensions")`. Plain un-connected
+  graphs raise the same `ValueError` with an unweighted-message variant.
+- **Over-budget days always warn.** The Scope C overflow warning was gated
+  on `len(days) > 1`, so a single day exceeding `hours_per_day*60` (or the
+  final day after the `max_days` fold-in) warned silently. The gate is
+  removed: `RouteResult.warnings` carries an over-budget entry whenever **any**
+  day's `cruising_minutes > hours_per_day*60`, single- or multi-day.
+- **`pound-ingest build` fails the build on hard errors (§7.1).** The CLI
+  exits non-zero (after printing the report) on: `derelict_edges > 0` (the
+  filter is broken — derelict must never reach the graph), `self_loops > 0`,
+  or `tolerance_snaps_unresolved` above a `--max-unresolved-snaps` threshold
+  (default `0` for PR1, forcing manual curation before a real-England artifact
+  is trusted). Advisory-only keys that do **not** fail the build:
+  `edges_missing_dims`, `ambiguous_place_names`, a `place_nodes_seen` vs
+  `place_nodes_in_gazetteer` discrepancy. The report is the evidence; the
+  exit code is the gate — honoring §7.1's "trust the graph before trusting
+  routes."
+- **Schema validation at the CLI boundary.** `CanalConstraints.days` and
+  `ResolvedConstraints.days` gain pydantic `Field(gt=0)`; `hours_per_day`
+  gains `Field(gt=0)` in both. Additive — so `pound-plan ... --days 0` /
+  `--hours-per-day 0` raise a clear validation error instead of producing
+  nonsensical day chunking.
 
 ## 5. Connectivity & build validation
 
@@ -305,6 +388,9 @@ All Scope C keys retained (`component_count`, `largest_component_size`,
 - **`named_nodes_in_graph: int`** — how many graph nodes carry a `name` (the
   §4 data-preservation freebie); should be a subset of
   `place_nodes_in_gazetteer`.
+- **`ambiguous_place_names: list[str]`** — place names that map to >1 node key
+  in the comprehensive gazetteer (see §4). Auditable curation input; the
+  resolver errors on lookup of any of these.
 
 ### OQ-D3 — tolerance value
 
@@ -333,6 +419,12 @@ leak into the routable graph.
 The playable surface. Thin shell over `load_artifact` + `resolve_place` +
 `plan_route`. The CLI is a **test harness, not a product surface** — explicitly
 a future-replaceable layer that a REST API will sit beside or supersede.
+
+**Module & entry point:** `pound/route/cli.py` with console script
+`[project.scripts] pound-plan = "pound.route.cli:main"`, mirroring the existing
+`pound-ingest = "pound.ingest.cli:main"` pattern. The CLI module lives in the
+`route` package (routing's user-facing surface), not at `pound/` top level and
+not in a new `pound/cli/` package.
 
 ### Command shape
 
@@ -375,9 +467,13 @@ Three layers, matching the §7.2 philosophy Scope C established:
    to carry a third `place=*` node (so snapping has something to chew on) and
    *one* deliberate tolerance-snap case (two way-ends with no shared node id
    but within tolerance) to exercise the bulk connectivity fallback. New tests:
-   - `tests/ingest/test_osm.py` — `pyosmium` reader over a tiny synthetic PBF
-     (or the Oxford fixture round-tripped through `osmium tags-filter`): same
-     `WaterwayFeatures` shape as the Overpass reader.
+   - `tests/ingest/test_osm.py` — `pyosmium` reader over a **checked-in tiny
+     synthetic PBF fixture** so the reader test runs in CI without
+     `osmium-tool` installed. A separate `osmium tags-filter` round-trip test
+     (the filtered PBF reproduces the Overpass reader's `WaterwayFeatures`
+     shape — OQ-D1's divergence-fails-loudly check) is gated behind
+     `--run-bulk` since it needs the system CLI. Both use the Oxford fixture
+     as the shape oracle.
    - `tests/graph/test_build_bulk.py` — node-ref-joined edges + tolerance-snap
      edges + an `overrides.json` that suppresses a false snap + each reported
      in `validate_graph`.
@@ -385,13 +481,25 @@ Three layers, matching the §7.2 philosophy Scope C established:
      nearest-node-within-tolerance path; clear error on unknown name.
    - `tests/route/test_plan_route.py` grows — contract migration: pure
      `plan_route(resolved, graph=…)` with `_graph`/`_features` kwargs retired;
-     an injected in-memory graph + resolver is the new test seam.
+     an injected in-memory graph + resolver is the new test seam. All existing
+     `_graph`/`_features` call sites (~15 tests) migrate in the **same
+     commit** as the signature change so CI never goes red on a half-migrated
+     tree.
    - `tests/ingest/test_cli.py` — `pound-ingest build england` with
      monkeypatched `osmium` + `pyosmium` reads (no real PBF) writing to
      `tmp_path`.
-   - `tests/cli/test_plan_cli.py` (new dir) — `pound-plan Oxford Hayfield
-     --days 1` against an artifact the test builds in `tmp_path`, asserts the
-     printed `RouteResult`.
+   - `tests/route/test_cli.py` — `pound-plan Oxford Hayfield --days 1`
+     against an artifact the test builds in `tmp_path`, asserts the printed
+     `RouteResult`. Mirrors `pound/route/cli.py` per the project's existing
+     `tests/<package>/`-mirrors-`pound/<package>/` convention (no new
+     top-level `tests/cli/` dir).
+   - `tests/route/test_plan_route.py` also grows: a boat whose dimensions
+     block every eligible path raises the clear `ValueError` (not an
+     uncaught `NetworkXNoPath`); and a single-day route exceeding
+     `hours_per_day*60` emits the over-budget warning (the `len(days) > 1`
+     gate no longer suppresses it). Plus a schema test that `days=0` /
+     `hours_per_day=0` are rejected by both `CanalConstraints` and
+     `ResolvedConstraints`.
 2. **Integration gate (fixture-scale, in CI):** `pound-ingest build` over the
    Oxford fixture → artifact → `pound-plan Oxford Hayfield` → asserts the
    §7.2 structural invariants over the *real built artifact path*, not
@@ -412,17 +520,24 @@ looks sane, route in a REPL manually to eyeball), with a **fixture-scale
 pipeline test** shipped in CI. CI runs the pipeline code (build → artifact →
 plan) against the small Oxford fixture as a regression gate; `pyosmium`-needing
 tests get a `--run-bulk` skip marker (parallel to Scope B's `--run-network`)
-when `pyosmium` is absent (R1). The real England build needs the 1.5 GB file
-and isn't gated in CI — its correctness is the fixture test plus human
-eyeballing of the report. Matches §7.2's "structural invariants over the
-fixture, trust humans on real-data tuning."
+when `pyosmium` is absent (R1). Concretely the `bulk` marker is registered in
+`tests/conftest.py` (`pytest_addoption` for `--run-bulk` + a
+`pytest_collection_modifyitems` auto-skip, mirroring the existing `network`
+marker) and added to `pyproject.toml`'s `markers` list (currently only
+`network`). The real England build needs the 1.5 GB file and isn't gated in
+CI — its correctness is the fixture test plus human eyeballing of the
+report. Matches §7.2's "structural invariants over the fixture, trust
+humans on real-data tuning."
 
 ### Dependencies (new)
 
 - **`pyosmium`** (Python lib, §10) — PBF streaming. Compiled (libosmium
   binding); wheels exist for CPython 3.12 on common platforms but can fail on
-  niche ones (R1). Documented in README; tests needing it carry a
-  `--run-bulk` skip marker.
+  niche ones (R1). Declared under **`[project.optional-dependencies]`** as a
+  `bulk` extra (`pound[bulk]`) so a base `uv sync` works on platforms without
+  a compiled wheel — the request-time path never imports it. `--run-bulk`
+  tests skip when `pyosmium` isn't importable; the README documents `uv sync
+  --extra bulk` for the full build path.
 - **`osmium-tool` (system CLI)** — installed as a prereq (apt/brew/conda). The
   README gains a "Prerequisites" section. `pyosmium`'s pip package does **not**
   include the CLI — they're separate. The one non-`uv` install in the project.
