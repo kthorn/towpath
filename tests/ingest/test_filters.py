@@ -19,6 +19,7 @@ from pound.ingest.ir import NodeKind, WaterwayKind, WayDimensions
         ({"waterway": "fairway"}, WaterwayKind.FAIRWAY),
         ({"waterway": "lock"}, WaterwayKind.LOCK),
         ({"lock": "yes"}, WaterwayKind.LOCK),
+        ({"waterway": "canal", "lock": "yes"}, WaterwayKind.LOCK),  # staircase chamber
         ({"waterway": "derelict_canal"}, None),
         ({"waterway": "stream"}, None),
         ({}, None),
