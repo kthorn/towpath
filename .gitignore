@@ -18,6 +18,7 @@ htmlcov/
 # Large data extracts — never commit the full GB build (design §10)
 pound/data/*
 !pound/data/.gitkeep
+!pound/data/overrides.json
 
 # editor
 .vscode/

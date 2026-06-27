@@ -26,3 +26,12 @@ def test_artifact_round_trips(tmp_path: Path):
     assert loaded_g.number_of_edges() == g.number_of_edges()
     assert loaded_meta["source"] == "overpass"
     assert loaded_meta["version"] == 1
+
+
+def test_save_and_load_preserves_embedded_gazetteer(tmp_path: Path):
+    g = _graph()
+    g.graph["gazetteer"] = {"Oxford": (51.75, -1.26)}
+    art = tmp_path / "g.pkl"
+    save_artifact(g, art, {"source": "overpass", "fetched_at": "t", "version": 1})
+    loaded_g, _ = load_artifact(art)
+    assert loaded_g.graph["gazetteer"] == {"Oxford": (51.75, -1.26)}

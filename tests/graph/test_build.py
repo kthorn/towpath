@@ -1,8 +1,8 @@
 import json
 
 import networkx as nx
-from pound.graph.build import build_graph
 
+from pound.graph.build import build_graph
 from pound.ingest.ir import WaterwayKind
 from pound.ingest.overpass import parse
 from tests.fixtures import oxford_fixture_path
@@ -25,13 +25,14 @@ def test_build_excludes_derelict_ways():
     assert 1005 not in ids  # derelict_canal
 
 
-def test_build_main_chain_has_three_edges():
+def test_build_main_chain_and_pendant_have_five_edges():
     g = build_graph(_features())
-    # ways 1001 -> 1002 -> 1003 chain by shared endpoints => 3 edges, 4 nodes
+    # chain 1001->1002->1003 (exact-coord joins), pendant 1007 snapped to 1003 far-end,
+    # Duke's Cut 1006 isolated
     ids = {d["osm_way_id"] for _, _, d in g.edges(data=True)}
-    assert ids == {1001, 1002, 1003, 1006}
-    # Duke's Cut (1006) is isolated at 51.7400,-1.2500 -> 51.7410,-1.2510
-    assert g.number_of_nodes() == 6  # 4 chain nodes + 2 Duke's Cut nodes
+    assert ids == {1001, 1002, 1003, 1006, 1007}
+    # 4 chain nodes (A,B,C,D) + pendant far-end (F) + Duke's 2 = 7
+    assert g.number_of_nodes() == 7
 
 
 def test_build_edge_has_length_and_dims():
