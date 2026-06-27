@@ -40,8 +40,9 @@ def run_tags_filter(in_pbf: Path, out_pbf: Path) -> None:
     osmium is not installed (it's a documented system prereq)."""
     out_pbf = Path(out_pbf)
     out_pbf.parent.mkdir(parents=True, exist_ok=True)
+    exprs = [line for line in TAGS_FILTER_EXPR.splitlines() if line.strip()]
     subprocess.run(
-        ["osmium", "tags-filter", "-o", str(out_pbf), str(in_pbf), TAGS_FILTER_EXPR],
+        ["osmium", "tags-filter", "-o", str(out_pbf), str(in_pbf), *exprs],
         check=True,
     )
 
@@ -127,6 +128,7 @@ def read_england(pbf_path: Path | None = None) -> WaterwayFeatures:
     if pbf_path is None:
         pbf_path = Path(os.environ.get("POUND_PBF_PATH", "pound/data/england.osm.pbf"))
     pbf_path = Path(pbf_path)
-    filtered = pbf_path.parent / (pbf_path.stem + "_waterways.osm.pbf")
+    base = pbf_path.name.split(".")[0]
+    filtered = pbf_path.parent / (base + "_waterways.osm.pbf")
     run_tags_filter(pbf_path, filtered)
     return read_pbf(filtered)
