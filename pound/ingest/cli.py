@@ -24,7 +24,7 @@ from pound.ingest.summarize import summarize
 from pound.validate.connectivity import validate_graph
 
 _DEFAULT_OVERRIDES = Path("pound/data/overrides.json")
-_GEOFABRIK_ENGLAND_URL = "https://download.geofabrik.de/europe/great-britain/england-latest.osm.pbf"
+_GEOFABRIK_ENGLAND_URL = "https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf"
 _ENGLAND_EXPECTED_GIB = 1.5
 
 

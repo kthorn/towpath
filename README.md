@@ -46,7 +46,7 @@ CLI does not download 1.5 GB itself):
 
 ```bash
 curl -L -o pound/data/england.osm.pbf \
-  https://download.geofabrik.de/europe/great-britain/england-latest.osm.pbf
+  https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf
 uv sync --extra bulk
 uv run pound-ingest build england --out pound/artifacts/england.pkl
 ```
