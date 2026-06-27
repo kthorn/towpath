@@ -25,6 +25,7 @@
     },
     {
       "type": "way", "id": 1003,
+      "nodes": [5003, 3002],
       "tags": {"waterway": "lock", "name": "Hayfield Lock"},
       "geometry": [
         {"lat": 51.7530, "lon": -1.2630},
@@ -56,6 +57,15 @@
       ]
     },
     {
+      "type": "way", "id": 1007,
+      "nodes": [7001, 7002],
+      "tags": {"waterway": "canal", "name": "Marston Spur"},
+      "geometry": [
+        {"lat": 51.75401, "lon": -1.26399},
+        {"lat": 51.7556, "lon": -1.2659}
+      ]
+    },
+    {
       "type": "node", "id": 2001, "lat": 51.7535, "lon": -1.2635,
       "tags": {"waterway": "lock_gate"}
     },
@@ -78,6 +88,10 @@
     {
       "type": "node", "id": 3002, "lat": 51.7540, "lon": -1.2640,
       "tags": {"place": "hamlet", "name": "Hayfield"}
+    },
+    {
+      "type": "node", "id": 3003, "lat": 51.7556, "lon": -1.2659,
+      "tags": {"place": "suburb", "name": "Marston"}
     }
   ]
 }

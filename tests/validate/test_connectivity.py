@@ -17,8 +17,8 @@ def _graph_and_report():
 def test_component_count_is_two():
     g, report = _graph_and_report()
     v = validate_graph(g, report)
-    assert v["component_count"] == 2  # main chain + Duke's Cut
-    assert v["largest_component_size"] == 4  # 4 nodes in the main chain
+    assert v["component_count"] == 2  # main chain + pendant + Duke's Cut (2 components)
+    assert v["largest_component_size"] == 5  # 4 chain + 1 pendant far-end
 
 
 def test_no_derelict_edges():
@@ -30,8 +30,8 @@ def test_no_derelict_edges():
 def test_missing_dims_count():
     g, report = _graph_and_report()
     v = validate_graph(g, report)
-    # 1001, 1003, 1006 have no dims; 1002 does
-    assert v["edges_missing_dims"] == 3
+    # 1001, 1003, 1007, 1006 have no dims; 1002 does
+    assert v["edges_missing_dims"] == 4
 
 
 def test_no_zero_length_or_self_loops():
@@ -51,8 +51,8 @@ def test_orphans_carry_through():
 def test_totals_present():
     g, report = _graph_and_report()
     v = validate_graph(g, report)
-    assert v["total_edges"] == 4
-    assert v["total_nodes"] == 6
+    assert v["total_edges"] == 5
+    assert v["total_nodes"] == 7
 
 
 def test_report_has_bulk_connectivity_keys():

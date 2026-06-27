@@ -127,9 +127,7 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
     assert "Oxford" in g.graph["gazetteer"]
 
 
-@pytest.mark.skip(reason="Needs Task 6 pendant way + overrides.json (PR1 fixture growth)")
 def test_build_england_fails_when_unresolved_exceeds_threshold(monkeypatch, tmp_path):
-    # TODO(Task 6): un-skip after the pendant + overrides.json ship.
     raw = json.loads(Path(oxford_fixture_path()).read_text())
     fake_feats = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
     fake_feats = fake_feats.model_copy(update={"source": "geofabrik", "bbox": None})
