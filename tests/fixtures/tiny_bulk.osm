@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="tiny_bulk fixture">
+  <node id="1" lat="51.7500000" lon="-1.2600000" version="1">
+    <tag k="place" v="city"/><tag k="name" v="Oxford"/>
+  </node>
+  <node id="2" lat="51.7520000" lon="-1.2620000" version="1"/>
+  <node id="3" lat="51.7540000" lon="-1.2640000" version="1"/>
+  <node id="4" lat="51.7540000" lon="-1.2640000" version="1">
+    <tag k="place" v="hamlet"/><tag k="name" v="Hayfield"/>
+  </node>
+  <node id="5" lat="51.7545000" lon="-1.2635000" version="1">
+    <tag k="waterway" v="lock_gate"/>
+  </node>
+  <node id="9" lat="51.7700000" lon="-1.2800000" version="1"/>
+  <node id="10" lat="51.7710000" lon="-1.2810000" version="1"/>
+  <way id="1001" version="1">
+    <nd ref="1"/><nd ref="2"/>
+    <tag k="waterway" v="canal"/><tag k="name" v="Oxford Canal"/>
+  </way>
+  <way id="1002" version="1">
+    <nd ref="2"/><nd ref="3"/>
+    <tag k="waterway" v="canal"/><tag k="name" v="Oxford Canal"/>
+    <tag k="maxwidth" v="2.1"/><tag k="maxdraught" v="0.9"/>
+  </way>
+  <way id="1003" version="1">
+    <nd ref="3"/><nd ref="4"/>
+    <tag k="waterway" v="lock"/><tag k="name" v="Hayfield Lock"/>
+  </way>
+  <way id="1005" version="1">
+    <nd ref="9"/><nd ref="10"/>
+    <tag k="waterway" v="derelict_canal"/><tag k="name" v="Abandoned Branch"/>
+  </way>
+</osm>
