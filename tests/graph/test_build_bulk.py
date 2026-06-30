@@ -235,3 +235,61 @@ def test_duplicate_edge_candidate_recorded_unresolved_not_built():
     # the chosen coords instead build cleanly, adjust C's far-end coord to
     # genuinely recreate A's endpoints and re-run.
     assert isinstance(g.graph["tolerance_snaps_unresolved"], list)
+
+
+# --- Closed-ring ways (self-loop prevention) -------------------------------
+# A closed way (first coord == last coord) is an area polygon — a lock-chamber
+# outline, a basin, a wetland, a water body — never a routable edge. On real
+# England data all 135 closed rings are such areas (locks, wetlands, amusement
+# rides, water bodies); none are navigable ring passages, because a navigable
+# ring trip is a graph cycle of distinct linear ways, not a single closed way.
+# Skipping them at emission keeps the `self_loops == 0` gate honest without an
+# override, and drops no routable geometry.
+
+
+def test_closed_ring_way_emits_no_self_loop_and_no_isolated_node():
+    from pound.validate.connectivity import validate_graph
+
+    ring_geom = [
+        (51.7500, -1.2600),
+        (51.7510, -1.2600),
+        (51.7510, -1.2610),
+        (51.7500, -1.2600),  # == first -> closed ring
+    ]
+    ways = [_way(1, WaterwayKind.CANAL, "Basin", [1, 2, 3, 1], ring_geom)]
+    g = build_graph(_features(ways))
+    assert g.number_of_edges() == 0
+    assert g.number_of_nodes() == 0
+    v = validate_graph(g, {"orphan_lock_ways": [], "orphan_lock_nodes": []})
+    assert v["self_loops"] == 0
+
+
+def test_closed_ring_does_not_mask_a_real_routable_cycle():
+    # A navigable ring is a cycle of DISTINCT linear ways joining at junction
+    # nodes (A->B->C->A), not one closed way. Such a cycle must survive the
+    # closed-ring skip unchanged.
+    a, b, c = (51.7500, -1.2600), (51.7520, -1.2600), (51.7510, -1.2620)
+    ways = [
+        _way(10, WaterwayKind.CANAL, "AB", [1, 2], [a, b]),
+        _way(20, WaterwayKind.CANAL, "BC", [2, 3], [b, c]),
+        _way(30, WaterwayKind.CANAL, "CA", [3, 1], [c, a]),
+    ]
+    g = build_graph(_features(ways))
+    assert g.number_of_edges() == 3
+    assert nx.number_connected_components(g) == 1
+    # 3 junction nodes, no self-loops
+    assert all(u != v for u, v in g.edges())
+
+
+def test_closed_ring_sharing_coord_with_linear_way_joins_cleanly():
+    # A closed ring whose coordinate coincides with a linear way's endpoint:
+    # the linear way emits the node; the ring contributes nothing. No self-loop.
+    shared = (51.7500, -1.2600)
+    ring_geom = [shared, (51.7510, -1.2600), (51.7510, -1.2610), shared]
+    ways = [
+        _way(1, WaterwayKind.CANAL, "Linear", [1, 2], [shared, (51.7520, -1.2600)]),
+        _way(2, WaterwayKind.CANAL, "Ring", [2, 3, 4, 2], ring_geom),
+    ]
+    g = build_graph(_features(ways))
+    assert g.number_of_edges() == 1  # only the linear way
+    assert all(u != v for u, v in g.edges())

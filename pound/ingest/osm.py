@@ -41,8 +41,11 @@ def run_tags_filter(in_pbf: Path, out_pbf: Path) -> None:
     out_pbf = Path(out_pbf)
     out_pbf.parent.mkdir(parents=True, exist_ok=True)
     exprs = [line for line in TAGS_FILTER_EXPR.splitlines() if line.strip()]
+    # --overwrite: the filtered PBF is a cache rebuilt on every `build england`
+    # re-run (the D.3 curation loop). Without it osmium refuses to clobber the
+    # stale file from the previous run, breaking idempotency.
     subprocess.run(
-        ["osmium", "tags-filter", "-o", str(out_pbf), str(in_pbf), *exprs],
+        ["osmium", "tags-filter", "--overwrite", "-o", str(out_pbf), str(in_pbf), *exprs],
         check=True,
     )
 

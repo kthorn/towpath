@@ -132,6 +132,17 @@ def build_graph(
             continue
         a_raw = _node_key(*way.geometry[0])
         b_raw = _node_key(*way.geometry[-1])
+        if a_raw == b_raw:
+            # Closed-ring way (first == last coord): an area polygon — a
+            # lock-chamber outline, basin, wetland, or water body — never a
+            # routable edge. On real England data every closed ring is such an
+            # area (locks, `natural=wetland` rivers, amusement rides, water
+            # bodies); none is a navigable ring passage, because a navigable
+            # ring trip is a graph cycle of distinct linear ways, not one
+            # closed way. Skipping keeps the `self_loops == 0` gate honest
+            # without an override and drops no routable geometry. A shared
+            # coordinate still gets its node from any coincident linear way.
+            continue
         a_osm = way.node_ids[0] if way.node_ids else None
         b_osm = way.node_ids[-1] if way.node_ids else None
         _emit(a_raw, a_osm)
