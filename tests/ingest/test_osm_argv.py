@@ -22,6 +22,7 @@ def test_run_tags_filter_splits_argv(monkeypatch, tmp_path):
     assert captured["argv"] == [
         "osmium",
         "tags-filter",
+        "--overwrite",  # idempotent re-runs (D.3 curation loop)
         "-o",
         str(out_pbf),
         str(in_pbf),
