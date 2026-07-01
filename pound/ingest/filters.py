@@ -80,6 +80,27 @@ def extract_dimensions(tags: dict[str, str] | None) -> WayDimensions:
     return WayDimensions(**values)
 
 
+_NON_NAVIGABLE_BOAT = {"no", "unsuitable", "canoe"}
+
+
+def is_navigable(tags: dict[str, str] | None) -> bool:
+    """True unless the way is explicitly tagged non-navigable to canal boats.
+
+    OSM `boat` access tag: `no`=prohibited/impassable, `unsuitable`=navigable-
+    in-principle-but-not-really, `canoe`=canoe-only (out of scope for a canal-
+    boat router). Everything else (`yes`, `private`, `permissive`, `permit`,
+    `designated`, `discouraged`, `unknown`, missing, typos) is kept — bad data
+    and unknowns fall back to "keep," not silent drop. Literal-string matching
+    only; we deliberately do NOT alias typos like `unkmown` -> `unknown`
+    (an alias could collide with a future `boat=yes` synonym and drop a real
+    navigable edge). Dimensions (`maxwidth` etc.) are a *separate*, plan-time
+    concern (`route/cost.py:is_eligible`) and stay untouched here.
+    """
+    if not tags:
+        return True
+    return tags.get("boat") not in _NON_NAVIGABLE_BOAT
+
+
 def classify_node(tags: dict[str, str] | None) -> NodeKind | None:
     """Classify a tagged node. None => not a network node we keep in this plan."""
     if not tags:

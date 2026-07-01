@@ -5,6 +5,7 @@ from pound.ingest.filters import (
     classify_way,
     extract_dimensions,
     is_derelict,
+    is_navigable,
 )
 from pound.ingest.ir import NodeKind, WaterwayKind, WayDimensions
 
@@ -109,3 +110,41 @@ def test_extract_dimensions_first_alias_wins():
 )
 def test_classify_node(tags, expected):
     assert classify_node(tags) == expected
+
+
+# --- is_navigable ---
+
+
+@pytest.mark.parametrize(
+    "boat_value, expected",
+    [
+        ("no", False),
+        ("unsuitable", False),
+        ("canoe", False),
+        ("yes", True),
+        ("private", True),
+        ("permissive", True),
+        ("permit", True),
+        ("designated", True),
+        ("discouraged", True),
+        ("unknown", True),
+        ("unkmown", True),  # typo of "unknown" -> kept (literal-string blacklist)
+        (None, True),  # missing key -> kept (default navigable)
+    ],
+)
+def test_is_navigable(boat_value, expected):
+    tags = {} if boat_value is None else {"boat": boat_value}
+    if boat_value is None:
+        # also test the fully-empty tag dict path
+        assert is_navigable({}) is True
+    assert is_navigable(tags) is expected
+
+
+def test_is_navigable_none_tags():
+    # boundary: tags is None
+    assert is_navigable(None) is True
+
+
+def test_is_navigable_preserves_other_keys():
+    # the predicate reads `boat` only; a non-boat non-navigable tag is ignored
+    assert is_navigable({"waterway": "canal", "access": "private"}) is True
