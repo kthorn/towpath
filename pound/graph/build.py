@@ -175,32 +175,52 @@ def build_graph(
             snap_groups.append(set(keys))
     _contract(g, snap_groups, way_ends)
 
-    # --- Phase 3: tolerance-snap candidates for dangling tips. A *tip* is a
-    # graph node incident to exactly one edge (a way-end unjoined to any
-    # neighbor after phases 1+2). For each tip, the nearest OTHER node
-    # (excluding the tip's sole neighbor) within `0 < dist <= tolerance_m` is a
-    # candidate. The other node may be a tip OR a connected junction (both are
-    # real gap patterns). Two junctions near each other are NOT candidates.
+    # --- Phase 3: tolerance-snap candidates for dangling tips, via a grid-bucket
+    # spatial index (replaces the O(tips x nodes) all-pairs haversine scan).
+    # Short-circuit: tolerance_m <= 0 means snaps are OFF (existing tests rely on
+    # this). Today's `d > tolerance_m` guard already rejects everything for
+    # tolerance_m == 0; we short-circuit so the grid formula (cell_deg = tol /
+    # 111_320) does not divide by zero, and we skip the work entirely for tol<0.
     unresolved: list[tuple] = []
     used: list[tuple] = []
 
     def _incident_way_ids(key):
         return {d["osm_way_id"] for _, _, d in g.edges(key, data=True)}
 
-    tips = [n for n in g.nodes() if g.degree(n) == 1]
-    candidates: list[tuple[tuple, tuple, int, int]] = []  # (tip, target, tip_way, target_way)
-    for tip in tips:
-        nbr = next(iter(g[tip]))  # sole neighbor — never a snap target
-        best, best_d, best_w = None, math.inf, -1
-        for other in g.nodes():
-            if other == tip or other == nbr:
-                continue
-            d = _haversine_m(tip, other)
-            if d <= 0.0 or d > tolerance_m or d >= best_d:
-                continue
-            best, best_d, best_w = other, d, next(iter(_incident_way_ids(other)))
-        if best is not None:
-            candidates.append((tip, best, next(iter(_incident_way_ids(tip))), best_w))
+    if tolerance_m <= 0:
+        candidates: list[tuple[tuple, tuple, int, int]] = []
+    else:
+        cell_deg = tolerance_m / 111_320.0
+
+        def _cell(lat: float, lon: float) -> tuple[int, int]:
+            return (int((lat + 90.0) / cell_deg), int((lon + 180.0) / cell_deg))
+
+        # bin every node by its grid cell
+        grid: dict[tuple[int, int], list[tuple]] = {}
+        for n in g.nodes():
+            grid.setdefault(_cell(n[0], n[1]), []).append(n)
+
+        tips = [n for n in g.nodes() if g.degree(n) == 1]
+        candidates = []
+        for tip in tips:
+            nbr = next(iter(g[tip]))  # sole neighbor — never a snap target
+            cy, cx = _cell(tip[0], tip[1])
+            best, best_d, best_w = None, math.inf, -1
+            # scan this cell + 8 Moore neighbours
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    bucket = grid.get((cy + dy, cx + dx))
+                    if not bucket:
+                        continue
+                    for other in bucket:
+                        if other == tip or other == nbr:
+                            continue
+                        d = _haversine_m(tip, other)
+                        if d <= 0.0 or d > tolerance_m or d >= best_d:
+                            continue
+                        best, best_d, best_w = other, d, next(iter(_incident_way_ids(other)))
+            if best is not None:
+                candidates.append((tip, best, next(iter(_incident_way_ids(tip))), best_w))
 
     # Dedupe symmetric candidates (tip A's nearest is tip B, and vice versa).
     seen_pairs: set[tuple] = set()

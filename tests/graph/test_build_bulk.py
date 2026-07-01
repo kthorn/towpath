@@ -1,3 +1,5 @@
+import time
+
 import networkx as nx
 
 from pound.graph.build import build_graph, load_overrides
@@ -210,6 +212,45 @@ def test_join_override_bridges_a_beyond_tolerance_gap(tmp_path):
     g = build_graph(_features(ways), tolerance_m=10.0, overrides=ovr)
     assert nx.number_connected_components(g) == 1  # bridge override connected them
     assert g.graph["overrides_applied"] == 1
+
+
+# --- Phase 3: grid-bucket perf (relative speedup) --------------------------
+
+
+def test_phase3_grid_bucket_preserves_snap_results_and_is_sub_linear():
+    """Phase 3's grid-bucket refactor must produce >=1500 snaps and complete in
+    < 2 seconds on a 3000-tip synthetic graph (3000 chain pairs -> ~6000 nodes).
+    The all-pairs scan took multiple seconds on this size; < 2 s is generous."""
+    # 3000 disjoint chain tips, each ~0.5 m from a target tip within 1 m tolerance
+    ways = []
+    for i in range(3000):
+        base_lat = 51.0000 + i * 0.001
+        lon = -1.0000
+        tip_a_lat = round(base_lat, 7)
+        tip_b_lat = round(base_lat + 0.0000045, 7)
+        # Unique node_ids per pair so Phase 1 node-ref does NOT merge them
+        n0, n1, n2, n3 = i * 4 + 1, i * 4 + 2, i * 4 + 3, i * 4 + 4
+        ways.append(
+            _way(
+                100 + i * 10, WaterwayKind.CANAL, f"A{i}", [n0, n1],
+                [(tip_a_lat, lon), (round(base_lat + 0.0000900, 7), lon)],
+            )
+        )
+        ways.append(
+            _way(
+                200 + i * 10, WaterwayKind.CANAL, f"B{i}", [n2, n3],
+                [(round(base_lat - 0.0000900, 7), lon), (tip_b_lat, lon)],
+            )
+        )
+
+    start = time.perf_counter()
+    g = build_graph(_features(ways), tolerance_m=1.0)
+    elapsed = time.perf_counter() - start
+
+    # Sufficient snaps fired: at least 1500 (one per i; tip->tip pairs collapse).
+    assert len(g.graph["tolerance_snaps_used"]) >= 1500
+    # Perf: this should be well under a second on any modern machine.
+    assert elapsed < 2.0, f"Phase 3 took {elapsed:.2f}s — grid not sub-linear"
 
 
 def test_duplicate_edge_candidate_recorded_unresolved_not_built():
