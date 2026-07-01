@@ -190,7 +190,19 @@ def build_graph(
     if tolerance_m <= 0:
         candidates: list[tuple[tuple, tuple, int, int]] = []
     else:
-        cell_deg = tolerance_m / 111_320.0
+        # Cell size must be >= tolerance_m meters in BOTH dimensions so the
+        # 3×3 Moore neighbourhood catches every candidate within tolerance.
+        # 1° lat ≈ 111_320 m regardless of latitude, but 1° lon = 111_320 × cos(φ)
+        # m, which at England's latitudes (~51-55°) is only ~57-63% of the lat
+        # value. Using tolerance_m / 111_320 for both dims would undersize the
+        # longitude cell and miss candidates that fall 2 cells away in lon.
+        # Fix: inflate cell_deg by 1/cos(max|lat|) so the lon cell at the
+        # worst-case (highest) latitude is exactly tolerance_m; lower latitudes
+        # get slightly larger cells (more cheap haversine re-checks, never a
+        # missed candidate).
+        max_abs_lat = max((abs(n[0]) for n in g.nodes()), default=0.0)
+        lon_factor = max(math.cos(math.radians(max_abs_lat)), 0.01)
+        cell_deg = tolerance_m / (111_320.0 * lon_factor)
 
         def _cell(lat: float, lon: float) -> tuple[int, int]:
             return (int((lat + 90.0) / cell_deg), int((lon + 180.0) / cell_deg))
