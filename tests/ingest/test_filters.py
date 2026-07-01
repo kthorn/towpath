@@ -4,10 +4,18 @@ from pound.ingest.filters import (
     classify_node,
     classify_way,
     extract_dimensions,
+    filter_navigable_ways,
     is_derelict,
     is_navigable,
 )
-from pound.ingest.ir import NodeKind, WaterwayKind, WayDimensions
+from pound.ingest.ir import (
+    NodeKind,
+    WaterwayFeatures,
+    WaterwayKind,
+    WaterwayNode,
+    WaterwayWay,
+    WayDimensions,
+)
 
 # --- classify_way ---
 
@@ -148,3 +156,97 @@ def test_is_navigable_none_tags():
 def test_is_navigable_preserves_other_keys():
     # the predicate reads `boat` only; a non-boat non-navigable tag is ignored
     assert is_navigable({"waterway": "canal", "access": "private"}) is True
+
+
+# --- filter_navigable_ways ---
+
+
+def _way(osm_id, kind, tags=None, geom=None, node_ids=None):
+    return WaterwayWay(
+        osm_id=osm_id,
+        kind=kind,
+        name=tags.get("name") if tags else None,
+        tags=tags or {},
+        node_ids=node_ids or [],
+        geometry=geom or [(51.0, -1.0), (51.001, -1.001)],
+        dimensions=WayDimensions(),
+    )
+
+
+def _features(ways, nodes=None):
+    return WaterwayFeatures(
+        ways=ways,
+        nodes=nodes or [],
+        source="test",
+        fetched_at="2026-06-28T00:00:00Z",
+        bbox=None,
+    )
+
+
+def test_filter_navigable_ways_drops_boat_no_keeps_yes_and_missing():
+    ways = [
+        _way(1, WaterwayKind.CANAL, {"waterway": "canal", "boat": "no"}),
+        _way(2, WaterwayKind.CANAL, {"waterway": "canal", "boat": "yes"}),
+        _way(3, WaterwayKind.CANAL, {"waterway": "canal"}),  # missing boat
+    ]
+    out = filter_navigable_ways(_features(ways))
+    assert [w.osm_id for w in out.ways] == [2, 3]
+
+
+def test_filter_navigable_ways_drops_unsuitable_and_canoe():
+    ways = [
+        _way(1, WaterwayKind.CANAL, {"waterway": "canal", "boat": "unsuitable"}),
+        _way(2, WaterwayKind.RIVER, {"waterway": "river", "boat": "canoe"}),
+        _way(3, WaterwayKind.CANAL, {"waterway": "canal", "boat": "private"}),
+    ]
+    out = filter_navigable_ways(_features(ways))
+    assert [w.osm_id for w in out.ways] == [3]
+
+
+def test_filter_navigable_ways_drops_lock_yes_with_boat_no():
+    # kind-agnostic: a non-navigable lock (tagging contradiction) is not routable
+    ways = [
+        _way(1, WaterwayKind.LOCK, {"waterway": "canal", "lock": "yes", "boat": "no"}),
+        _way(2, WaterwayKind.LOCK, {"waterway": "canal", "lock": "yes", "boat": "yes"}),
+    ]
+    out = filter_navigable_ways(_features(ways))
+    assert [w.osm_id for w in out.ways] == [2]
+
+
+def test_filter_navigable_ways_does_not_drop_derelict():
+    # is_derelict stays inline in the readers; filter_navigable_ways is boat-only.
+    # A `disused:waterway=canal` way with `boat=yes` survives here (the reader's
+    # inline is_derelict drops it later, but this function must NOT second-guess).
+    ways = [
+        _way(
+            1,
+            WaterwayKind.CANAL,
+            {"waterway": "canal", "disused:waterway": "canal", "boat": "yes"},
+        ),
+    ]
+    out = filter_navigable_ways(_features(ways))
+    assert [w.osm_id for w in out.ways] == [1]
+
+
+def test_filter_navigable_ways_does_not_mutate_input():
+    ways = [
+        _way(1, WaterwayKind.CANAL, {"waterway": "canal", "boat": "no"}),
+        _way(2, WaterwayKind.CANAL, {"waterway": "canal"}),
+    ]
+    features = _features(ways)
+    original_ids = [w.osm_id for w in features.ways]
+    out = filter_navigable_ways(features)
+    # input untouched
+    assert [w.osm_id for w in features.ways] == original_ids
+    # output is a different object with a rebuilt list
+    assert out is not features
+    assert out.ways is not features.ways
+
+
+def test_filter_navigable_ways_preserves_nodes():
+    ways = [_way(1, WaterwayKind.CANAL, {"waterway": "canal", "boat": "no"})]
+    nodes = [
+        WaterwayNode(osm_id=99, lat=51.0, lon=-1.0, tags={}, kind=NodeKind.MOORING),
+    ]
+    out = filter_navigable_ways(_features(ways, nodes=nodes))
+    assert out.nodes == nodes
