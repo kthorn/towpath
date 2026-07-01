@@ -113,14 +113,16 @@ return features
 `filter_navigable_ways(features) -> WaterwayFeatures` is a new pure function
 co-located with `is_navigable` in `pound/ingest/filters.py`. It returns a new
 `WaterwayFeatures` whose `ways` list omits any way for which
-`is_navigable(tags) is False`. Implementation note (Pydantic copy semantics):
-`WaterwayFeatures.model_copy()` is a *shallow* copy, so a bare `model_copy()`
-shares the inner `ways` list reference. The function must rebuild the `ways`
-list — `model_copy(update={"ways": [w for w in features.ways if is_navigable(w.tags)]})`
+`is_navigable(tags) is False`. Implementation note (Pydantic v2 copy semantics):
+`WaterwayFeatures.model_copy()` is a *shallow* copy (no import needed — it's a
+`BaseModel` method), so a bare `model_copy()` shares the inner `ways` list
+reference. The function must rebuild the `ways` list —
+`features.model_copy(update={"ways": [w for w in features.ways if is_navigable(w.tags)]})`
 does this correctly: the returned model is a shallow copy, but its `ways` list
 is a fresh list (the individual `WaterwayWay` elements are shared references,
-which is safe — they are immutable data classes). `nodes` are untouched here
-(prune already handled infra nodes; `place` and the no-incident cases are kept).
+which is safe — `WaterwayWay` is a frozen-shape Pydantic `BaseModel` with no
+mutators in this codebase). `nodes` are untouched here (prune already handled
+infra nodes; `place` and the no-incident cases are kept).
 
 **The readers' inline `is_derelict` checks are NOT removed.** An earlier
 draft of this spec folded `is_derelict` into `filter_navigable_ways` for a
@@ -211,7 +213,7 @@ New file `tests/ingest/test_prune.py`:
 - A `lock_gate` node carrying its own `boat=no` tag is **ignored** by both `filter_navigable_ways` (way-only) and `prune_non_navigable_infra` (incident-way join, not node tags) — node-level `boat` tags do not trigger a drop. Documented explicitly so no implementer wires node tags into the prune.
 - Purity: the input `WaterwayFeatures` is not mutated (see the `model_copy(update=...)` guidance above).
 
-Bulk integration: the existing `tests/ingest/test_osm.py::test_read_pbf_*` tests assert shape; the post-filter chain is applied by `read_england`, not by `read_pbf`, so those tests are unaffected. **A new bulk-path test** in `tests/ingest/test_osm.py` explicitly asserts `read_england` applies the prune → filter chain: feed a tiny PBF fixture containing a `boat=no` way and a lock_gate on that way, and assert the returned `WaterwayFeatures.ways` excludes the `boat=no` way and the `nodes` list excludes the lock_gate (it had zero surviving navigable incidents). This is the minimal test that the production England entrypoint (`read_england`) actually wires prune → filter.
+Bulk integration: the existing `tests/ingest/test_osm.py::test_read_pbf_*` tests assert shape; the post-filter chain is applied by `read_england`, not by `read_pbf`, so those tests are unaffected. **A new bulk-path test** in `tests/ingest/test_osm.py` explicitly asserts `read_england` applies the prune → filter chain: feed a tiny PBF fixture containing a `boat=no` way and a lock_gate on that way, and assert the returned `WaterwayFeatures.ways` excludes the `boat=no` way and the `nodes` list excludes the lock_gate (it had zero surviving navigable incidents). **Test-author guidance:** `read_england` calls `run_tags_filter` which shells out to the `osmium` system CLI (`pound/ingest/osm.py:45-51`), so the test must monkeypatch `run_tags_filter` to return a pre-built filtered PBF (or XML) path — bypass the CLI, exactly as the existing bulk round-trip test does — and gate the test with the `bulk` marker so it skips when the `bulk` extra is absent. This is the minimal test that the production England entrypoint (`read_england`) actually wires prune → filter.
 
 ---
 
@@ -303,3 +305,4 @@ empty `node_ids`; Phase 3 behaviour is preserved).
 - Phase 3 grid-bucket refactor lands in `build.py`; existing Phase 3 tests unchanged; new perf test green; England build previously-minutes becomes O(seconds) for Phase 3.
 - Rebuilt `england.pkl` has `derelict_edges == 0`, `self_loops == 0`, and a `tolerance_snaps_unresolved` queue reflecting only genuine curation items (the `boat=no` noise is gone).
 - Hermetic suite (`uv run pytest -q`) still green at the current baseline (`138 collected`, ~133 passed / 5 skipped after the `--overwrite` argv-test fix landed in commit `9adcf7b`) or better, with the new tests added by this spec.
+- **Acceptable character change in the validation report:** dropping `boat=no` lock ways before `build_graph` increases `orphan_lock_ways` / `orphan_lock_nodes` in the build report (locks whose carrier way was a boat=no lock), because `attach_locks` (`pound/graph/locks.py:50-55`) sees them as orphaned. `orphan_lock_ways` is **advisory, not a CLI gate** (`pound/ingest/cli.py:60-69` gates on `derelict_edges`, `self_loops`, `tolerance_snaps_unresolved` only), so the build still passes; the report character changes and the implementer documents the expected delta. If a `boat=no` lock *should* route (a non-navigable lock is a contradiction in terms — locks are by definition navigable passages), this is a tagging bug in OSM, not a build defect.
