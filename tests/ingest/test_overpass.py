@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 
 from pound.ingest.ir import NodeKind, WaterwayKind
-from pound.ingest.overpass import OXFORD_BBOX, build_query, parse
+from pound.ingest.overpass import OXFORD_BBOX, build_query, fetch_oxford, parse
+from tests.fixtures import oxford_fixture_path
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "oxford_overpass_sample.json"
 
@@ -80,6 +81,50 @@ def test_parse_sets_source_and_bbox():
     assert feats.source == "overpass"
     assert feats.bbox == OXFORD_BBOX
     assert feats.fetched_at  # non-empty ISO timestamp
+
+
+def test_fetch_oxford_applies_prune_then_filter_chain(monkeypatch):
+    """fetch_oxford wraps parse() output with prune -> filter_navigable_ways.
+    parse() itself stays pure. We monkeypatch fetch_raw (the network call) so
+    the chain runs on a fixture without hitting live Overpass."""
+    from pound.ingest import overpass as _overpass
+
+    raw = json.loads(Path(oxford_fixture_path()).read_text())
+    # inject a boat=no way into the fixture's elements (so the filter has work to do)
+    boat_no_way = {
+        "type": "way",
+        "id": 9999,
+        "tags": {"waterway": "canal", "boat": "no"},
+        "geometry": [{"lat": 51.7510, "lon": -1.2600}, {"lat": 51.7520, "lon": -1.2600}],
+    }
+    raw["elements"].append(boat_no_way)
+    monkeypatch.setattr(_overpass, "fetch_raw", lambda *a, **kw: raw)
+
+    # spy on chain functions (call through to real to preserve behaviour)
+    real_prune = _overpass.prune_non_navigable_infra
+    real_filter = _overpass.filter_navigable_ways
+    called_prune = []
+    called_filter = []
+
+    def spy_prune(features):
+        called_prune.append(features)
+        return real_prune(features)
+
+    def spy_filter(features):
+        called_filter.append(features)
+        return real_filter(features)
+
+    monkeypatch.setattr(_overpass, "prune_non_navigable_infra", spy_prune)
+    monkeypatch.setattr(_overpass, "filter_navigable_ways", spy_filter)
+
+    features = fetch_oxford()
+    # the boat=no way must be gone
+    assert 9999 not in {w.osm_id for w in features.ways}
+    # chain functions were called
+    assert len(called_prune) == 1
+    assert len(called_filter) == 1
+    # fetch_oxford still returns a WaterwayFeatures
+    assert features.source == "overpass"
 
 
 def test_parse_geometry_carried_through():

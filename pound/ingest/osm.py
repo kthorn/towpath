@@ -16,12 +16,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pound.ingest import filters
+from pound.ingest.filters import filter_navigable_ways
 from pound.ingest.ir import (
     WaterwayFeatures,
     WaterwayKind,
     WaterwayNode,
     WaterwayWay,
 )
+from pound.ingest.prune import prune_non_navigable_infra
 
 # Pinned OSM-filter expression (design §3.1, Scope D OQ-D1).
 TAGS_FILTER_EXPR = r"""w/waterway=canal,river,fairway,lock,derelict_canal
@@ -125,13 +127,22 @@ def read_pbf(pbf_path: Path) -> WaterwayFeatures:
 
 
 def read_england(pbf_path: Path | None = None) -> WaterwayFeatures:
-    """Tags-filter then read. pbf_path defaults to POUND_PBF_PATH env or
+    """Tags-filter then read, then prune infra nodes on non-navigable ways
+    and filter navigable ways. pbf_path defaults to POUND_PBF_PATH env or
     pound/data/england.osm.pbf. Filtered output lands beside it as
-    england_waterways.osm.pbf (gitignored)."""
+    england_waterways.osm.pbf (gitignored).
+
+    Ordering: prune BEFORE filter. prune needs boat=no ways present to decide
+    "all incidents non-navigable"; see the spec's load-bearing ordering note.
+    """
     if pbf_path is None:
         pbf_path = Path(os.environ.get("POUND_PBF_PATH", "pound/data/england.osm.pbf"))
     pbf_path = Path(pbf_path)
     base = pbf_path.name.split(".")[0]
     filtered = pbf_path.parent / (base + "_waterways.osm.pbf")
     run_tags_filter(pbf_path, filtered)
-    return read_pbf(filtered)
+    features = read_pbf(filtered)
+    # prune BEFORE filter: see spec's load-bearing ordering note.
+    features = prune_non_navigable_infra(features)
+    features = filter_navigable_ways(features)
+    return features
