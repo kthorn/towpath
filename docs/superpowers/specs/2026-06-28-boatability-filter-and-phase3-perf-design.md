@@ -98,25 +98,42 @@ full `WaterwayFeatures`. This ordering is load-bearing:
   Verified against the England extract: all 33 candidate-drop nodes become
   "kept" under that ordering — prune would do nothing.
 
-So the call-site shape is:
+So the call-site shape is (concrete edits required in both readers):
 
 ```python
-# in overpass.py:fetch_oxford() and osm.py:read_england()
-features = parse(...)              # / read_pbf(...) — full features, no boat filter
-features = prune_non_navigable_infra(features)   # Section 2 — sees full ways
-features = filter_navigable_ways(features)      # Section 1 — NOW drop boat=no ways
+# in overpass.py:fetch_oxford() — currently just `return parse(...)` (lines 124-126)
+# in osm.py:read_england()   — currently just `return read_pbf(filtered)` (lines 97-100)
+features = parse(...)                                 # / read_pbf(...) — full features
+#   (both readers still drop derelict inline in their way loops — is_derelict stays)
+features = prune_non_navigable_infra(features)        # Section 2 — sees full ways
+features = filter_navigable_ways(features)             # Section 1 — NOW drop boat=no ways
 return features
 ```
 
 `filter_navigable_ways(features) -> WaterwayFeatures` is a new pure function
-co-located with `is_navigable` in `pound/ingest/filters.py` (it *is* the
-batch form of the predicate; same module, same responsibility). It returns a
-new `WaterwayFeatures` whose `ways` list omits any way for which
-`is_navigable(tags) is False` (and likewise drops the `derelict` ways the
-readers currently drop inline — the readers' inline `is_derelict` checks are
-removed and folded into this one post-filter step, so both exclusion
-predicates apply at the same place, after prune). `nodes` are untouched here
-(prune already handled infra nodes; `place` and the no-incident cases are kept).
+co-located with `is_navigable` in `pound/ingest/filters.py`. It returns a new
+`WaterwayFeatures` whose `ways` list omits any way for which
+`is_navigable(tags) is False`. Implementation note (Pydantic copy semantics):
+`WaterwayFeatures.model_copy()` shares the inner list references — the
+function must build a fresh `ways` list, e.g.
+`features.model_copy(update={"ways": [w for w in features.ways if is_navigable(w.tags)]})`,
+not a shallow `model_copy()`. `nodes` are untouched here (prune already
+handled infra nodes; `place` and the no-incident cases are kept).
+
+**The readers' inline `is_derelict` checks are NOT removed.** An earlier
+draft of this spec folded `is_derelict` into `filter_navigable_ways` for a
+single chokepoint. That is rejected: `test_parse_excludes_derelict`
+(`tests/ingest/test_overpass.py:44-47`) asserts `parse()` *itself* drops
+derelict ways, and several test call sites call `parse()` / `read_pbf()`
+directly without applying the post-filter (`tests/ingest/test_pipeline_integration.py`,
+`tests/ingest/test_cli.py:58-71, 90-103`). Removing the inline check would
+break `test_parse_excludes_derelict` AND silently leak `disused:waterway` /
+`abandoned:waterway` ways (which `classify_way` returns as `CANAL` for) into
+the graph — `validate_graph` can't catch them (the `kind` is CANAL, not derelict).
+`is_derelict` stays inline in both readers, exactly as today; `filter_navigable_ways`
+applies only the new `is_navigable` (boat) filter. The two predicates now live
+in different places — that is acceptable; the alternative (one chokepoint)
+breaks the `parse()` purity contract its tests already enforce.
 
 **Way-only.** `classify_node` is untouched — node navigability is determined
 by `prune` (Section 2), not by the node's own tags (only 2 nodes carry
@@ -163,7 +180,7 @@ def prune_non_navigable_infra(features: WaterwayFeatures) -> WaterwayFeatures:
 ```
 
 - **Pure:** returns a new `WaterwayFeatures`, does not mutate input.
-- **Kinds affected:** `LOCK_GATE`, `LOCK`, `MOORING`, `MOVABLE_BRIDGE`, `MARINA` — every kind `classify_node` actually returns, which is everything in `NodeKind` *except* `PLACE` (always kept). `NodeKind.OTHER` is a forward-compat enum value that `classify_node` never produces (verified at `pound/ingest/filters.py:83-96`), so it is not a case the prune even encounters — not "excluded by construction," just never emitted.
+- **Kinds affected:** `LOCK_GATE`, `LOCK`, `MOORING`, `MOVABLE_BRIDGE`, `MARINA` — every kind `classify_node` actually returns, which is everything in `NodeKind` *except* `PLACE` (always kept). `NodeKind.OTHER` is a forward-compat enum value that `classify_node` never produces (verified at `pound/ingest/filters.py:83-96`), so it is not a case the prune currently encounters. The implementer adds a defensive `elif kind != NodeKind.PLACE` branch (not `elif kind in {LOCK_GATE, ...}`) so that if a future `classify_node` change starts emitting `OTHER` (or any new kind), it inherits the prune rule rather than silently falling through to keep — forward-compat, no behaviour change today.
 - **Drop rule:** a non-place classified node is dropped iff it is incident to at least one way AND all its incident ways are non-navigable (`is_navigable(tags) is False`). A node with **no** incident ways (no `node_ids` populated — the Overpass path) is **kept**: the post-filter cannot determine navigability by join, and dropping it would be unsupportable guesswork; documented no-op.
 - **Where called:** the bulk reader (`osm.py:read_england`, after `read_pbf`) calls it on the **full, unfiltered** features. The Overpass reader `overpass.py:fetch_oxford` (the network wrapper around `parse()`) also calls it, wrapping `parse()`'s return. **`parse()` itself is NOT modified** — it stays pure (its purity is asserted in its docstring, `overpass.py:8`); the prune call lives in `fetch_oxford` so it sits outside the pure-data path. Both Overpass CLI entrypoints (`_cmd_oxford` at `cli.py:31`, `_cmd_build ... oxford` at `cli.py:87-89`) call `fetch_oxford`, so every Overpass route inherits the prune. On the Overpass path `node_ids` is empty (real `out geom` returns none), so the join yields no incidents and prune is a no-op there (documented; not a silent drop).
 - **Must run before `filter_navigable_ways`** (Section 1): prune needs the non-navigable ways present to decide "all incidents non-navigable." See Section 1's ordering note. Final chain in both readers: `parse/read_pbf → prune_non_navigable_infra → filter_navigable_ways`.
@@ -174,7 +191,7 @@ def prune_non_navigable_infra(features: WaterwayFeatures) -> WaterwayFeatures:
 
 ### Bulk-only caveat
 
-The post-filter is effective only when `WaterwayWay.node_ids` is populated (the bulk pyosmium reader). The Overpass `out geom` reader leaves `node_ids` empty, so the join yields no incidents and the post-filter is a no-op. This is **documented, not a silent drop**: the Overpass path is dev scaffolding, and the small Oxford fixture's infra nodes survive (its 5 ways are all navigable anyway, so the no-op is correct there too). Building a coordinate-proximity fallback for the Overpass path is out of scope.
+The post-filter is effective only when `WaterwayWay.node_ids` is populated (the bulk pyosmium reader). The Overpass `out geom` reader leaves `node_ids` empty, so the join yields no incidents and the post-filter is a no-op. **Caveat on the caveat:** the hand-curated Oxford fixture *does* populate `nodes` arrays on ways 1003 and 1007 (synthetic; real `out geom` returns none — `overpass.py:50` comment), so on the fixture path prune *can* see incidents. This is safe in practice — the fixture's ways are all navigable (no `boat=no`), so no prune drop fires — but the spec no longer claims Overpass `node_ids` is *universally* empty. It is empty on real Overpass data; it is partially populated on the synthetic fixture; prune is best-effort either way. Building a coordinate-proximity fallback for real Overpass data is out of scope.
 
 ### Tests
 
