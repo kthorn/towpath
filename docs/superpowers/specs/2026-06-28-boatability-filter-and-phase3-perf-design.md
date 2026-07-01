@@ -1,7 +1,7 @@
 # Boatability filter, infra-node pruning, and Phase 3 perf — design
 
 **Date:** 2026-06-28
-**Status:** draft (awaiting user review)
+**Status:** Refined (6 pi-refine iterations across 3 models; ready for user review before plan authoring)
 **Scope:** Scope D PR1 live-testing follow-on. Three changes to the bulk
 ingest/build pipeline found during real-England-build testing of merged work
 at `f8b3b36`.
@@ -120,8 +120,11 @@ reference. The function must rebuild the `ways` list —
 `features.model_copy(update={"ways": [w for w in features.ways if is_navigable(w.tags)]})`
 does this correctly: the returned model is a shallow copy, but its `ways` list
 is a fresh list (the individual `WaterwayWay` elements are shared references,
-which is safe — `WaterwayWay` is a frozen-shape Pydantic `BaseModel` with no
-mutators in this codebase). `nodes` are untouched here (prune already handled
+which is safe in this codebase — `WaterwayWay` is a Pydantic `BaseModel` that is
+**not** `frozen=True`, but nothing in `pound/` mutates `WaterwayWay` instances
+post-construction, so sharing references is observably immutable. If a caller
+someday mutates a shared `WaterwayWay`, this assumption breaks and the function
+should switch to a deep copy. `nodes` are untouched here (prune already handled
 infra nodes; `place` and the no-incident cases are kept).
 
 **The readers' inline `is_derelict` checks are NOT removed.** An earlier
@@ -188,7 +191,7 @@ def prune_non_navigable_infra(features: WaterwayFeatures) -> WaterwayFeatures:
 - **Pure:** returns a new `WaterwayFeatures`, does not mutate input.
 - **Kinds affected:** `LOCK_GATE`, `LOCK`, `MOORING`, `MOVABLE_BRIDGE`, `MARINA` — every kind `classify_node` actually returns, which is everything in `NodeKind` *except* `PLACE` (always kept). `NodeKind.OTHER` is a forward-compat enum value that `classify_node` never produces (verified at `pound/ingest/filters.py:83-96`), so it is not a case the prune currently encounters. The implementer adds a defensive `elif kind != NodeKind.PLACE` branch (not `elif kind in {LOCK_GATE, ...}`) so that if a future `classify_node` change starts emitting `OTHER` (or any new kind), it inherits the prune rule rather than silently falling through to keep — forward-compat, no behaviour change today.
 - **Drop rule:** a non-place classified node is dropped iff it is incident to at least one way AND all its incident ways are non-navigable (`is_navigable(tags) is False`). A node with **no** incident ways (no `node_ids` populated — the Overpass path) is **kept**: the post-filter cannot determine navigability by join, and dropping it would be unsupportable guesswork; documented no-op.
-- **Where called:** the bulk reader (`osm.py:read_england`, after `read_pbf` ~lines 127-137) calls it on the **full, unfiltered** features. The Overpass reader `overpass.py:fetch_oxford` (the network wrapper, lines 127-130) calls it, wrapping `parse()`'s return. **`parse()` itself is NOT modified** — it stays pure (its purity is asserted in the module docstring, `overpass.py:8-12`); the prune call lives in `fetch_oxford` so it sits outside the pure-data path. Both Overpass CLI entrypoints (`_cmd_oxford` at `cli.py:31`, `_cmd_build ... oxford` at `cli.py:87-89`) call `fetch_oxford`, so every Overpass route inherits the prune. On the Overpass path `node_ids` is empty under real `out geom` (comment at `overpass.py:93`), so the join yields no incidents and prune is best-effort either way (documented; not a silent drop).
+- **Where called:** by function name (line numbers are advisory — re-verify at implementation time): the bulk reader `osm.py:read_england` (which currently just returns `read_pbf(filtered)`) calls it on the **full, unfiltered** features. The Overpass reader `overpass.py:fetch_oxford` (which currently just returns `parse(...)`) calls it, wrapping `parse()`'s return. **`parse()` itself is NOT modified** — it stays pure (its purity is asserted in the module docstring); the prune call lives in `fetch_oxford` so it sits outside the pure-data path. Both Overpass CLI entrypoints (`_cmd_oxford`, `_cmd_build ... oxford`) call `fetch_oxford`, so every Overpass route inherits the prune. On the Overpass path `node_ids` is empty under real `out geom` (documented in the `parse()` helper comment), so the join yields no incidents and prune is best-effort either way (documented; not a silent drop).
 - **Must run before `filter_navigable_ways`** (Section 1): prune needs the non-navigable ways present to decide "all incidents non-navigable." See Section 1's ordering note. Final chain in both readers: `parse/read_pbf → prune_non_navigable_infra → filter_navigable_ways`.
 
 ### Why a new module, not appended to `filters.py`
@@ -209,11 +212,14 @@ New file `tests/ingest/test_prune.py`:
 - A `place` node whose all incident ways are `boat=no` → kept (gazetteer anchor).
 - A node with no incident ways (empty `node_ids` path) → kept (the Overpass no-op case).
 - A way with no `boat` tag (missing key) incident to an infra node counts as navigable (does not alone trigger a drop).
-- A `lock=yes` way (classified `LOCK`, in `_ROUTABLE`) with `boat=no` → dropped by `filter_navigable_ways` (a non-navigable lock is not routable; the boatability filter is kind-agnostic by design — it drops any way tagged `boat=no`/`unsuitable`/`canoe` regardless of `WaterwayKind`).
 - A `lock_gate` node carrying its own `boat=no` tag is **ignored** by both `filter_navigable_ways` (way-only) and `prune_non_navigable_infra` (incident-way join, not node tags) — node-level `boat` tags do not trigger a drop. Documented explicitly so no implementer wires node tags into the prune.
 - Purity: the input `WaterwayFeatures` is not mutated (see the `model_copy(update=...)` guidance above).
 
-Bulk integration: the existing `tests/ingest/test_osm.py::test_read_pbf_*` tests assert shape; the post-filter chain is applied by `read_england`, not by `read_pbf`, so those tests are unaffected. **A new bulk-path test** in `tests/ingest/test_osm.py` explicitly asserts `read_england` applies the prune → filter chain: feed a tiny PBF fixture containing a `boat=no` way and a lock_gate on that way, and assert the returned `WaterwayFeatures.ways` excludes the `boat=no` way and the `nodes` list excludes the lock_gate (it had zero surviving navigable incidents). **Test-author guidance:** `read_england` calls `run_tags_filter` which shells out to the `osmium` system CLI (`pound/ingest/osm.py:45-51`), so the test must monkeypatch `run_tags_filter` to return a pre-built filtered PBF (or XML) path — bypass the CLI, exactly as the existing bulk round-trip test does — and gate the test with the `bulk` marker so it skips when the `bulk` extra is absent. This is the minimal test that the production England entrypoint (`read_england`) actually wires prune → filter.
+**Note:** the `lock=yes` way with `boat=no` test (kind-agnostic exclusion) goes in `tests/ingest/test_filters.py` alongside the `filter_navigable_ways` tests, not here — it tests the way filter, not the prune.
+
+Bulk integration: the existing `tests/ingest/test_osm.py::test_read_pbf_*` tests assert shape; the post-filter chain is applied by `read_england`, not by `read_pbf`, so those tests are unaffected. **A new bulk-path test** in `tests/ingest/test_osm.py` explicitly asserts `read_england` applies the prune → filter chain: feed a tiny PBF fixture containing a `boat=no` way and a lock_gate on that way, and assert the returned `WaterwayFeatures.ways` excludes the `boat=no` way and the `nodes` list excludes the lock_gate (it had zero surviving navigable incidents). **Test-author guidance:** `read_england` calls `run_tags_filter` which shells out to the `osmium` system CLI (`pound/ingest/osm.py:38-50`). `run_tags_filter` is typed `-> None`; it **mutates the filesystem** by writing the filtered PBF to `out_pbf`, not returning a path. So the monkeypatched replacement must **copy a pre-built fixture PBF to the `out_pbf` argument** (the second positional arg) — the test fixture should be checked in under `tests/fixtures/`, and the monkeypatched function is `def fake_run_tags_filter(in_pbf, out_pbf): shutil.copy(FIXTURE_FILTERED_PBF, out_pbf)`. Gate the test with the `bulk` marker so it skips when the `bulk` extra is absent. This is the minimal test that the production England entrypoint (`read_england`) actually wires prune → filter.
+
+For the Overpass-path integration test in `tests/ingest/test_overpass.py`: to exercise the full `fetch_oxford → parse → prune → filter` chain without hitting live Overpass, monkeypatch `pound.ingest.overpass.fetch_raw` to return the fixture JSON (the existing pattern, e.g. `tests/ingest/test_pipeline_integration.py`). One-line note here so the implementer doesn't search for how to avoid the network.
 
 ---
 
@@ -253,7 +259,8 @@ Grid bucket is the simplest exact method for this fixed-small-radius 2D problem.
 
 ### Tests
 
-- New perf test (synthetic graph with many tips/nodes) asserting sub-second completion and correct snap results identical to the current implementation.
+- New perf test (synthetic graph with many tips/nodes). **Do not assert an absolute sub-second ceiling** — absolute timing is flaky across CI/local runners. Assert a *relative* speedup (grid completes in < ~5% of the baseline O(tips×nodes) loop time on the same fixture, measured with the old scan kept as a reference helper if needed) OR a generous timeout (e.g., < 30s on a 10k-tip fixture) plus correctness assertions. The fixture must use coordinates with no exact sub-metre ties (≥4 decimal places, distinct distances) so the tie-break difference below is not exercised.
+- The correctness assertion is "same set of snaps used, same count of unresolved snaps, all built snaps within `tolerance_m` and not duplicate-edge" — **not** bit-identical to the current implementation, because the grid sorts candidates by `(cell_key, node_key)` rather than iterating NetworkX insertion order, so on a fixture with *exact* distance ties it could pick a different but-equally-near nearest. The fixture avoids exact ties, so the assertion is deterministic in practice.
 - All existing Phase 3 tests (snap joins a tip to a junction; `split` override suppresses; beyond-tolerance not a candidate; the Oxford pendant case; the duplicate-edge-as-unresolved case) pass **unchanged** — pure perf refactor, no behaviour change.
 
 ---
