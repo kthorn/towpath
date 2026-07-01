@@ -18,6 +18,7 @@
 - `parse()` in `pound/ingest/overpass.py` stays pure (its purity is asserted in the module docstring). The prune+filter chain lives in `fetch_oxford` / `read_england`, **not** in `parse` / `read_pbf`.
 - `place` nodes are never dropped by prune (gazetteer relevance is independent of waterway navigability).
 - Phase 3 is a **pure perf refactor**: identical selection logic (`0 < d <= tolerance_m`, exclude the tip and its sole neighbor, pick strict-min distance). Observable behavior is unchanged; one new short-circuit (`tolerance_m <= 0` ⇒ no candidates, no grid).
+- **Grid cell size must account for cos(latitude)** (corrected after whole-branch review): `cell_deg = tolerance_m / 111_320` uses the meters-per-degree-**latitude** constant; at latitude φ, 1° longitude is only `111_320 × cos(φ)` m (~57–63% at England latitudes). Using the latitude constant for both dims makes the longitude cell **undersized** in meters → the 3×3 Moore neighborhood misses candidates within tolerance that fall 2 cells away in lon → genuine snaps silently dropped. The fix uses `cell_deg = tolerance_m / (111_320 × max(cos(max_abs_lat), 0.01))` where `max_abs_lat` is the max |lat| among binned nodes; the longitude cell is then exactly `tolerance_m` wide at the worst-case latitude and wider — safe — elsewhere. Include the regression test `test_phase3_grid_bucket_finds_longitude_separated_tip_within_tolerance`.
 - No new dependencies. `scipy` is explicitly **not** added. Grid bucket is inline pure Python.
 - TDD throughout (RED → GREEN → commit), one concern per commit. Run `ruff` before each commit.
 
@@ -811,7 +812,7 @@ git commit -m "feat(ingest): wire prune -> filter chain into fetch_oxford and re
 
 Implementation plan for the grid:
 
-- Cell size: `cell_deg = tolerance_m / 111_320` (1° lat ≈ 111.32 km). Bucket key `(int((lat+90)/cell_deg), int((lon+180)/cell_deg))`.
+- Cell size: **must account for cos(latitude)** — see Global Constraints. `cell_deg = tolerance_m / (111_320 × max(cos(max_abs_lat), 0.01))` where `max_abs_lat = max(abs(n[0]) for n in g.nodes(), default=0.0)`. Bucket key `(int((lat+90)/cell_deg), int((lon+180)/cell_deg))`.
 - Build a `dict[(cy, cx), list[node_key]]` once over all nodes.
 - For each tip: look up its cell + 8 Moore neighbours, collect candidate node keys, apply the *exact* haversine `0 < d <= tolerance_m` filter, pick the strict-min (first-seen-wins on exact ties by iterating candidates in sorted order).
 
@@ -896,7 +897,19 @@ Edit `pound/graph/build.py` — replace the `tips = [...]` / `for tip in tips:` 
         # beyond-tolerance loop below without building the grid.
         candidates: list[tuple[tuple, tuple, int, int]] = []
     else:
-        cell_deg = tolerance_m / 111_320.0
+        # cell_deg must be >= tolerance_m meters in BOTH dims so the 3x3 Moore
+        # neighbourhood catches every candidate within tolerance. 1 deg lat
+        # ~= 111_320 m regardless of latitude, but 1 deg lon = 111_320 * cos(phi)
+        # m (~57-63% of the lat value at England latitudes). Using the lat
+        # constant for both dims would UNDERSIZE the longitude cell and miss
+        # candidates 2 cells away in lon (whole-branch review caught this).
+        # Inflate cell_deg by 1/cos(max_abs_lat) so the lon cell at the worst-
+        # case latitude is exactly tolerance_m; lower latitudes get slightly
+        # larger cells (more cheap haversine re-checks, never a missed
+        # candidate). The 0.01 floor guards the polar singularity.
+        max_abs_lat = max((abs(n[0]) for n in g.nodes()), default=0.0)
+        lon_factor = max(math.cos(math.radians(max_abs_lat)), 0.01)
+        cell_deg = tolerance_m / (111_320.0 * lon_factor)
 
         def _cell(lat: float, lon: float) -> tuple[int, int]:
             return (int((lat + 90.0) / cell_deg), int((lon + 180.0) / cell_deg))
