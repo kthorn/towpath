@@ -248,6 +248,15 @@ def build_graph(
         if tuple(sorted((str(wa), str(wb)))) in split_pairs:
             overrides_applied += 1
             continue  # suppressed -> neither built nor unresolved
+        # A prior iteration's _contract may have removed ka or kb from g (the
+        # candidate list is a snapshot of dangling tips taken before any snaps;
+        # once a tip is contracted into another node, its other candidate snaps
+        # are stale). has_edge returns False — not an error — for missing nodes,
+        # so it does not guard against this. Skip stale candidates instead of
+        # crashing in _contract on a removed representative. (See the
+        # test_overlapping_snap_candidates_share_node regression.)
+        if ka not in g or kb not in g:
+            continue
         if g.has_edge(ka, kb):  # would duplicate an existing edge
             unresolved.append((ka, kb))
             continue

@@ -370,3 +370,39 @@ def test_closed_ring_sharing_coord_with_linear_way_joins_cleanly():
     g = build_graph(_features(ways))
     assert g.number_of_edges() == 1  # only the linear way
     assert all(u != v for u, v in g.edges())
+
+
+# --- Phase 3: overlapping snap candidates ---------------------------------
+
+
+def test_overlapping_snap_candidates_share_node():
+    # Regression: the snap-build loop pre-computes all candidates, then builds
+    # them one-by-one via _contract, which REMOVES the non-representative node.
+    # A later candidate referencing an already-removed node crashed in
+    # _contract with KeyError on g.nodes[rep] (has_edge returns False, not an
+    # error, for missing nodes, so the guard did not catch it). This surfaced
+    # on the real England build at --tolerance-m 10 (at 1 m the candidates
+    # were independent and the bug stayed latent).
+    #
+    # Geometry: three dangling tips x < m < y in tuple order, each with a far
+    # sole neighbor (>10 m) so the only within-tolerance pairs are {x,m} and
+    # {m,y}. Node insertion order yields candidate list [(x,m),(m,y),(y,m)];
+    # dedup -> [(x,m),(m,y)]. pair1 {x,m} rep=x removes m; pair2 {m,y} rep=m
+    # (gone) must be skipped, not crash.
+    x, A = (0.0, 0.0), (0.0, -0.00020)
+    m, B = (0.0, 0.00006), (0.00020, 0.00006)
+    y, C = (0.0, 0.00010), (0.0, 0.00020)
+    ways = [
+        _way(1, WaterwayKind.CANAL, "xa", [1, 2], [x, A]),
+        _way(2, WaterwayKind.CANAL, "mb", [3, 4], [m, B]),
+        _way(3, WaterwayKind.CANAL, "yc", [5, 6], [y, C]),
+    ]
+    g = build_graph(_features(ways), tolerance_m=10.0)
+    # The first snap (x<->m) is built; the stale {m,y} candidate is skipped
+    # because m was removed. y stays a dangling tip (its own nearest was m,
+    # now gone), so the graph has 2 components, no crash.
+    assert nx.number_connected_components(g) == 2
+    # exactly one snap recorded
+    used = g.graph["tolerance_snaps_used"]
+    assert len(used) == 1
+    assert sorted(used[0]) == sorted([x, m])
