@@ -1,8 +1,7 @@
 import json
 
-from pound.graph.locks import attach_locks
-
 from pound.graph.build import build_graph
+from pound.graph.locks import attach_locks
 from pound.ingest.overpass import parse
 from tests.fixtures import oxford_fixture_path, staircase_fixture_path
 

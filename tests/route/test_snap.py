@@ -1,10 +1,10 @@
 import json
 
 import pytest
-from pound.route.snap import build_gazetteer, snap_place
 
 from pound.graph.build import build_graph
 from pound.ingest.overpass import parse
+from pound.route.snap import build_gazetteer, snap_place
 from tests.fixtures import oxford_fixture_path
 
 
