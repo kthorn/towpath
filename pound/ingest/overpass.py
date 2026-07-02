@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import requests
 
 from pound.ingest import filters
+from pound.ingest.filters import filter_navigable_ways
 from pound.ingest.ir import (
     WaterwayFeatures,
     WaterwayKind,
@@ -21,6 +22,7 @@ from pound.ingest.ir import (
     WaterwayWay,
     WayDimensions,
 )
+from pound.ingest.prune import prune_non_navigable_infra
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 
@@ -127,7 +129,17 @@ def parse(
 
 
 def fetch_oxford() -> WaterwayFeatures:
-    """Live network: fetch the Oxford Canal extract and parse it."""
+    """Live network: fetch the Oxford Canal extract, prune infra nodes on
+    non-navigable ways, then filter navigable ways.
+
+    Ordering: prune BEFORE filter. prune needs boat=no ways present to decide
+    "all incidents non-navigable"; see the spec's load-bearing ordering note.
+    """
     raw = fetch_raw(OXFORD_BBOX)
     osm_timestamp = raw.get("osm3s", {}).get("timestamp_osm_base")
-    return parse(raw["elements"], OXFORD_BBOX, osm_timestamp=osm_timestamp)
+    features = parse(raw["elements"], OXFORD_BBOX, osm_timestamp=osm_timestamp)
+    # prune BEFORE filter: prune needs boat=no ways present to decide
+    # "all incidents non-navigable"; see the spec's load-bearing ordering note.
+    features = prune_non_navigable_infra(features)
+    features = filter_navigable_ways(features)
+    return features

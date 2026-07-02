@@ -64,3 +64,46 @@ def test_tags_filter_round_trip_matches_overpass_shape(monkeypatch, tmp_path):
     overpass_places = {n.tags["name"] for n in overpass_feats.nodes if n.kind == NodeKind.PLACE}
     bulk_places = {n.tags["name"] for n in bulk_feats.nodes if n.kind == NodeKind.PLACE}
     assert overpass_places == bulk_places == {"Oxford", "Hayfield"}
+
+
+def test_read_england_applies_prune_then_filter_chain(monkeypatch, tmp_path):
+    """read_england wraps read_pbf output with prune -> filter_navigable_ways.
+    read_pbf itself is unchanged. We monkeypatch run_tags_filter and read_pbf
+    to avoid the osmium CLI and the PBF-format-despite-XML-content issue."""
+    from pound.ingest import osm as _osm
+
+    fixture_features = _osm.read_pbf(_tiny_pbf_path())
+
+    # Patch run_tags_filter (no-op — not needed since read_pbf is also patched)
+    monkeypatch.setattr(_osm, "run_tags_filter", lambda in_pbf, out_pbf: None)
+    # Patch read_pbf to return fixture features regardless of the filtered path
+    # (the filtered path has a .pbf extension but would contain XML — this avoids
+    # the format-detection issue while still testing the chain wiring).
+    monkeypatch.setattr(_osm, "read_pbf", lambda p: fixture_features.model_copy())
+
+    stub_pbf = tmp_path / "stub.osm.pbf"
+    stub_pbf.touch()
+
+    # spy on chain functions (call through to real to preserve behaviour)
+    real_prune = _osm.prune_non_navigable_infra
+    real_filter = _osm.filter_navigable_ways
+    called_prune = []
+    called_filter = []
+
+    def spy_prune(features):
+        called_prune.append(features)
+        return real_prune(features)
+
+    def spy_filter(features):
+        called_filter.append(features)
+        return real_filter(features)
+
+    monkeypatch.setattr(_osm, "prune_non_navigable_infra", spy_prune)
+    monkeypatch.setattr(_osm, "filter_navigable_ways", spy_filter)
+
+    out = _osm.read_england(stub_pbf)
+    # chain functions were called
+    assert len(called_prune) == 1
+    assert len(called_filter) == 1
+    # without any boat=no ways, output matches fixture
+    assert {w.osm_id for w in out.ways} == {w.osm_id for w in fixture_features.ways}

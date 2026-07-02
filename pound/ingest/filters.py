@@ -11,7 +11,7 @@ later, graph-build concern — at the IR level we only *flag* derelict so the
 reader can drop it; restoration routes are a future flag).
 """
 
-from pound.ingest.ir import NodeKind, WaterwayKind, WayDimensions
+from pound.ingest.ir import NodeKind, WaterwayFeatures, WaterwayKind, WayDimensions
 
 _DERELICT_WATERWAY_VALUES = {"derelict_canal"}
 _DERELICT_TAG_PREFIXES = ("disused:", "abandoned:")
@@ -78,6 +78,48 @@ def extract_dimensions(tags: dict[str, str] | None) -> WayDimensions:
                     values[field] = parsed
                     break
     return WayDimensions(**values)
+
+
+_NON_NAVIGABLE_BOAT = {"no", "unsuitable", "canoe"}
+
+
+def is_navigable(tags: dict[str, str] | None) -> bool:
+    """True unless the way is explicitly tagged non-navigable to canal boats.
+
+    OSM `boat` access tag: `no`=prohibited/impassable, `unsuitable`=navigable-
+    in-principle-but-not-really, `canoe`=canoe-only (out of scope for a canal-
+    boat router). Everything else (`yes`, `private`, `permissive`, `permit`,
+    `designated`, `discouraged`, `unknown`, missing, typos) is kept — bad data
+    and unknowns fall back to "keep," not silent drop. Literal-string matching
+    only; we deliberately do NOT alias typos like `unkmown` -> `unknown`
+    (an alias could collide with a future `boat=yes` synonym and drop a real
+    navigable edge). Dimensions (`maxwidth` etc.) are a *separate*, plan-time
+    concern (`route/cost.py:is_eligible`) and stay untouched here.
+    """
+    if not tags:
+        return True
+    return tags.get("boat") not in _NON_NAVIGABLE_BOAT
+
+
+def filter_navigable_ways(features: WaterwayFeatures) -> WaterwayFeatures:
+    """Return a new WaterwayFeatures with non-navigable ways (`is_navigable` is
+    False) removed from `features.ways`. `nodes` are untouched (infra-node
+    pruning is a separate concern handled by `prune_non_navigable_infra`).
+
+    Pure: returns a new WaterwayFeatures; does not mutate the input. Uses
+    `model_copy(update=...)` to rebuild the `ways` list — the returned model is
+    a shallow copy, but its `ways` list is fresh (the individual `WaterwayWay`
+    elements are shared references, which is safe because nothing in `pound/`
+    mutates `WaterwayWay` instances post-construction; if a future caller would
+    mutate one, switch to a deep copy). `nodes` is the same list reference as
+    the input (deliberately — "untouched").
+
+    Boat-only: does NOT fold `is_derelict`. The readers drop derelict ways
+    inline in their way loops; that stays. Folding here would break
+    `test_parse_excludes_derelict` and leak `disused:waterway` ways.
+    """
+    kept = [w for w in features.ways if is_navigable(w.tags)]
+    return features.model_copy(update={"ways": kept})
 
 
 def classify_node(tags: dict[str, str] | None) -> NodeKind | None:

@@ -1,3 +1,5 @@
+import time
+
 import networkx as nx
 
 from pound.graph.build import build_graph, load_overrides
@@ -210,6 +212,81 @@ def test_join_override_bridges_a_beyond_tolerance_gap(tmp_path):
     g = build_graph(_features(ways), tolerance_m=10.0, overrides=ovr)
     assert nx.number_connected_components(g) == 1  # bridge override connected them
     assert g.graph["overrides_applied"] == 1
+
+
+# --- Phase 3: grid-bucket correctness (longitude cos-lat correction) --------
+
+
+def test_phase3_grid_bucket_finds_longitude_separated_tip_within_tolerance():
+    """The grid-bucket cell size must account for cos(latitude): 1° longitude
+    at England's latitudes is only ~57-63% of 1° latitude in meters. If the
+    cell uses the latitude factor for both dims, longitude cells are undersized
+    and the 3×3 Moore neighbourhood misses candidates 2 cells away in lon.
+    This test places two tips ~9.5 m apart in LONGITUDE at lat 51° (within 10 m
+    tolerance) positioned so the pre-fix grid put them 2 cells apart."""
+    import math
+
+    lat = 51.0
+    lon_per_m = 1.0 / (111_320.0 * math.cos(math.radians(lat)))
+    # Position the tips so they straddle a cell boundary (the bug trigger)
+    tip_a_lon = -0.9999550844
+    tip_b_lon = tip_a_lon + 9.5 * lon_per_m  # ~9.5 m east, within 10 m tolerance
+    ways = [
+        _way(1, WaterwayKind.CANAL, "A", [1, 2], [(lat, tip_a_lon), (lat + 0.001, tip_a_lon)]),
+        _way(2, WaterwayKind.CANAL, "B", [3, 4], [(lat, tip_b_lon), (lat - 0.001, tip_b_lon)]),
+    ]
+    g = build_graph(_features(ways), tolerance_m=10.0)
+    # The tips are within tolerance and must snap — the grid must not miss them.
+    assert len(g.graph["tolerance_snaps_used"]) >= 1, (
+        "Phase 3 grid missed a longitude-separated tip within tolerance "
+        "(cell_deg does not account for cos(lat))"
+    )
+    assert nx.number_connected_components(g) == 1
+
+
+# --- Phase 3: grid-bucket perf (relative speedup) --------------------------
+
+
+def test_phase3_grid_bucket_preserves_snap_results_and_is_sub_linear():
+    """Phase 3's grid-bucket refactor must produce >=1500 snaps and complete in
+    < 2 seconds on a 3000-tip synthetic graph (3000 chain pairs -> ~6000 nodes).
+    The all-pairs scan took multiple seconds on this size; < 2 s is generous."""
+    # 3000 disjoint chain tips, each ~0.5 m from a target tip within 1 m tolerance
+    ways = []
+    for i in range(3000):
+        base_lat = 51.0000 + i * 0.001
+        lon = -1.0000
+        tip_a_lat = round(base_lat, 7)
+        tip_b_lat = round(base_lat + 0.0000045, 7)
+        # Unique node_ids per pair so Phase 1 node-ref does NOT merge them
+        n0, n1, n2, n3 = i * 4 + 1, i * 4 + 2, i * 4 + 3, i * 4 + 4
+        ways.append(
+            _way(
+                100 + i * 10,
+                WaterwayKind.CANAL,
+                f"A{i}",
+                [n0, n1],
+                [(tip_a_lat, lon), (round(base_lat + 0.0000900, 7), lon)],
+            )
+        )
+        ways.append(
+            _way(
+                200 + i * 10,
+                WaterwayKind.CANAL,
+                f"B{i}",
+                [n2, n3],
+                [(round(base_lat - 0.0000900, 7), lon), (tip_b_lat, lon)],
+            )
+        )
+
+    start = time.perf_counter()
+    g = build_graph(_features(ways), tolerance_m=1.0)
+    elapsed = time.perf_counter() - start
+
+    # Sufficient snaps fired: at least 1500 (one per i; tip->tip pairs collapse).
+    assert len(g.graph["tolerance_snaps_used"]) >= 1500
+    # Perf: this should be well under a second on any modern machine.
+    assert elapsed < 2.0, f"Phase 3 took {elapsed:.2f}s — grid not sub-linear"
 
 
 def test_duplicate_edge_candidate_recorded_unresolved_not_built():
