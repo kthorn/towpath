@@ -124,7 +124,12 @@ referenced node lacks coordinates. The emission loop assumes a 1-to-1 zip
 between `node_ids` and `geometry` — **zip-filter first**: drop refs whose
 location is missing so `len(node_ids) == len(geometry)` before iterating. Do
 this in the build (not in the reader) so the reader stays a faithful IR
-producer and the build owns the alignment invariant.
+producer and the build owns the alignment invariant. **Drop in lockstep:**
+filter `node_ids` and `geometry` together (e.g. iterate `w.nodes` a la
+`read_pbf` and keep the `(ref, (lat,lon))` pair only when `n.location.valid`),
+so the 1:1 correspondence is preserved by construction — a membership-based
+filter that prunes one list independently of the other would silently
+misalign the two and emit segments with the wrong coordinates.
 
 1. For each OSM node id in `node_ids` (after alignment), resolve-or-create an
    internal uid via **two cooperating indexes**:
@@ -210,6 +215,11 @@ dropping the duplicate:
   constraint is the real one; a wider listed value is stale/optimistic).
 - `name`: keep the first non-`None`.
 - `has_tunnel` / `has_movable_bridge`: logical OR across the two ways.
+- `length_m`: keep the existing edge's value. Two coincident segments span the
+  same two endpoints, so their haversine lengths are equal by construction;
+  the only divergence is digitization precision (sub-metre), which is below
+  the routing cost model's resolution. Stated explicitly to avoid leaving it
+  implicit.
 - `osm_way_id`: this is single-valued on the edge today; on collision, keep
   the existing one (the edge already represents that way; the second way's
   `osm_way_id` is recoverable via the OSM id sets on the endpoint uids if ever
@@ -358,15 +368,37 @@ Bounded — confirmed by grep. **No production code assumes `(lat, lon)` keys:**
 | `pound/ingest/cli.py` | Drop `--tolerance-m`/`--max-unresolved-snaps`/`--overrides`; drop the snap gate condition; keep derelict/self_loops gate. |
 | `pound/data/overrides.json`, `pound/graph/build.py::load_overrides` | Delete (file) and remove (function). |
 | `tests/graph/test_build_bulk.py` | ~50 references to `tolerance_m` / `tolerance_snaps_*` / `load_overrides` / `_contract` / grid-bucket machinery to delete, plus a small number of coord-key graph accesses, rewritten to attribute-based assertions (`g.nodes[uid]["lat"]`); re-derive edge counts; delete tolerance-snap/override tests. (The file has ~0 direct `g.nodes[(coord)]`-style accesses; the "43 coord-key assertions" wording in earlier drafts was loose.) |
-| `pound/route/plan.py`, `tests/route/test_plan_route.py` | **Migrate, do not delete.** `plan.py:17` imports `build_gazetteer, snap_place` from the deleted `route/snap.py`; `plan.py:47-48` calls `snap_place`; `plan.py:165-170` `_name_for` compares `key == node_key` (coord tuple) and falls back to `f"{node_key[0]},{node_key[1]}"` — both break under internal uids. Re-point the `build_gazetteer` import to `graph/gazetteer.py` (the live one); replace `snap_place` usage with an inline attribute-based resolve (or leave `plan_route`'s production `RuntimeError` path as-is and only fix the test-only `_graph`/`_features` path); rewrite `_name_for` to read `g.nodes[uid]["lat"]`/`["lon"]`. **Keep the `_graph`/`_features` test kwargs** — PR2 retires them; do not pre-empt PR2's contract change here. `test_plan_route.py`'s ~15 call sites build the graph via the fixture and assert route structure; they migrate to attribute-based node lookup but stay otherwise intact. |
+| `pound/route/plan.py`, `tests/route/test_plan_route.py` | **Migrate, do not delete.** `plan.py:17` imports `build_gazetteer, snap_place` from the deleted `route/snap.py`; `plan.py:47-48` calls `snap_place`; `plan.py:165-170` `_name_for` compares `key == node_key` (coord tuple) and falls back to `f"{node_key[0]},{node_key[1]}"` — both break under internal uids. Re-point the `build_gazetteer` import to `graph/gazetteer.py` (the live one); replace `snap_place` usage with an inline attribute-based resolve (or leave `plan_route`'s production `RuntimeError` path as-is and only fix the test-only `_graph`/`_features` path); rewrite `_name_for` to read `g.nodes[uid]["lat"]`/`["lon"]` — **note `_name_for` has no `graph` parameter today; add one (private fn, signature change is fine) or do the lookup inline in the leg-assembly loop**. **Keep the `_graph`/`_features` test kwargs** — PR2 retires them; do not pre-empt PR2's contract change here. **`build_gazetteer` return-type caveat:** `graph/gazetteer.py::build_gazetteer` returns `dict[str, tuple | list[tuple]]` (ambiguous names → `list`), unlike the deleted`route/snap.py` one which returned `dict[str, tuple]`.`_name_for`'s`key == node_key` comparison always fails for `list`-valued entries → ambiguous-named legs silently fall through to the coord-string fallback. Document as a **known interim regression**; PR2's`OfflineResolver`owns the real ambiguous-name handling (`resolve_place` raises on list-valued entries). `test_plan_route.py`'s call sites migrate to attribute-based node lookup; **`_long_plan` synthetic-scaling tests need re-derivation** (see below). |
 | `pound/graph/build.py` module docstring | **Rewrite** (currently lines 1-43 describe the old three-phase / tolerance-snap / coord-key model — actively misleading after the rewrite). |
 | `tests/graph/test_build.py` | Re-derive edge/node counts for noded chain. |
 | `tests/graph/test_gazetteer.py` | Attribute-based; update `g.nodes[key].get("name")`-style asserts to `g.nodes[uid].get("name")`. |
-| `tests/validate/test_connectivity.py` | One `g.add_node((51.7,-1.2), …)` → internal-uid node; delete `tolerance_snaps_*` assertions (incl. `test_report_has_bulk_connectivity_keys`, `test_report_defaults_when_graph_has_no_bulk_attrs`); keep component/advisory assertions; **`edges_missing_dims` count changes 4→5** — way 1001 (no dims) yields 2 dimless segment-edges under noding, so the new expected value is 5 (1001×2, 1003, 1006, 1007). |
+| `tests/validate/test_connectivity.py` | One `g.add_node((51.7,-1.2), …)` → internal-uid node; **rewrite, don't wholesale delete, `test_report_has_bulk_connectivity_keys` and `test_report_defaults_when_graph_has_no_bulk_attrs`** — they also assert the *surviving* keys (`place_nodes_seen`, `place_nodes_in_gazetteer`, `named_nodes_in_graph`, `ambiguous_place_names`); rewrite them to assert that surviving subset and drop only the removed-snap-key assertions, so coverage for the surviving keys isn't lost; keep the other component/advisory tests (`test_component_count_is_two`, `test_no_derelict_edges`, `test_missing_dims_count`, `test_no_zero_length_or_self_loops`, `test_orphans_carry_through`, `test_totals_present`); **`edges_missing_dims` count changes 4→5** — way 1001 (no dims) yields 2 dimless segment-edges under noding, so the new expected value is 5 (1001×2, 1003, 1006, 1007); `test_totals_present` edge/node counts re-derive too. |
 | `tests/ingest/test_cli.py` | Remove the 3 `--tolerance-m`/`--max-unresolved-snaps``/`--overrides` invocations and the two `test_build_england_…`gate tests that assert the **removed** unresolved-snap gate (`test_build_england_writes_artifact_and_passes_gate`,`test_build_england_fails_when_unresolved_exceeds_threshold`); the passing-gate test stays, reframed around derelict/self_loops; the threshold-fails test is deleted (no such gate). |
 | `tests/ingest/test_pipeline_integration.py` | Remove `--max-unresolved-snaps`/`--overrides` flag args and the `tolerance_snaps_unresolved==[]`/`tolerance_snaps_used`-truthy asserts from the passing test; **delete** `test_build_oxford_gate_fails_when_pendant_left_unresolved` (asserts the removed snap-gate fire — the pendant now joins for free under noding, so there is no gate to fire); the remaining `named_nodes_in_graph>=2` assert depends on the `attach_node_names` rewrite above. |
 | `tests/graph/test_locks.py` | **Unchanged** — chambers are 2-pt and route through the §3.2 id-less dev branch (1 edge/chamber); asserts are `osm_way_id`-based, no coord keys. |
 | `tests/ingest/test_overpass.py` | **Unchanged** — exercises `parse()` against fixture elements, no graph-node-by-coord lookup; adding `nodes` arrays to the fixture requires no change here. |
+
+**`_long_plan` test re-derivation (in `tests/route/test_plan_route.py`):** the
+`_long_plan` helper (`test_plan_route.py:88`) scales every Oxford edge to
+~13 km (~162 min/edge) and its docstring says "3-edge path" (Oxford→Hayfield
+= ways 1001→1002→1003, one edge per way under the *endpoint* build). Under
+**noding**, way 1001 (3 geometry points) becomes **2** segment edges, so the
+Oxford→Hayfield path becomes **4 edges, not 3**. Two assertions break on the
+new edge count and must be re-derived:
+
+- `test_multiday_splits_legs_within_budget` (days=3, hours_per_day=3 → 180 min
+  budget): 4 edges × 162 min; greedy with max_days=3 folds the 4th edge into
+  day 3 → `day.cruising_minutes == 324 > 180` → the `<= 3.0*60` assertion
+  fails. Re-derive by lowering the scaled `length_m` (e.g. to ~9.7 km so 2
+  edges/162 min-equivalent fit the budget) or by assertion-adjusting to the
+  4-edge chunking.
+- `test_days_not_padded_beyond_route` (days=5, expects `len(r.days)==3`):
+  4 edges → 4 days, not 3 → `len(r.days)==3` fails. Re-derive the expected
+  count to 4.
+- Update the `_long_plan` docstring ("3-edge path" → "4-edge path under noding").
+- `test_days_partition_legs_exactly`, `test_days_count_never_exceeds_constraints_days`,
+  `test_day_index_sequential` survive (they assert structural invariants, not
+  specific edge counts) but re-verify.
 
 **Unchanged & still valid:** the boatability filter, `prune_non_navigable_infra`,
 the grid-bucket perf index (now applied per-segment if at all — see OQ-1), the
