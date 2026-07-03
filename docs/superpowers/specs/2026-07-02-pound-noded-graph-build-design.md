@@ -117,19 +117,28 @@ are source-agnostic and survive both aliasing and future synthetic nodes.
 For each routable way with `node_ids` of length N and a matching geometry of N
 coordinate points:
 
-**Alignment guard (required):** `pound/ingest/osm.py::read_pbf` builds
-`node_ids` from **all** refs (`[n.ref for n in w.nodes]`) but `geometry` only
-from refs that have a valid location; the two lists can differ in length when a
-referenced node lacks coordinates. The emission loop assumes a 1-to-1 zip
-between `node_ids` and `geometry` — **zip-filter first**: drop refs whose
-location is missing so `len(node_ids) == len(geometry)` before iterating. Do
-this in the build (not in the reader) so the reader stays a faithful IR
-producer and the build owns the alignment invariant. **Drop in lockstep:**
-filter `node_ids` and `geometry` together (e.g. iterate `w.nodes` a la
-`read_pbf` and keep the `(ref, (lat,lon))` pair only when `n.location.valid`),
-so the 1:1 correspondence is preserved by construction — a membership-based
-filter that prunes one list independently of the other would silently
-misalign the two and emit segments with the wrong coordinates.
+**Alignment guard (required, performed in `read_pbf`):** `pound/ingest/osm.py::read_pbf`
+currently builds `node_ids` from **all** refs (`[n.ref for n in w.nodes]`) but
+`geometry` only from refs whose location is valid — so the two lists can differ
+in length when a referenced node lacks coordinates. The noded emission loop
+assumes a 1-to-1 zip. **The prune MUST happen in `read_pbf`, not in the build**:
+`WaterwayWay` (`pound/ingest/ir.py:45-54`) carries only `node_ids: list[int]`
+and `geometry: list[tuple]` with **no per-ref location-validity flag** — by
+the time the build receives the IR the validity info is gone and a build-layer
+lockstep filter is unimplementable (an implementer forced into it would fall
+back to `zip(node_ids, geometry)` truncation, the exact silent-misalignment
+failure this guard exists to prevent). **Move the guard into `read_pbf`:** build
+both `node_ids` and `geometry` from the *same* single pass over `w.nodes` that
+keeps the `(n.ref, (n.location.lat, n.location.lon))` pair only when
+`n.location.valid`, so the two lists are aligned by construction. This means
+`WaterwayWay.node_ids` no longer lists every raw ref (only the locatable ones)
+— the correct IR invariant for the noded build; the reader is still a faithful
+producer of the *locatable* geometry, which is all the build can use anyway.
+`read_pbf` is added to the migration table (§5); `overpass.py::parse` (dev
+path) builds `node_ids` from `el.get("nodes", [])` and `geometry` from
+`out geom` results that include a point for every node, so it is already
+aligned and needs no change. The build then assumes `len(node_ids) ==
+len(geometry)` and zips freely.
 
 1. For each OSM node id in `node_ids` (after alignment), resolve-or-create an
    internal uid via **two cooperating indexes**:
@@ -220,10 +229,19 @@ dropping the duplicate:
   the only divergence is digitization precision (sub-metre), which is below
   the routing cost model's resolution. Stated explicitly to avoid leaving it
   implicit.
-- `osm_way_id`: this is single-valued on the edge today; on collision, keep
-  the existing one (the edge already represents that way; the second way's
-  `osm_way_id` is recoverable via the OSM id sets on the endpoint uids if ever
-  needed for traceability). Documented as a known minor info loss.
+- `osm_way_id`: single-valued on the edge; on collision, **keep the LOCK way's
+  id when exactly one colliding party has `kind == LOCK`** (the lock is the
+  load-bearing tag for `attach_locks`, which matches lock ways by `osm_way_id`;
+  keeping a canal's id on a merged LOCK edge would let the lock way fall into
+  `orphan_lock_ways` and leave the merged LOCK edge with `locks=0` — a real
+  regression on the measured lock+canal coincident pairs). Otherwise keep the
+  existing (first-emitted) edge's `osm_way_id`. The dropped way's id is
+  recoverable via the OSM id sets on the endpoint uids for traceability.
+- `locks`: **at merge time, if either colliding way has `kind == LOCK`, set the
+  merged edge's `locks = max(existing, 1)` immediately** — the lock is intrinsic
+  to the segment, and this keeps the count correct even in the (rare) case where
+  `attach_locks`'s way-loop later misses the merged edge by id. (Edges start at
+  `locks=0`; this only fires on a LOCK-involving collision.)
 - Non-overlapping attrs (e.g. a lock's `lock_name`) that exist only on one
   side: keep as-is from whichever side carries them. (`lock_name` is not an
   edge attribute today; if `attach_locks` later sets it, OR-merge applies.)
@@ -290,6 +308,22 @@ preserved or corrected):**
   counts the way once (guard with a matched flag), not per segment. This is a
   bugfix the noded build exposes; the staircase fixture asserts `locks` on the
   single chamber edge and stays green.
+- **`attach_locks` lock-NODE loop — tie-break by `kind`, not by emission order.**
+  The second loop in `attach_locks` (`locks.py:38-50`) attaches `lock=yes`
+  *gate nodes* to the nearest edge, using strict `<` for `best_dist`. Under
+  noding a gate node that IS an OSM node becomes a graph node incident to
+  multiple edges (the lock segment AND any coincident canal spur sharing that
+  junction), all at distance 0 — strict `<` ties break by insertion order
+  (whichever way emitted first), so on real England data a coincident canal
+  spur with a lower `osm_way_id` than the lock way would win the tie and get
+  `locks=1` set on the spur. **Break ties by `kind == LOCK` preferred**, then by
+  shorter segment, then by first-seen. (The Oxford fixture happens to put the
+  lock way 1003 at a lower `osm_way_id` than the coincident canal spur 1007, so
+  it currently wins by insertion order — but that's luck, not a guarantee; the
+  tie-break makes it deterministic.) `test_non_lock_edges_have_zero_locks`
+  (`tests/graph/test_locks.py:45-49`) currently excludes edge 1007 from its
+  iteration — widen it to cover all non-LOCK edges so the spur-contention
+  regression would be caught.
 
 ### 3.6 Hard-fail gate, reframed (decision A)
 
@@ -367,16 +401,18 @@ Bounded — confirmed by grep. **No production code assumes `(lat, lon)` keys:**
 | `pound/route/snap.py`, `tests/route/test_snap.py` | **Delete** (whole module + test): `snap_place` does a coord-tuple graph-node lookup that breaks under uids and violates criterion 4; PR2 builds `resolve.py` fresh (§3.4). |
 | `pound/ingest/cli.py` | Drop `--tolerance-m`/`--max-unresolved-snaps`/`--overrides`; drop the snap gate condition; keep derelict/self_loops gate. |
 | `pound/data/overrides.json`, `pound/graph/build.py::load_overrides` | Delete (file) and remove (function). |
+| `pound/ingest/osm.py::read_pbf` | **Alignment-guard move (§3.2):** build `node_ids` and `geometry` from the *same* pass over `w.nodes` that keeps the `(n.ref, (n.location.lat, n.location.lon))` pair only when `n.location.valid`, so the two lists are aligned by construction (currently `node_ids` takes all refs, `geometry` only valid-location refs). `pound/ingest/overpass.py::parse` (dev path) is already aligned and unchanged. |
 | `tests/graph/test_build_bulk.py` | ~50 references to `tolerance_m` / `tolerance_snaps_*` / `load_overrides` / `_contract` / grid-bucket machinery to delete, plus a small number of coord-key graph accesses, rewritten to attribute-based assertions (`g.nodes[uid]["lat"]`); re-derive edge counts; delete tolerance-snap/override tests. (The file has ~0 direct `g.nodes[(coord)]`-style accesses; the "43 coord-key assertions" wording in earlier drafts was loose.) |
 | `pound/route/plan.py`, `tests/route/test_plan_route.py` | **Migrate, do not delete.** `plan.py:17` imports `build_gazetteer, snap_place` from the deleted `route/snap.py`; `plan.py:47-48` calls `snap_place`; `plan.py:165-170` `_name_for` compares `key == node_key` (coord tuple) and falls back to `f"{node_key[0]},{node_key[1]}"` — both break under internal uids. Re-point the `build_gazetteer` import to `graph/gazetteer.py` (the live one); replace `snap_place` usage with an inline attribute-based resolve (or leave `plan_route`'s production `RuntimeError` path as-is and only fix the test-only `_graph`/`_features` path); rewrite `_name_for` to read `g.nodes[uid]["lat"]`/`["lon"]` — **note `_name_for` has no `graph` parameter today; add one (private fn, signature change is fine) or do the lookup inline in the leg-assembly loop**. **Keep the `_graph`/`_features` test kwargs** — PR2 retires them; do not pre-empt PR2's contract change here. **`build_gazetteer` return-type caveat:** `graph/gazetteer.py::build_gazetteer` returns `dict[str, tuple | list[tuple]]` (ambiguous names → `list`), unlike the deleted`route/snap.py` one which returned `dict[str, tuple]`.`_name_for`'s`key == node_key` comparison always fails for `list`-valued entries → ambiguous-named legs silently fall through to the coord-string fallback. Document as a **known interim regression**; PR2's`OfflineResolver`owns the real ambiguous-name handling (`resolve_place` raises on list-valued entries). `test_plan_route.py`'s call sites migrate to attribute-based node lookup; **`_long_plan` synthetic-scaling tests need re-derivation** (see below). |
 | `pound/graph/build.py` module docstring | **Rewrite** (currently lines 1-43 describe the old three-phase / tolerance-snap / coord-key model — actively misleading after the rewrite). |
 | `tests/graph/test_build.py` | Re-derive edge/node counts for noded chain. |
 | `tests/graph/test_gazetteer.py` | Attribute-based; update `g.nodes[key].get("name")`-style asserts to `g.nodes[uid].get("name")`. |
-| `tests/validate/test_connectivity.py` | One `g.add_node((51.7,-1.2), …)` → internal-uid node; **rewrite, don't wholesale delete, `test_report_has_bulk_connectivity_keys` and `test_report_defaults_when_graph_has_no_bulk_attrs`** — they also assert the *surviving* keys (`place_nodes_seen`, `place_nodes_in_gazetteer`, `named_nodes_in_graph`, `ambiguous_place_names`); rewrite them to assert that surviving subset and drop only the removed-snap-key assertions, so coverage for the surviving keys isn't lost; keep the other component/advisory tests (`test_component_count_is_two`, `test_no_derelict_edges`, `test_missing_dims_count`, `test_no_zero_length_or_self_loops`, `test_orphans_carry_through`, `test_totals_present`); **`edges_missing_dims` count changes 4→5** — way 1001 (no dims) yields 2 dimless segment-edges under noding, so the new expected value is 5 (1001×2, 1003, 1006, 1007); `test_totals_present` edge/node counts re-derive too. |
+| `tests/validate/test_connectivity.py` | One `g.add_node((51.7,-1.2), …)` → internal-uid node; **rewrite, don't wholesale delete, `test_report_has_bulk_connectivity_keys` and `test_report_defaults_when_graph_has_no_bulk_attrs`** — they also assert the *surviving* keys (`place_nodes_seen`, `place_nodes_in_gazetteer`, `named_nodes_in_graph`, `ambiguous_place_names`); rewrite them to assert that surviving subset and drop only the removed-snap-key assertions, so coverage for the surviving keys isn't lost; keep the other component/advisory tests (`test_component_count_is_two`, `test_no_derelict_edges`, `test_missing_dims_count`, `test_no_zero_length_or_self_loops`, `test_orphans_carry_through`, `test_totals_present`); **`edges_missing_dims` count changes 4→5** — way 1001 (no dims) yields 2 dimless segment-edges under noding, so the new expected value is 5 (1001×2, 1003, 1006, 1007); **`test_component_count_is_two`'s `largest_component_size == 5` becomes 6** — noding gives the main chain+pendant component 6 nodes (ids `a, b, c` from 1001's 3 pts, `5003`, `3002`, `7002`); Duke's Cut stays the 2nd component so `component_count` stays 2; `test_totals_present` edge/node counts re-derive too (edges 5→6, nodes 7→8). |
 | `tests/ingest/test_cli.py` | Remove the 3 `--tolerance-m`/`--max-unresolved-snaps``/`--overrides` invocations and the two `test_build_england_…`gate tests that assert the **removed** unresolved-snap gate (`test_build_england_writes_artifact_and_passes_gate`,`test_build_england_fails_when_unresolved_exceeds_threshold`); the passing-gate test stays, reframed around derelict/self_loops; the threshold-fails test is deleted (no such gate). |
 | `tests/ingest/test_pipeline_integration.py` | Remove `--max-unresolved-snaps`/`--overrides` flag args and the `tolerance_snaps_unresolved==[]`/`tolerance_snaps_used`-truthy asserts from the passing test; **delete** `test_build_oxford_gate_fails_when_pendant_left_unresolved` (asserts the removed snap-gate fire — the pendant now joins for free under noding, so there is no gate to fire); the remaining `named_nodes_in_graph>=2` assert depends on the `attach_node_names` rewrite above. |
-| `tests/graph/test_locks.py` | **Unchanged** — chambers are 2-pt and route through the §3.2 id-less dev branch (1 edge/chamber); asserts are `osm_way_id`-based, no coord keys. |
+| `tests/graph/test_locks.py` | **Mostly unchanged** — chambers are 2-pt and route through the §3.2 id-less dev branch (1 edge/chamber); asserts are `osm_way_id`-based, no coord keys. **One change:** widen `test_non_lock_edges_have_zero_locks` to cover edge 1007 too (it currently excludes it), so the §3.5 lock-node tie-break regression (canal spur spuriously getting `locks=1`) would be caught. |
 | `tests/ingest/test_overpass.py` | **Unchanged** — exercises `parse()` against fixture elements, no graph-node-by-coord lookup; adding `nodes` arrays to the fixture requires no change here. |
+| `tests/graph/test_artifact.py` | **Unchanged** — `build_graph(parse(...))` is called with no kwargs (fine either way); asserts only self-consistent `loaded_g.number_of_edges() == g.number_of_edges()`; its embedded gazetteer dict overwrite `{"Oxford": (51.75, -1.26)}` is keyed by *name* (a coord-valued *dict*, not a graph-node coord key) — unaffected by uid keys. Listed for completeness so the implementer knows it's audited. |
 
 **`_long_plan` test re-derivation (in `tests/route/test_plan_route.py`):** the
 `_long_plan` helper (`test_plan_route.py:88`) scales every Oxford edge to
@@ -389,9 +425,11 @@ new edge count and must be re-derived:
 - `test_multiday_splits_legs_within_budget` (days=3, hours_per_day=3 → 180 min
   budget): 4 edges × 162 min; greedy with max_days=3 folds the 4th edge into
   day 3 → `day.cruising_minutes == 324 > 180` → the `<= 3.0*60` assertion
-  fails. Re-derive by lowering the scaled `length_m` (e.g. to ~9.7 km so 2
-  edges/162 min-equivalent fit the budget) or by assertion-adjusting to the
-  4-edge chunking.
+  fails. Re-derive by lowering the scaled `length_m` — with `CRUISE_KMH = 4.8`
+  (`pound/route/cost.py:9`), 90 min/edge ≈ **7.2 km/edge** is the ceiling for
+  two edges/day within a 180-min budget (the ~9.7 km figure in earlier drafts
+  was wrong: 9.7 km/edge ≈ 121 min, 2 edges/day ≈ 242 min > 180). Or
+  alternatively assertion-adjust to the 4-edge chunking.
 - `test_days_not_padded_beyond_route` (days=5, expects `len(r.days)==3`):
   4 edges → 4 days, not 3 → `len(r.days)==3` fails. Re-derive the expected
   count to 4.
@@ -433,9 +471,15 @@ The rewrite is done when **all** hold:
 5. A new regression test asserts the noded build joins an
    internal-junction way (a way sharing an OSM id only at an internal
    position of another way) — the exact defect this rewrite fixes.
-6. A regression test asserts the edge-collision merge (§3.3): a `lock`-
-   tagged edge coincident with a `canal`-tagged edge resolves to one edge with
-   `kind == LOCK` (and the tighter dimension set).
+6. A regression test asserts the edge-collision merge (§3.3): a `lock`-tagged
+   edge coincident with a `canal`-tagged edge resolves to one edge with
+   `kind == LOCK`, the **LOCK way's `osm_way_id`** kept (so `attach_locks`
+   finds it), and `locks == 1` on the merged edge both at build time (§3.3
+   merge sets it) and after `attach_locks`.
+7. A regression test asserts the `attach_locks` lock-node tie-break (§3.5):
+   with a `lock=yes` gate node coincident with both a LOCK segment and a canal
+   spur, `locks == 1` lands on the LOCK segment and the canal spur stays at
+   `locks == 0` (deterministic, not emission-order-dependent).
 
 ## Open questions (resolved as below)
 
