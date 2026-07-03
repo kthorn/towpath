@@ -401,11 +401,11 @@ Bounded — confirmed by grep. **No production code assumes `(lat, lon)` keys:**
 | `pound/route/snap.py`, `tests/route/test_snap.py` | **Delete** (whole module + test): `snap_place` does a coord-tuple graph-node lookup that breaks under uids and violates criterion 4; PR2 builds `resolve.py` fresh (§3.4). |
 | `pound/ingest/cli.py` | Drop `--tolerance-m`/`--max-unresolved-snaps`/`--overrides`; drop the snap gate condition; keep derelict/self_loops gate. |
 | `pound/data/overrides.json`, `pound/graph/build.py::load_overrides` | Delete (file) and remove (function). |
-| `pound/ingest/osm.py::read_pbf` | **Alignment-guard move (§3.2):** build `node_ids` and `geometry` from the *same* pass over `w.nodes` that keeps the `(n.ref, (n.location.lat, n.location.lon))` pair only when `n.location.valid`, so the two lists are aligned by construction (currently `node_ids` takes all refs, `geometry` only valid-location refs). `pound/ingest/overpass.py::parse` (dev path) is already aligned and unchanged. |
+| `pound/ingest/osm.py::read_pbf` | **Alignment-guard move (§3.2):** build `node_ids` and `geometry` from the *same* pass over `w.nodes` that keeps the `(n.ref, (n.location.lat, n.location.lon))` pair only when `n.location.valid`, so the two lists are aligned by construction (currently `node_ids` takes all refs, `geometry` only valid-location refs). `pound/ingest/overpass.py::parse` (dev path) is already aligned and unchanged. **Add a regression test** (in `tests/ingest/test_osm.py`, bulk-marked) with a tiny PBF whose way contains one invalid-location ref so `len(node_ids) < raw_refs` is exercised — the existing `tiny_bulk.osm` fixture has all nodes locatable, so the guard is otherwise untested. |
 | `tests/graph/test_build_bulk.py` | ~50 references to `tolerance_m` / `tolerance_snaps_*` / `load_overrides` / `_contract` / grid-bucket machinery to delete, plus a small number of coord-key graph accesses, rewritten to attribute-based assertions (`g.nodes[uid]["lat"]`); re-derive edge counts; delete tolerance-snap/override tests. (The file has ~0 direct `g.nodes[(coord)]`-style accesses; the "43 coord-key assertions" wording in earlier drafts was loose.) |
 | `pound/route/plan.py`, `tests/route/test_plan_route.py` | **Migrate, do not delete.** `plan.py:17` imports `build_gazetteer, snap_place` from the deleted `route/snap.py`; `plan.py:47-48` calls `snap_place`; `plan.py:165-170` `_name_for` compares `key == node_key` (coord tuple) and falls back to `f"{node_key[0]},{node_key[1]}"` — both break under internal uids. Re-point the `build_gazetteer` import to `graph/gazetteer.py` (the live one); replace `snap_place` usage with an inline attribute-based resolve (or leave `plan_route`'s production `RuntimeError` path as-is and only fix the test-only `_graph`/`_features` path); rewrite `_name_for` to read `g.nodes[uid]["lat"]`/`["lon"]` — **note `_name_for` has no `graph` parameter today; add one (private fn, signature change is fine) or do the lookup inline in the leg-assembly loop**. **Keep the `_graph`/`_features` test kwargs** — PR2 retires them; do not pre-empt PR2's contract change here. **`build_gazetteer` return-type caveat:** `graph/gazetteer.py::build_gazetteer` returns `dict[str, tuple | list[tuple]]` (ambiguous names → `list`), unlike the deleted`route/snap.py` one which returned `dict[str, tuple]`.`_name_for`'s`key == node_key` comparison always fails for `list`-valued entries → ambiguous-named legs silently fall through to the coord-string fallback. Document as a **known interim regression**; PR2's`OfflineResolver`owns the real ambiguous-name handling (`resolve_place` raises on list-valued entries). `test_plan_route.py`'s call sites migrate to attribute-based node lookup; **`_long_plan` synthetic-scaling tests need re-derivation** (see below). |
 | `pound/graph/build.py` module docstring | **Rewrite** (currently lines 1-43 describe the old three-phase / tolerance-snap / coord-key model — actively misleading after the rewrite). |
-| `tests/graph/test_build.py` | Re-derive edge/node counts for noded chain. |
+| `tests/graph/test_build.py` | Re-derive edge/node counts for noded chain: `g.number_of_nodes() == 7` → **`== 8`**; the `osm_way_id` set assertion stays valid (1001's 2 segments both carry `osm_way_id 1001`). The test name `test_build_main_chain_and_pendant_have_five_edges` is now stale (edge count is 6) — add an explicit `assert g.number_of_edges() == 6` and **rename** to e.g. `test_build_main_chain_and_pendant_counts_match_noded_model`. |
 | `tests/graph/test_gazetteer.py` | Attribute-based; update `g.nodes[key].get("name")`-style asserts to `g.nodes[uid].get("name")`. |
 | `tests/validate/test_connectivity.py` | One `g.add_node((51.7,-1.2), …)` → internal-uid node; **rewrite, don't wholesale delete, `test_report_has_bulk_connectivity_keys` and `test_report_defaults_when_graph_has_no_bulk_attrs`** — they also assert the *surviving* keys (`place_nodes_seen`, `place_nodes_in_gazetteer`, `named_nodes_in_graph`, `ambiguous_place_names`); rewrite them to assert that surviving subset and drop only the removed-snap-key assertions, so coverage for the surviving keys isn't lost; keep the other component/advisory tests (`test_component_count_is_two`, `test_no_derelict_edges`, `test_missing_dims_count`, `test_no_zero_length_or_self_loops`, `test_orphans_carry_through`, `test_totals_present`); **`edges_missing_dims` count changes 4→5** — way 1001 (no dims) yields 2 dimless segment-edges under noding, so the new expected value is 5 (1001×2, 1003, 1006, 1007); **`test_component_count_is_two`'s `largest_component_size == 5` becomes 6** — noding gives the main chain+pendant component 6 nodes (ids `a, b, c` from 1001's 3 pts, `5003`, `3002`, `7002`); Duke's Cut stays the 2nd component so `component_count` stays 2; `test_totals_present` edge/node counts re-derive too (edges 5→6, nodes 7→8). |
 | `tests/ingest/test_cli.py` | Remove the 3 `--tolerance-m`/`--max-unresolved-snaps``/`--overrides` invocations and the two `test_build_england_…`gate tests that assert the **removed** unresolved-snap gate (`test_build_england_writes_artifact_and_passes_gate`,`test_build_england_fails_when_unresolved_exceeds_threshold`); the passing-gate test stays, reframed around derelict/self_loops; the threshold-fails test is deleted (no such gate). |
@@ -419,24 +419,38 @@ Bounded — confirmed by grep. **No production code assumes `(lat, lon)` keys:**
 ~13 km (~162 min/edge) and its docstring says "3-edge path" (Oxford→Hayfield
 = ways 1001→1002→1003, one edge per way under the *endpoint* build). Under
 **noding**, way 1001 (3 geometry points) becomes **2** segment edges, so the
-Oxford→Hayfield path becomes **4 edges, not 3**. Two assertions break on the
-new edge count and must be re-derived:
+Oxford→Hayfield path becomes **4 edges, not 3**. **Pick ONE consistent
+strategy** (the day counts depend on the scaling; mixing strategies breaks
+the tests):
 
-- `test_multiday_splits_legs_within_budget` (days=3, hours_per_day=3 → 180 min
-  budget): 4 edges × 162 min; greedy with max_days=3 folds the 4th edge into
-  day 3 → `day.cruising_minutes == 324 > 180` → the `<= 3.0*60` assertion
-  fails. Re-derive by lowering the scaled `length_m` — with `CRUISE_KMH = 4.8`
-  (`pound/route/cost.py:9`), 90 min/edge ≈ **7.2 km/edge** is the ceiling for
-  two edges/day within a 180-min budget (the ~9.7 km figure in earlier drafts
-  was wrong: 9.7 km/edge ≈ 121 min, 2 edges/day ≈ 242 min > 180). Or
-  alternatively assertion-adjust to the 4-edge chunking.
-- `test_days_not_padded_beyond_route` (days=5, expects `len(r.days)==3`):
-  4 edges → 4 days, not 3 → `len(r.days)==3` fails. Re-derive the expected
-  count to 4.
-- Update the `_long_plan` docstring ("3-edge path" → "4-edge path under noding").
-- `test_days_partition_legs_exactly`, `test_days_count_never_exceeds_constraints_days`,
-  `test_day_index_sequential` survive (they assert structural invariants, not
-  specific edge counts) but re-verify.
+- **Recommended: keep the existing ~13 km / ~162 min scaling** (each edge
+  still exceeds half a 180-min budget → one edge per day). Under this strategy:
+  - `test_multiday_splits_legs_within_budget` (days=3, budget 180 min):
+    `len(r.days) == 3` → **`== 4`**; per-day `day.cruising_minutes <= 3.0*60`
+    still holds (162 ≤ 180, one edge/day). But max_days=3 would cap at 3 days
+    and fold the 4th edge into day 3 (324 min > 180) — so **raise the `days=`
+    arg from 3 to 4** (or lower the scaling; see the alternative), otherwise
+    the max_days cap breaks the per-day budget.
+  - `test_days_not_padded_beyond_route` (days=5): `len(r.days) == 3` → **`== 4`**.
+  - `test_day_index_sequential`: `[d.day for d in r.days] == [1, 2, 3]` → **`== [1, 2, 3, 4]`**.
+  - `test_days_count_never_exceeds_constraints_days` (days=2): `len(r.days) <= 2`
+    still holds (caps at 2, overflow folds into day 2) — re-verify the folded
+    day 2 doesn't break other assertions.
+  - `test_days_partition_legs_exactly` (flat leg list == `r.legs`; structural,
+    count-agnostic) — survives unchanged.
+- **Rewrite the `_long_plan` docstring in full** (not just s/3-edge/4-edge/):
+  the current text says "~13 km", "3-edge path", "needs three days" — all three
+  clauses now differ (scaling stays ~13 km but the path is 4 edges needing 4
+  days at one-edge-per-day); rewrite the rationale so the next reader
+  understands the edge/day counts.
+- **Alternative** (if the implementer prefers): lower the scaled `length_m` to
+  ~7.2 km/edge (~90 min at `CRUISE_KMH=4.8`) so two edges fit one 180-min day
+  → 4 edges = 2 days. Then: `test_multiday_splits_legs_within_budget` →
+  `len(r.days) == 2`; `test_days_not_padded_beyond_route` → `== 2`;
+  `test_day_index_sequential` → `[1, 2]`; `test_days_count_never_exceeds_constraints_days`
+  (days=2) → still `<= 2`. This tests only 2-day chunking (less interesting
+  than 4-day), which is why the ~13 km strategy is recommended. **Do not mix**
+  the two strategies across assertions.
 
 **Unchanged & still valid:** the boatability filter, `prune_non_navigable_infra`,
 the grid-bucket perf index (now applied per-segment if at all — see OQ-1), the
