@@ -72,10 +72,23 @@ def read_pbf(pbf_path: Path) -> WaterwayFeatures:
             kind = filters.classify_way(tags)
             if kind is None:
                 return
-            geom = []
+            # Build node_ids and geometry from ONE pass over w.nodes, keeping the
+            # (ref, (lat, lon)) pair only when the node has a valid location.
+            # This guarantees len(node_ids) == len(geometry), element-wise paired
+            # — the invariant the noded build zips on. node_ids lists locatable
+            # refs only (not every raw ref): the reader cannot represent
+            # un-locatable refs in the geometry anyway, so including them in
+            # node_ids alone would silently misalign the two lists.
+            node_ids: list[int] = []
+            geom: list[tuple[float, float]] = []
             for n in w.nodes:
-                if n.location.valid:
-                    geom.append((n.location.lat, n.location.lon))
+                try:
+                    lat = n.location.lat
+                    lon = n.location.lon
+                except osmium.InvalidLocationError:
+                    continue
+                node_ids.append(n.ref)
+                geom.append((lat, lon))
             if len(geom) < 2:
                 return
             ways.append(
@@ -84,7 +97,7 @@ def read_pbf(pbf_path: Path) -> WaterwayFeatures:
                     kind=kind,
                     name=tags.get("name"),
                     tags=tags,
-                    node_ids=[n.ref for n in w.nodes],
+                    node_ids=node_ids,
                     geometry=geom,
                     dimensions=filters.extract_dimensions(tags),
                     has_tunnel=tags.get("tunnel") == "yes",
