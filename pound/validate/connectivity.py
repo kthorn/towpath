@@ -41,10 +41,6 @@ def validate_graph(graph: nx.Graph, lock_report: dict) -> dict:
 
     # Augmented Scope D keys (additive — read graph.graph defensively).
     gg = graph.graph
-    snaps_used = list(gg.get("tolerance_snaps_used", []))
-    snaps_unresolved = list(gg.get("tolerance_snaps_unresolved", []))
-    overrides_applied = int(gg.get("overrides_applied", 0))
-
     gaz = gg.get("gazetteer", {})
     place_in_gaz = sum(1 for v in gaz.values() if not isinstance(v, list)) + sum(
         len(v) for v in gaz.values() if isinstance(v, list)
@@ -69,9 +65,6 @@ def validate_graph(graph: nx.Graph, lock_report: dict) -> dict:
         "self_loops": self_loops,
         "total_edges": graph.number_of_edges(),
         "total_nodes": graph.number_of_nodes(),
-        "overrides_applied": overrides_applied,
-        "tolerance_snaps_used": snaps_used,
-        "tolerance_snaps_unresolved": snaps_unresolved,
         "place_nodes_seen": int(gg.get("place_nodes_seen", 0)),
         "place_nodes_in_gazetteer": place_in_gaz,
         "named_nodes_in_graph": named_nodes,

@@ -294,36 +294,41 @@ preserved or corrected):**
   coord = _node_key(nd["lat"], nd["lon"]) …`). The separate `place_coords` dict
   stays coord-keyed (it is not the graph). This preserves the function's
   contract and its named-node count.
-- **`attach_locks` (`graph/locks.py`) — set `locks=1` on ALL matching edges.**
-  The current body does `match = next((d for … if d["osm_way_id"] == way.osm_id), None)`
-  and sets `locks=max(match["locks"],1)` on that **first** match only. Under the
-  endpoint-only build each way is one edge, so the first match is the only
-  match. Under the noded build a lock chamber way with N `node_ids` produces
-  **N−1 edges all carrying the same `osm_way_id`**; setting `locks=1` on only
-  the first segment under-counts multi-segment chambers (the staircase-fixture
-  chambers are 2-pt so tests pass unchanged, but bulk England lock chambers
-  with >2 nodes would silently undercount). **Iterate all matching edges**
-  (`for _, _, d in g.edges(data=True): if d["osm_way_id"] == way.osm_id:`
-  `d["locks"] = max(d["locks"], 1)`) and set per edge; `lock_ways_attached`
-  counts the way once (guard with a matched flag), not per segment. This is a
-  bugfix the noded build exposes; the staircase fixture asserts `locks` on the
-  single chamber edge and stays green.
-- **`attach_locks` lock-NODE loop — tie-break by `kind`, not by emission order.**
-  The second loop in `attach_locks` (`locks.py:38-50`) attaches `lock=yes`
-  *gate nodes* to the nearest edge, using strict `<` for `best_dist`. Under
-  noding a gate node that IS an OSM node becomes a graph node incident to
-  multiple edges (the lock segment AND any coincident canal spur sharing that
-  junction), all at distance 0 — strict `<` ties break by insertion order
-  (whichever way emitted first), so on real England data a coincident canal
-  spur with a lower `osm_way_id` than the lock way would win the tie and get
-  `locks=1` set on the spur. **Break ties by `kind == LOCK` preferred**, then by
-  shorter segment, then by first-seen. (The Oxford fixture happens to put the
-  lock way 1003 at a lower `osm_way_id` than the coincident canal spur 1007, so
-  it currently wins by insertion order — but that's luck, not a guarantee; the
-  tie-break makes it deterministic.) `test_non_lock_edges_have_zero_locks`
-  (`tests/graph/test_locks.py:45-49`) currently excludes edge 1007 from its
-  iteration — widen it to cover all non-LOCK edges so the spur-contention
-  regression would be caught.
+- **`attach_locks` (`graph/locks.py`) — flight-level chamber model (Model D + per-segment attribution, OQ-A decision 2026-07-03).**
+  Measurement on `pound/data/england.osm.pbf`: 1,993 LOCK-classified ways forming
+  1,896 flights (connected components of LOCK ways chained by shared endpoints);
+  179 gate nodes shared across ways (one chamber's exit IS the next's entrance);
+  1,598 ways with adjacent gate-gate refs; 244 gateless flights (gates not mapped).
+  Per-way counting overcounts (2,927 chambers) because shape-node single chambers
+  get 1 per segment; Model A undercounts (1,993) because multi-chamber flights
+  get 1 per way.
+
+  **Model D:** a **flight** = connected component of LOCK ways by shared endpoints.
+  For each flight, `chambers = max(1, G − 1)` where G = count of **distinct** gate
+  nodes (`waterway=lock_gate` or `lock=yes`) referenced along the flight's ways.
+  "Three gates in a row → two chambers" holds exactly.
+
+  **Per-segment attribution (iii):** for each segment edge in the flight whose
+  **downstream endpoint node is a gate**, set `locks=1` (you bill a chamber when
+  you exit through its downstream gate; direction-insensitive — routes in either
+  direction read the one `locks` attr).
+
+  **Floor:** a flight that got 0 lock edges (gateless flights + single-gate
+  flights where G<2) gets `locks=1` on its first segment edge by
+  `osm_way_id`-then-segment order.
+
+  **Lock-NODE tie-break:** the lock-node loop snaps `lock=yes` gate nodes to the
+  nearest edge, breaking ties by `kind == LOCK` preferred, then shorter segment,
+  then first-seen. This prevents a coincident canal spur from winning `locks=1`
+  over the actual LOCK segment when both are at distance 0.
+
+  England aggregate: **1,960 chambers** (vs Model B's 2,927 overcounting shape-node
+  single chambers, and Model A's 1,993 undercounting 45 multi-chamber flights).
+  The staircase fixture is augmented to 4 gates → 3 chambers so
+  `test_staircase_counts_three_locks` stays green.
+
+  This supersedes the spec's earlier "set `locks=1` on ALL matching edges" wording
+  (written before measurement). The spec is updated to reflect the measured data.
 
 ### 3.6 Hard-fail gate, reframed (decision A)
 

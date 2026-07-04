@@ -12,9 +12,10 @@ OQ-8). Mooring-aware day placement is deferred to Scope D.
 
 import networkx as nx
 
+from pound.graph.gazetteer import build_gazetteer
 from pound.ingest.ir import WaterwayFeatures
 from pound.route.cost import is_eligible, time_min
-from pound.route.snap import build_gazetteer, snap_place
+from pound.route.snap import snap_place
 from pound.schemas import CanalConstraints, DayPlan, RouteLeg, RouteResult
 
 

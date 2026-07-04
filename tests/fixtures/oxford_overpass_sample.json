@@ -8,6 +8,7 @@
   "elements": [
     {
       "type": "way", "id": 1001,
+      "nodes": [11, 12, 13],
       "tags": {"waterway": "canal", "name": "Oxford Canal"},
       "geometry": [
         {"lat": 51.7500, "lon": -1.2600},
@@ -17,6 +18,7 @@
     },
     {
       "type": "way", "id": 1002,
+      "nodes": [13, 5003],
       "tags": {"waterway": "canal", "name": "Oxford Canal", "maxwidth": "2.1", "maxdraught": "0.9"},
       "geometry": [
         {"lat": 51.7520, "lon": -1.2620},
@@ -50,6 +52,7 @@
     },
     {
       "type": "way", "id": 1006,
+      "nodes": [6001, 6002],
       "tags": {"waterway": "canal", "name": "Duke's Cut", "tunnel": "yes"},
       "geometry": [
         {"lat": 51.7400, "lon": -1.2500},
@@ -58,10 +61,10 @@
     },
     {
       "type": "way", "id": 1007,
-      "nodes": [7001, 7002],
+      "nodes": [3002, 7002],
       "tags": {"waterway": "canal", "name": "Marston Spur"},
       "geometry": [
-        {"lat": 51.75401, "lon": -1.26399},
+        {"lat": 51.7540, "lon": -1.2640},
         {"lat": 51.7556, "lon": -1.2659}
       ]
     },
