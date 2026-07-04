@@ -129,5 +129,3 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
     assert "validation" in meta
     assert "gazetteer" in g.graph
     assert "Oxford" in g.graph["gazetteer"]
-
-

@@ -12,10 +12,10 @@ OQ-8). Mooring-aware day placement is deferred to Scope D.
 
 import networkx as nx
 
+from pound.graph.build import _node_key
 from pound.graph.gazetteer import build_gazetteer
 from pound.ingest.ir import WaterwayFeatures
 from pound.route.cost import is_eligible, time_min
-from pound.route.snap import snap_place
 from pound.schemas import CanalConstraints, DayPlan, RouteLeg, RouteResult
 
 
@@ -45,8 +45,8 @@ def plan_route(
 
     graph, features = _graph, _features
     gaz = build_gazetteer(features)
-    start_node = snap_place(constraints.start, gaz, graph)
-    end_node = snap_place(constraints.end, gaz, graph)
+    start_node = _resolve_place(constraints.start, gaz, graph)
+    end_node = _resolve_place(constraints.end, gaz, graph)
 
     if not nx.has_path(graph, start_node, end_node):
         raise ValueError(f"no path between {constraints.start!r} and {constraints.end!r}")
@@ -81,8 +81,8 @@ def plan_route(
         locks = d.get("locks", 0)
         legs.append(
             RouteLeg(
-                from_place=_name_for(u, features, gaz),
-                to_place=_name_for(v, features, gaz),
+                from_place=_name_for(u, graph, gaz),
+                to_place=_name_for(v, graph, gaz),
                 distance_km=round(km, 4),
                 locks=locks,
                 est_minutes=round(time_min(d["length_m"], locks)),
@@ -115,6 +115,27 @@ def plan_route(
         warnings=warnings,
         graph_source_date=features.fetched_at,
     )
+
+
+def _resolve_place(name: str, gaz: dict, graph: nx.Graph) -> int:
+    """Resolve a place name to a graph node uid by rounded-coordinate match.
+
+    Interim implementation: build_gazetteer returns name -> rounded coord (or a
+    list of coords for ambiguous names). The graph is keyed by internal uids, so
+    we match by reading each node's lat/lon attrs. Ambiguous names raise (PR2's
+    OfflineResolver owns the real ambiguous-name handling); an unresolved name
+    raises. O(|nodes|) per call — acceptable on the fixture-scale test path;
+    the production path raises RuntimeError before reaching this.
+    """
+    if name not in gaz:
+        raise ValueError(f"unknown place: {name!r}")
+    coord = gaz[name]
+    if isinstance(coord, list):
+        raise ValueError(f"ambiguous place: {name!r} (PR2 resolve_place owns handling)")
+    for uid, nd in graph.nodes(data=True):
+        if _node_key(nd["lat"], nd["lon"]) == coord:
+            return uid
+    raise ValueError(f"place {name!r} snaps to a node not in the graph")
 
 
 def _chunk_days(legs: list[RouteLeg], hours_per_day: float, max_days: int) -> list[DayPlan]:
@@ -163,9 +184,13 @@ def _chunk_days(legs: list[RouteLeg], hours_per_day: float, max_days: int) -> li
     return days
 
 
-def _name_for(node_key, features, gazetteer) -> str:
-    """Reverse-lookup a node key to a place name; fall back to coordinate string."""
+def _name_for(node_uid, graph, gazetteer) -> str:
+    """Reverse-lookup a node uid to a place name via its rounded coord;
+    fall back to a coordinate string. The gazetteer is name -> coord (or list);
+    ambiguous (list-valued) entries never match a coord string and fall through
+    to the fallback (the documented interim regression; PR2 owns ambiguity)."""
+    coord = _node_key(graph.nodes[node_uid]["lat"], graph.nodes[node_uid]["lon"])
     for name, key in gazetteer.items():
-        if key == node_key:
+        if not isinstance(key, list) and key == coord:
             return name
-    return f"{node_key[0]},{node_key[1]}"
+    return f"{coord[0]},{coord[1]}"

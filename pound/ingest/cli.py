@@ -22,7 +22,9 @@ from pound.ingest.overpass import fetch_oxford
 from pound.ingest.summarize import summarize
 from pound.validate.connectivity import validate_graph
 
-_GEOFABRIK_ENGLAND_URL = "https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf"
+_GEOFABRIK_ENGLAND_URL = (
+    "https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf"
+)
 _ENGLAND_EXPECTED_GIB = 1.5
 
 

@@ -8,7 +8,7 @@ endpoint or internal — join for free, with NO contraction phase, NO
 tolerance-snap pass, and NO overrides/curation. Closed-ring ways (first coord
 == last) are area polygons, never routable, and are skipped.
 
-Node keys are rounded (lat, lon) tuples in this stage; lat/lon and
+Node keys are synthetic internal uids (a monotonic counter); lat/lon and
 osm_node_ids (set of stringified OSM ids) are node attributes. id-less dev
 ways (Overpass `out geom`) resolve-or-create via the coordinate index alone.
 Edge collision (two ways producing the same node pair) merges attributes
@@ -17,6 +17,7 @@ tunnel/movable-bridge OR-ed; on a LOCK-involving collision the merged edge
 keeps the LOCK way's osm_way_id and gets locks=1 immediately).
 """
 
+import itertools
 import math
 
 import networkx as nx
@@ -72,34 +73,35 @@ def _merge_dims(a: WayDimensions | None, b: WayDimensions | None) -> WayDimensio
 
 
 def build_graph(features: WaterwayFeatures) -> nx.Graph:
-    """Build a noded graph from WaterwayFeatures.
+    """Build a noded graph from WaterwayFeatures keyed by synthetic internal uids.
 
-    Every OSM node id on a routable way is a graph node; consecutive ids are
-    edges. Junctions collapse at emission via the osm-id and coordinate
-    indexes — no separate contraction/snap/override phase. Safe on id-less
-    ways (Overpass path): they mint nodes by rounded coordinate alone.
+    Every OSM node id on a routable way is a graph node keyed by a monotonic
+    internal id (source-agnostic: survives OSM-id aliasing at one coord and
+    future synthetic curator nodes). lat/lon and osm_node_ids are node attrs.
+    Junctions collapse at emission via the osm-id and coordinate indexes.
     """
     g = nx.Graph()
-    osm_idx: dict[str, tuple] = {}      # str(osm id) -> node key
-    coord_idx: dict[tuple, tuple] = {}  # rounded coord -> node key
+    uid_counter = itertools.count()
+    osm_idx: dict[str, int] = {}  # str(osm id) -> uid
+    coord_idx: dict[tuple, int] = {}  # rounded coord -> uid
 
     def _resolve_or_create(osm_id, lat, lon):
         sid = str(osm_id) if osm_id is not None else None
         coord = _node_key(lat, lon)
-        key = None
+        uid = None
         if sid is not None and sid in osm_idx:
-            key = osm_idx[sid]
-        if key is None and coord in coord_idx:
-            key = coord_idx[coord]
-        if key is None:
-            key = coord  # coordinate-as-key stage
-            g.add_node(key, lat=coord[0], lon=coord[1], osm_node_ids=set())
-            coord_idx[coord] = key
+            uid = osm_idx[sid]
+        if uid is None and coord in coord_idx:
+            uid = coord_idx[coord]
+        if uid is None:
+            uid = next(uid_counter)
+            g.add_node(uid, lat=coord[0], lon=coord[1], osm_node_ids=set())
+            coord_idx[coord] = uid
         if sid is not None:
-            osm_idx[sid] = key
-            coord_idx.setdefault(coord, key)
-            g.nodes[key]["osm_node_ids"].add(sid)
-        return key
+            osm_idx[sid] = uid
+            coord_idx.setdefault(coord, uid)
+            g.nodes[uid]["osm_node_ids"].add(sid)
+        return uid
 
     def _merge_edge(u, v, way, length_m, seg_geom):
         d = g[u][v]

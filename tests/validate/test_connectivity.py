@@ -78,7 +78,7 @@ def test_report_defaults_when_graph_has_no_bulk_attrs():
     import networkx as nx
 
     g = nx.Graph()
-    g.add_node((51.7, -1.2), lat=51.7, lon=-1.2)
+    g.add_node(0, lat=51.7, lon=-1.2)
     v = validate_graph(g, {"orphan_lock_ways": [], "orphan_lock_nodes": []})
     assert v["place_nodes_seen"] == 0
     assert v["place_nodes_in_gazetteer"] == 0

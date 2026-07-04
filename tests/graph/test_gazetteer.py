@@ -72,8 +72,12 @@ def test_attach_node_names_sets_name_on_coincident_graph_nodes():
     g = build_graph(feats)
     n = attach_node_names(g, feats)
     assert n == 1
-    key = _node_key(51.75, -1.26)
-    assert g.nodes[key].get("name") == "Oxford"
+    oxford_uid = next(
+        uid
+        for uid, nd in g.nodes(data=True)
+        if _node_key(nd["lat"], nd["lon"]) == _node_key(51.75, -1.26)
+    )
+    assert g.nodes[oxford_uid].get("name") == "Oxford"
 
 
 def test_attach_node_names_skips_non_coincident_place():

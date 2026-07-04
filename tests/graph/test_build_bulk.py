@@ -39,8 +39,15 @@ def _features(ways, nodes=None):
 
 def test_noded_way_emits_per_segment_edges():
     # 3 node_ids, 3 coords -> 3 nodes, 2 segment edges (not 1 whole-way edge).
-    ways = [_way(1, WaterwayKind.CANAL, "A", [11, 12, 13],
-                 [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620)])]
+    ways = [
+        _way(
+            1,
+            WaterwayKind.CANAL,
+            "A",
+            [11, 12, 13],
+            [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620)],
+        )
+    ]
     g = build_graph(_features(ways))
     assert g.number_of_nodes() == 3
     assert g.number_of_edges() == 2
@@ -49,8 +56,15 @@ def test_noded_way_emits_per_segment_edges():
 
 
 def test_segment_edge_length_is_per_segment_not_whole_way():
-    ways = [_way(1, WaterwayKind.CANAL, "A", [11, 12, 13],
-                 [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620)])]
+    ways = [
+        _way(
+            1,
+            WaterwayKind.CANAL,
+            "A",
+            [11, 12, 13],
+            [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620)],
+        )
+    ]
     g = build_graph(_features(ways))
     seg = next(d for _, _, d in g.edges(data=True))
     # ~131 m per segment, NOT the ~262 m whole-way length.
@@ -78,10 +92,20 @@ def test_internal_junction_way_joins_main_chain_at_an_internal_node():
     endpoints), so B becomes a detached single edge and the graph is two
     components; noding makes A's shared id a real graph node and B joins it."""
     ways = [
-        _way(1, WaterwayKind.CANAL, "A", [1, 2, 3],
-             [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620)]),
-        _way(2, WaterwayKind.CANAL, "B", [4, 2],  # node 2 is INTERNAL to A
-             [(51.7600, -1.2700), (51.7510, -1.2610)]),
+        _way(
+            1,
+            WaterwayKind.CANAL,
+            "A",
+            [1, 2, 3],
+            [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620)],
+        ),
+        _way(
+            2,
+            WaterwayKind.CANAL,
+            "B",
+            [4, 2],  # node 2 is INTERNAL to A
+            [(51.7600, -1.2700), (51.7510, -1.2610)],
+        ),
     ]
     g = build_graph(_features(ways))
     assert nx.number_connected_components(g) == 1
@@ -110,8 +134,7 @@ def test_distinct_osm_ids_rounding_to_same_coord_collapse_to_one_node():
     ]
     g = build_graph(_features(ways))
     assert nx.number_connected_components(g) == 1
-    shared = next(n for n, d in g.nodes(data=True)
-                  if {"2", "4"} <= d.get("osm_node_ids", set()))
+    shared = next(n for n, d in g.nodes(data=True) if {"2", "4"} <= d.get("osm_node_ids", set()))
     assert g.nodes[shared]["osm_node_ids"] == {"2", "4"}
 
 
@@ -120,9 +143,12 @@ def test_distinct_osm_ids_rounding_to_same_coord_collapse_to_one_node():
 
 def test_closed_ring_way_emits_no_self_loop_and_no_isolated_node():
     from pound.validate.connectivity import validate_graph
+
     ring_geom = [
-        (51.7500, -1.2600), (51.7510, -1.2600),
-        (51.7510, -1.2610), (51.7500, -1.2600),  # == first -> closed ring
+        (51.7500, -1.2600),
+        (51.7510, -1.2600),
+        (51.7510, -1.2610),
+        (51.7500, -1.2600),  # == first -> closed ring
     ]
     ways = [_way(1, WaterwayKind.CANAL, "Basin", [1, 2, 3, 1], ring_geom)]
     g = build_graph(_features(ways))
@@ -148,8 +174,15 @@ def test_closed_ring_does_not_mask_a_real_routable_cycle():
 def test_consecutive_duplicate_id_or_coord_segment_is_skipped():
     # a way that references the same OSM id twice in a row (or two coords that
     # round equal) would yield a zero-length self-loop; dedupe-then-iterate.
-    ways = [_way(1, WaterwayKind.CANAL, "A", [1, 1, 2],
-                 [(51.7500, -1.2600), (51.7500, -1.2600), (51.7520, -1.2620)])]
+    ways = [
+        _way(
+            1,
+            WaterwayKind.CANAL,
+            "A",
+            [1, 1, 2],
+            [(51.7500, -1.2600), (51.7500, -1.2600), (51.7520, -1.2620)],
+        )
+    ]
     g = build_graph(_features(ways))
     assert g.number_of_edges() == 1
     assert all(u != v for u, v in g.edges())
@@ -166,10 +199,8 @@ def test_coincident_lock_and_canal_ways_merge_to_one_lock_edge():
     # routable ways sort before locks in read_pbf/parse, but the merge is
     # order-independent; mirror the measured case (canal emissible first).
     ways = [
-        _way(100, WaterwayKind.CANAL, "Canal", [1, 2],
-             [(51.7500, -1.2600), (51.7520, -1.2620)]),
-        _way(200, WaterwayKind.LOCK, "Lock", [1, 2],
-             [(51.7500, -1.2600), (51.7520, -1.2620)]),
+        _way(100, WaterwayKind.CANAL, "Canal", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
+        _way(200, WaterwayKind.LOCK, "Lock", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
     ]
     g = build_graph(_features(ways))
     assert g.number_of_edges() == 1
@@ -196,16 +227,26 @@ def test_coincident_river_and_canal_merge_prefers_canal():
 
 def test_collision_union_tightens_dimensions():
     ways = [
-        _way(500, WaterwayKind.CANAL, "C", [1, 2],
-             [(51.7500, -1.2600), (51.7520, -1.2620)],
-             dims=WayDimensions(max_beam_m=2.0, max_draft_m=0.8)),
-        _way(501, WaterwayKind.CANAL, "C2", [1, 2],
-             [(51.7500, -1.2600), (51.7520, -1.2620)],
-             dims=WayDimensions(max_beam_m=2.2, max_draft_m=None, max_length_m=18.0)),
+        _way(
+            500,
+            WaterwayKind.CANAL,
+            "C",
+            [1, 2],
+            [(51.7500, -1.2600), (51.7520, -1.2620)],
+            dims=WayDimensions(max_beam_m=2.0, max_draft_m=0.8),
+        ),
+        _way(
+            501,
+            WaterwayKind.CANAL,
+            "C2",
+            [1, 2],
+            [(51.7500, -1.2600), (51.7520, -1.2620)],
+            dims=WayDimensions(max_beam_m=2.2, max_draft_m=None, max_length_m=18.0),
+        ),
     ]
     g = build_graph(_features(ways))
     d = g.edges[next(iter(g.edges))]["dimensions"]
-    assert d.max_beam_m == 2.0   # min
+    assert d.max_beam_m == 2.0  # min
     assert d.max_draft_m == 0.8  # carried from the other way
     assert d.max_length_m == 18.0
 
@@ -222,16 +263,37 @@ def test_multi_node_lock_way_counts_chambers_by_gates():
     # nodes 1(gate), 2(shape), 3(gate), 4(gate). Segment 2->3 has downstream
     # node 3 (a gate) => 1 chamber; segment 3->4 has downstream 4 (gate) =>
     # 1 chamber. Total 2.
-    ways = [_way(700, WaterwayKind.LOCK, "L", [1, 2, 3, 4],
-                 [(51.7500, -1.2600), (51.7510, -1.2610),
-                  (51.7520, -1.2620), (51.7530, -1.2630)])]
+    ways = [
+        _way(
+            700,
+            WaterwayKind.LOCK,
+            "L",
+            [1, 2, 3, 4],
+            [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620), (51.7530, -1.2630)],
+        )
+    ]
     gates = [
-        WaterwayNode(osm_id=1, lat=51.7500, lon=-1.2600,
-                     tags={"waterway": "lock_gate"}, kind=NodeKind.LOCK_GATE),
-        WaterwayNode(osm_id=3, lat=51.7520, lon=-1.2620,
-                     tags={"waterway": "lock_gate"}, kind=NodeKind.LOCK_GATE),
-        WaterwayNode(osm_id=4, lat=51.7530, lon=-1.2630,
-                     tags={"waterway": "lock_gate"}, kind=NodeKind.LOCK_GATE),
+        WaterwayNode(
+            osm_id=1,
+            lat=51.7500,
+            lon=-1.2600,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=3,
+            lat=51.7520,
+            lon=-1.2620,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=4,
+            lat=51.7530,
+            lon=-1.2630,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
     ]
     feats = _features(ways, gates)
     g, _ = attach_locks(build_graph(feats), feats)
@@ -243,16 +305,37 @@ def test_three_lock_gates_in_a_row_yields_two_chambers():
     """Kurt's prescription: three lock gates in a row => two chambers. A
     3-node way gate-gate-gate (G=3) => 2 chambers; both segments' downstream
     nodes are gates => 2 lock edges."""
-    ways = [_way(701, WaterwayKind.LOCK, "L", [10, 11, 12],
-                 [(51.7500, -1.2600), (51.7510, -1.2610),
-                  (51.7520, -1.2620)])]
+    ways = [
+        _way(
+            701,
+            WaterwayKind.LOCK,
+            "L",
+            [10, 11, 12],
+            [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620)],
+        )
+    ]
     gates = [
-        WaterwayNode(osm_id=10, lat=51.7500, lon=-1.2600,
-                     tags={"waterway": "lock_gate"}, kind=NodeKind.LOCK_GATE),
-        WaterwayNode(osm_id=11, lat=51.7510, lon=-1.2610,
-                     tags={"waterway": "lock_gate"}, kind=NodeKind.LOCK_GATE),
-        WaterwayNode(osm_id=12, lat=51.7520, lon=-1.2620,
-                     tags={"waterway": "lock_gate"}, kind=NodeKind.LOCK_GATE),
+        WaterwayNode(
+            osm_id=10,
+            lat=51.7500,
+            lon=-1.2600,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=11,
+            lat=51.7510,
+            lon=-1.2610,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=12,
+            lat=51.7520,
+            lon=-1.2620,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
     ]
     feats = _features(ways, gates)
     g, report = attach_locks(build_graph(feats), feats)
@@ -267,18 +350,31 @@ def test_flight_level_shared_gate_counted_once():
     gate: G=3 (gates 1,2,3) => 2 chambers across the flight; each way's single
     segment has a downstream gate => 2 lock edges, not 3."""
     ways = [
-        _way(800, WaterwayKind.LOCK, "Lower", [1, 2],
-             [(51.7500, -1.2600), (51.7510, -1.2610)]),
-        _way(801, WaterwayKind.LOCK, "Upper", [2, 3],
-             [(51.7510, -1.2610), (51.7520, -1.2620)]),
+        _way(800, WaterwayKind.LOCK, "Lower", [1, 2], [(51.7500, -1.2600), (51.7510, -1.2610)]),
+        _way(801, WaterwayKind.LOCK, "Upper", [2, 3], [(51.7510, -1.2610), (51.7520, -1.2620)]),
     ]
     gates = [
-        WaterwayNode(osm_id=1, lat=51.7500, lon=-1.2600,
-                     tags={"waterway": "lock_gate"}, kind=NodeKind.LOCK_GATE),
-        WaterwayNode(osm_id=2, lat=51.7510, lon=-1.2610,
-                     tags={"waterway": "lock_gate"}, kind=NodeKind.LOCK_GATE),
-        WaterwayNode(osm_id=3, lat=51.7520, lon=-1.2620,
-                     tags={"waterway": "lock_gate"}, kind=NodeKind.LOCK_GATE),
+        WaterwayNode(
+            osm_id=1,
+            lat=51.7500,
+            lon=-1.2600,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=2,
+            lat=51.7510,
+            lon=-1.2610,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=3,
+            lat=51.7520,
+            lon=-1.2620,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
     ]
     feats = _features(ways, gates)
     g, _ = attach_locks(build_graph(feats), feats)
@@ -291,8 +387,7 @@ def test_flight_level_shared_gate_counted_once():
 def test_gateless_flight_floors_to_one_lock():
     """The gateless-flight floor (the 244 gateless flights in England): a LOCK
     way whose gates aren't mapped gets locks=1 on its first segment, not 0."""
-    ways = [_way(900, WaterwayKind.LOCK, "L", [1, 2],
-                 [(51.7500, -1.2600), (51.7520, -1.2620)])]
+    ways = [_way(900, WaterwayKind.LOCK, "L", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)])]
     feats = _features(ways, [])  # no gate nodes
     g, report = attach_locks(build_graph(feats), feats)
     assert sum(d.get("locks", 0) for _, _, d in g.edges(data=True)) == 1
@@ -308,13 +403,14 @@ def test_lock_node_tie_goes_to_lock_edge_not_canal_spur():
     LOCK segment and leaves the spur at 0, deterministically (not by emission
     order)."""
     ways = [
-        _way(100, WaterwayKind.LOCK, "Lock", [1, 2],
-             [(51.7500, -1.2600), (51.7520, -1.2620)]),
-        _way(200, WaterwayKind.CANAL, "Spur", [2, 3],
-             [(51.7520, -1.2620), (51.7540, -1.2640)]),  # shares node 2 with the lock
+        _way(100, WaterwayKind.LOCK, "Lock", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
+        _way(
+            200, WaterwayKind.CANAL, "Spur", [2, 3], [(51.7520, -1.2620), (51.7540, -1.2640)]
+        ),  # shares node 2 with the lock
     ]
-    nodes = [WaterwayNode(osm_id=999, lat=51.7520, lon=-1.2620,
-                          tags={"lock": "yes"}, kind=NodeKind.LOCK)]
+    nodes = [
+        WaterwayNode(osm_id=999, lat=51.7520, lon=-1.2620, tags={"lock": "yes"}, kind=NodeKind.LOCK)
+    ]
     feats = _features(ways, nodes)
     g, report = attach_locks(build_graph(feats), feats)
     lock_e = next(d for _, _, d in g.edges(data=True) if d["osm_way_id"] == 100)

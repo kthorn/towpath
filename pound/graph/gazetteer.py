@@ -43,7 +43,12 @@ def ambiguous_place_names(gaz: dict) -> list[str]:
 
 
 def attach_node_names(graph: nx.Graph, features: WaterwayFeatures) -> int:
-    """Set `name` on graph nodes coincident with a named place node. Returns count."""
+    """Set `name` on graph nodes coincident with a named place node. Returns count.
+
+    Matches by rounded coordinate: the place dict is keyed by _node_key(lat,lon)
+    (a *dict*, not the graph); each graph node is keyed by internal uid but
+    carries lat/lon attrs, so the match reads the attrs rather than the key.
+    """
     place_coords: dict[tuple[float, float], str] = {}
     for n in features.nodes:
         if n.kind != NodeKind.PLACE:
@@ -52,8 +57,9 @@ def attach_node_names(graph: nx.Graph, features: WaterwayFeatures) -> int:
         if name:
             place_coords[_node_key(n.lat, n.lon)] = name
     count = 0
-    for key in graph.nodes():
-        if key in place_coords and "name" not in graph.nodes[key]:
-            graph.nodes[key]["name"] = place_coords[key]
+    for _, nd in graph.nodes(data=True):
+        coord = _node_key(nd["lat"], nd["lon"])
+        if coord in place_coords and "name" not in nd:
+            nd["name"] = place_coords[coord]
             count += 1
     return count
