@@ -7,13 +7,19 @@ from tests.fixtures import oxford_fixture_path, staircase_fixture_path
 
 
 def _oxford():
-    with open(oxford_fixture_path()) as f:
-        return parse(json.load(f)["elements"], None)
+    try:
+        with open(oxford_fixture_path()) as f:
+            return parse(json.load(f)["elements"], None)
+    except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+        raise RuntimeError(f"Failed to load Oxford fixture: {e}") from e
 
 
 def _staircase():
-    with open(staircase_fixture_path()) as f:
-        return parse(json.load(f)["elements"], None)
+    try:
+        with open(staircase_fixture_path()) as f:
+            return parse(json.load(f)["elements"], None)
+    except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+        raise RuntimeError(f"Failed to load staircase fixture: {e}") from e
 
 
 # --- Oxford fixture ---
@@ -44,7 +50,7 @@ def test_lock_gate_node_counted_but_not_incrementing():
 def test_non_lock_edges_have_zero_locks():
     g, _ = attach_locks(build_graph(_oxford()), _oxford())
     for _, _, d in g.edges(data=True):
-        if d["osm_way_id"] in (1001, 1002, 1006):
+        if d["osm_way_id"] in (1001, 1002, 1006, 1007):
             assert d["locks"] == 0
 
 
@@ -85,6 +91,10 @@ def test_staircase_chambers_chain_into_one_component():
 def test_staircase_lock_gate_counted_not_incrementing():
     features = _staircase()
     g, report = attach_locks(build_graph(features), features)
-    assert report["lock_gate_nodes"] == 1  # node 6003
-    # the gate sits at the chamber-1/chamber-2 junction; neither edge gets +1
+    # 4 gate nodes now (6004 bottom entrance, 6003 chamber1/2 boundary, 6005
+    # chamber2/3 boundary, 6006 top exit) — the Step 6b augmentation. They drive
+    # the flight's chamber count (G=4 -> 3 chambers), one lock per chamber's
+    # downstream-gate segment; gates themselves still don't increment beyond
+    # that (no double-counting).
+    assert report["lock_gate_nodes"] == 4
     assert sum(d["locks"] for _, _, d in g.edges(data=True)) == 3

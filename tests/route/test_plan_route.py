@@ -12,9 +12,12 @@ from tests.fixtures import oxford_fixture_path
 
 
 def _plan(**kwargs):
-    with open(oxford_fixture_path()) as f:
-        raw = json.load(f)
-    features = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
+    try:
+        with open(oxford_fixture_path()) as f:
+            raw = json.load(f)
+        features = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
+    except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+        raise RuntimeError(f"Failed to load Oxford fixture: {e}") from e
     g, _ = attach_locks(build_graph(features), features)
     constraints = CanalConstraints(start="Oxford", end="Hayfield", days=1, **kwargs)
     return plan_route(constraints, _graph=g, _features=features)
@@ -24,7 +27,7 @@ def test_route_connects_oxford_to_hayfield():
     r = _plan()
     assert r.start == "Oxford"
     assert r.end == "Hayfield"
-    assert r.is_ring is False
+    assert not r.is_ring
     assert r.legs[0].from_place == "Oxford"
     assert r.legs[-1].to_place == "Hayfield"
     # legs connect end-to-end (§7.2)
@@ -48,8 +51,11 @@ def test_per_leg_minutes_match_cost_formula():
 
 def test_total_minutes_matches_time_min_over_edges():
     # independent recomputation from the raw edge lengths/locks
+    # Use pytest.approx to account for rounding accumulation across 4 legs
     r = _plan()
-    assert r.total_minutes == round(time_min(r.total_km * 1000, r.total_locks))
+    assert r.total_minutes == pytest.approx(
+        round(time_min(r.total_km * 1000, r.total_locks)), abs=1
+    )
 
 
 def test_locks_counted_on_lock_edge():
@@ -70,9 +76,12 @@ def test_graph_source_date_from_metadata():
 
 
 def test_ring_raises_not_implemented():
-    with open(oxford_fixture_path()) as f:
-        raw = json.load(f)
-    features = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
+    try:
+        with open(oxford_fixture_path()) as f:
+            raw = json.load(f)
+        features = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
+    except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+        raise RuntimeError(f"Failed to load Oxford fixture: {e}") from e
     g, _ = attach_locks(build_graph(features), features)
     with pytest.raises(NotImplementedError, match="rings not yet supported"):
         plan_route(CanalConstraints(start="Oxford", end=None, days=1), _graph=g, _features=features)
@@ -86,18 +95,24 @@ def test_single_day_plan_wraps_legs():
 
 
 def _long_plan(days: int, hours_per_day: float):
-    """Synthetic long route: scale the Oxford edge lengths so the 3-edge path
+    """Synthetic long route: scale the Oxford edge lengths so the 4-edge path
     needs multiple days. Tests the chunking ALGORITHM, not Oxford data.
 
-    The Oxford fixture's edges are not all the same raw length, so after
-    scaling we normalize every edge to ~13 km; each leg then fits comfortably
-    inside a 3-hour budget while the total still needs three days.
+    Under the noded build, way 1001 (3 geometry points) becomes 2 segment
+    edges, so the Oxford->Hayfield path (ways 1001->1002->1003) is 4 edges:
+    2 (1001) + 1 (1002) + 1 (1003). We scale every edge to ~13 km (~162 min
+    at CRUISE_KMH=4.8) so each edge comfortably exceeds half a 3-hour (180-min)
+    budget; greedy chunking then emits one edge per day, so the route needs 4
+    days and the test asserts 4-day chunking across 4 edges.
     """
     import copy
 
-    with open(oxford_fixture_path()) as f:
-        raw = json.load(f)
-    features = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
+    try:
+        with open(oxford_fixture_path()) as f:
+            raw = json.load(f)
+        features = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
+    except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+        raise RuntimeError(f"Failed to load Oxford fixture: {e}") from e
     g, _ = attach_locks(build_graph(features), features)
     g = copy.deepcopy(g)
     for _, _, d in g.edges(data=True):
@@ -109,33 +124,34 @@ def _long_plan(days: int, hours_per_day: float):
 
 
 def test_multiday_splits_legs_within_budget():
-    # 3 edges ~162 min each; hours_per_day=3 -> 180 min budget.
-    # Greedy: day1=162, day2=162, day3=162 (each +next would exceed 180).
-    r = _long_plan(days=3, hours_per_day=3.0)
-    assert len(r.days) == 3
+    # 4 edges ~162 min each; hours_per_day=3 -> 180 min budget.
+    # Greedy: day1=162, day2=162, day3=162, day4=162 (each +next would exceed 180).
+    r = _long_plan(days=4, hours_per_day=3.0)
+    assert len(r.days) == 4
     for day in r.days:
         assert day.cruising_minutes <= 3.0 * 60
         assert day.legs  # non-empty (OQ-8: no padding)
 
 
 def test_days_partition_legs_exactly():
-    r = _long_plan(days=3, hours_per_day=3.0)
+    r = _long_plan(days=4, hours_per_day=3.0)
     flat = [leg for day in r.days for leg in day.legs]
     assert flat == r.legs
 
 
 def test_days_not_padded_beyond_route():
-    # OQ-8: days=5 but route needs only 3 -> emit 3, NOT 5 with empty trailers.
+    # OQ-8: days=5 but route needs only 4 -> emit 4, NOT 5 with empty trailers.
     r = _long_plan(days=5, hours_per_day=3.0)
-    assert len(r.days) == 3
+    assert len(r.days) == 4
     assert all(day.legs for day in r.days)
 
 
 def test_days_count_never_exceeds_constraints_days():
+    # days=2 caps at 2; the 4 edges fold into 2 days (overflow lands in day 2).
     r = _long_plan(days=2, hours_per_day=3.0)
     assert len(r.days) <= 2
 
 
 def test_day_index_sequential():
-    r = _long_plan(days=3, hours_per_day=3.0)
-    assert [d.day for d in r.days] == [1, 2, 3]
+    r = _long_plan(days=4, hours_per_day=3.0)
+    assert [d.day for d in r.days] == [1, 2, 3, 4]

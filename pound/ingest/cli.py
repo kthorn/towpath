@@ -2,9 +2,8 @@
 
 Usage:
     pound-ingest oxford [--out pound/data/oxford_canal_waterways.json]
-    pound-ingest build oxford  --out <path> [--tolerance-m M] [--max-unresolved-snaps N]
-    pound-ingest build england --out <path> [--tolerance-m M] [--max-unresolved-snaps N]
-                               [--pbf PATH] [--overrides PATH]
+    pound-ingest build oxford  --out <path>
+    pound-ingest build england --out <path> [--pbf PATH]
 """
 
 import argparse
@@ -15,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pound.graph.artifact import save_artifact
-from pound.graph.build import build_graph, load_overrides
+from pound.graph.build import build_graph
 from pound.graph.gazetteer import attach_node_names, build_gazetteer
 from pound.graph.locks import attach_locks
 from pound.ingest.osm import read_england
@@ -23,8 +22,9 @@ from pound.ingest.overpass import fetch_oxford
 from pound.ingest.summarize import summarize
 from pound.validate.connectivity import validate_graph
 
-_DEFAULT_OVERRIDES = Path("pound/data/overrides.json")
-_GEOFABRIK_ENGLAND_URL = "https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf"
+_GEOFABRIK_ENGLAND_URL = (
+    "https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf"
+)
 _ENGLAND_EXPECTED_GIB = 1.5
 
 
@@ -40,9 +40,7 @@ def _cmd_oxford(args):
 
 
 def _build_from_features(features, args) -> int:
-    overrides_path = Path(args.overrides) if args.overrides else _DEFAULT_OVERRIDES
-    overrides = load_overrides(overrides_path)
-    graph = build_graph(features, tolerance_m=args.tolerance_m, overrides=overrides)
+    graph = build_graph(features)
     attach_node_names(graph, features)
     graph.graph["gazetteer"] = build_gazetteer(features)
     graph.graph["place_nodes_seen"] = sum(1 for n in features.nodes if "place" in n.tags)
@@ -63,11 +61,6 @@ def _build_from_features(features, args) -> int:
         fail_reasons.append("derelict_edges > 0 (filter is broken)")
     if validation["self_loops"] > 0:
         fail_reasons.append("self_loops > 0")
-    if len(validation["tolerance_snaps_unresolved"]) > args.max_unresolved_snaps:
-        fail_reasons.append(
-            f"tolerance_snaps_unresolved={len(validation['tolerance_snaps_unresolved'])} "
-            f"> --max-unresolved-snaps={args.max_unresolved_snaps}"
-        )
     if fail_reasons:
         for r in fail_reasons:
             print(f"BUILD FAILED: {r}", file=sys.stderr)
@@ -112,14 +105,7 @@ def _register_build(sub):
     b = sub.add_parser("build", help="ingest, build, validate, and save a pickled artifact")
     b.add_argument("region", choices=["oxford", "england"])
     b.add_argument("--out", required=True)
-    b.add_argument("--tolerance-m", type=float, default=10.0)
-    b.add_argument("--max-unresolved-snaps", type=int, default=0)
     b.add_argument("--pbf", default=None, help="England PBF path (else POUND_PBF_PATH)")
-    b.add_argument(
-        "--overrides",
-        default=None,
-        help="overrides.json path (else pound/data/overrides.json)",
-    )
     b.set_defaults(func=_cmd_build)
 
 

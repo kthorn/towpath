@@ -107,3 +107,36 @@ def test_read_england_applies_prune_then_filter_chain(monkeypatch, tmp_path):
     assert len(called_filter) == 1
     # without any boat=no ways, output matches fixture
     assert {w.osm_id for w in out.ways} == {w.osm_id for w in fixture_features.ways}
+
+
+def test_read_pbf_aligns_node_ids_with_geometry_when_one_ref_lacks_location(tmp_path):
+    """The noded build zips node_ids with geometry 1-to-1. If a way references
+    a node whose location is invalid/unset, read_pbf must EXCLUDE that ref from
+    BOTH lists (not include it in node_ids alone), so the two stay paired by
+    construction. tiny_bulk.osm has every node locatable, so this needs a PBF
+    whose raw refs > locatable refs."""
+    from pound.ingest.osm import read_pbf
+
+    # Minimal OSM XML: way 1001 refs nodes 1, 2, 3 where node 2 has NO lat/lon.
+    # Locatable refs = {1, 3}; raw refs = {1, 2, 3}. node_ids must == [1, 3]
+    # and geometry must have 2 points, paired (1->coord1, 3->coord3).
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="alignment fixture">
+  <node id="1" lat="51.7500000" lon="-1.2600000" version="1"/>
+  <node id="2" version="1"/>
+  <node id="3" lat="51.7520000" lon="-1.2620000" version="1"/>
+  <way id="1001" version="1">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/>
+    <tag k="waterway" v="canal"/><tag k="name" v="Alignment Way"/>
+  </way>
+</osm>
+"""
+    pbf = tmp_path / "unaligned.osm"
+    pbf.write_text(xml)
+    feats = read_pbf(pbf)
+    assert len(feats.ways) == 1
+    way = feats.ways[0]
+    assert len(way.node_ids) == len(way.geometry)
+    assert way.node_ids == [1, 3]
+    expected_geom = [(51.75, -1.26), (51.752, -1.262)]
+    assert way.geometry == expected_geom

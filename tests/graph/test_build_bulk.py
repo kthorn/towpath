@@ -1,11 +1,12 @@
-import time
-
 import networkx as nx
 
-from pound.graph.build import build_graph, load_overrides
+from pound.graph.build import build_graph
+from pound.graph.locks import attach_locks
 from pound.ingest.ir import (
+    NodeKind,
     WaterwayFeatures,
     WaterwayKind,
+    WaterwayNode,
     WaterwayWay,
     WayDimensions,
 )
@@ -33,295 +34,111 @@ def _features(ways, nodes=None):
     )
 
 
-# --- Phase 1: node-ref authority -------------------------------------------
+# --- Noded emission: every OSM id -> node, consecutive ids -> edges --------
 
 
-def test_node_ref_authority_joins_shared_id_at_coincident_coords():
-    # two ways sharing OSM node id 7 at coincident coords -> connected, no snaps
+def test_noded_way_emits_per_segment_edges():
+    # 3 node_ids, 3 coords -> 3 nodes, 2 segment edges (not 1 whole-way edge).
+    ways = [
+        _way(
+            1,
+            WaterwayKind.CANAL,
+            "A",
+            [11, 12, 13],
+            [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620)],
+        )
+    ]
+    g = build_graph(_features(ways))
+    assert g.number_of_nodes() == 3
+    assert g.number_of_edges() == 2
+    # each segment edge carries the parent way's osm_way_id
+    assert {d["osm_way_id"] for _, _, d in g.edges(data=True)} == {1}
+
+
+def test_segment_edge_length_is_per_segment_not_whole_way():
+    ways = [
+        _way(
+            1,
+            WaterwayKind.CANAL,
+            "A",
+            [11, 12, 13],
+            [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620)],
+        )
+    ]
+    g = build_graph(_features(ways))
+    seg = next(d for _, _, d in g.edges(data=True))
+    # ~131 m per segment, NOT the ~262 m whole-way length.
+    assert 120.0 < seg["length_m"] < 140.0
+
+
+# --- Shared junctions collapse at emission (no contraction phase) ----------
+
+
+def test_shared_osm_id_at_endpoint_joins_two_ways():
     ways = [
         _way(1, WaterwayKind.CANAL, "A", [1, 7], [(51.7500, -1.2600), (51.7520, -1.2620)]),
         _way(2, WaterwayKind.CANAL, "B", [7, 9], [(51.7520, -1.2620), (51.7540, -1.2640)]),
     ]
     g = build_graph(_features(ways))
+    assert g.number_of_nodes() == 3
     assert g.number_of_edges() == 2
     assert nx.number_connected_components(g) == 1
-    assert g.graph["tolerance_snaps_used"] == []
-    assert g.graph["tolerance_snaps_unresolved"] == []
 
 
-def test_node_ref_authority_joins_shared_id_even_when_coords_differ_slightly():
-    # shared node id 7 but B's endpoint coord differs from A's by ~1 m (well-noded
-    # but slightly edited): node-ref force-joins them onto one key.
+def test_internal_junction_way_joins_main_chain_at_an_internal_node():
+    """Acceptance crit 5: a way sharing an OSM id only at an INTERNAL position
+    of another way joins it — the exact defect this rewrite fixes. Under the
+    endpoint-only build, B's shared id sits in the middle of A (not at A's
+    endpoints), so B becomes a detached single edge and the graph is two
+    components; noding makes A's shared id a real graph node and B joins it."""
     ways = [
-        _way(1, WaterwayKind.CANAL, "A", [1, 7], [(51.7500, -1.2600), (51.7520, -1.2620)]),
         _way(
-            2, WaterwayKind.CANAL, "B", [7, 9], [(51.7520, -1.2619), (51.7540, -1.2640)]
-        ),  # ~1 m east of A's end
+            1,
+            WaterwayKind.CANAL,
+            "A",
+            [1, 2, 3],
+            [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620)],
+        ),
+        _way(
+            2,
+            WaterwayKind.CANAL,
+            "B",
+            [4, 2],  # node 2 is INTERNAL to A
+            [(51.7600, -1.2700), (51.7510, -1.2610)],
+        ),
     ]
-    g = build_graph(_features(ways), tolerance_m=0.0)  # snap OFF — must still join
+    g = build_graph(_features(ways))
     assert nx.number_connected_components(g) == 1
-    assert g.graph["tolerance_snaps_used"] == []
-    assert g.graph["tolerance_snaps_unresolved"] == []
-
-
-# --- Phase 2: exact-coordinate authority (Overpass path, no node ids) -----
+    # A has 3 nodes; B brings 1 new (id 4); the shared id 2 is one graph node of degree 3
+    # (A's two segment edges + B's one edge).
+    shared_node = next(n for n, d in g.nodes(data=True) if "2" in d.get("osm_node_ids", set()))
+    assert g.degree(shared_node) == 3
 
 
 def test_exact_coordinate_authority_joins_coincident_ends_without_node_ids():
-    # mirrors the Overpass dev path: empty node_ids, coincident endpoints join.
+    # id-less dev path (Overpass out geom): coincident rounded coords join.
     ways = [
         _way(1, WaterwayKind.CANAL, "A", [], [(51.7500, -1.2600), (51.7520, -1.2620)]),
-        _way(
-            2, WaterwayKind.CANAL, "B", [], [(51.7520, -1.2620), (51.7540, -1.2640)]
-        ),  # shared coord exactly
+        _way(2, WaterwayKind.CANAL, "B", [], [(51.7520, -1.2620), (51.7540, -1.2640)]),
     ]
-    g = build_graph(_features(ways), tolerance_m=0.0)  # snap OFF — must still join
-    assert nx.number_connected_components(g) == 1
-    assert g.graph["tolerance_snaps_used"] == []
-    assert g.graph["tolerance_snaps_unresolved"] == []
-
-
-# --- Phase 3: tolerance-snap fallback (genuinely unjoined near ends) ------
-
-
-def test_tolerance_snap_fallback_joins_near_ends_with_no_shared_id_or_coord():
-    # way B's start is ~3 m west of way A's end, no shared node id, distinct
-    # rounded coords -> a genuine gap candidate, within 10 m tolerance.
-    ways = [
-        _way(1, WaterwayKind.CANAL, "A", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
-        _way(
-            2, WaterwayKind.CANAL, "B", [3, 4], [(51.7520, -1.26204), (51.7540, -1.2640)]
-        ),  # ~3 m west of A's end
-    ]
-    g = build_graph(_features(ways), tolerance_m=10.0)
-    assert nx.number_connected_components(g) == 1
-    assert len(g.graph["tolerance_snaps_used"]) == 1
-    assert len(g.graph["tolerance_snaps_unresolved"]) == 1  # no override confirms it
-
-
-def test_tolerance_zero_disables_snap_keeps_gap_disconnected():
-    ways = [
-        _way(1, WaterwayKind.CANAL, "A", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
-        _way(2, WaterwayKind.CANAL, "B", [3, 4], [(51.7520, -1.2618), (51.7540, -1.2640)]),
-    ]
-    g = build_graph(_features(ways), tolerance_m=0.0)
-    assert nx.number_connected_components(g) == 2  # gap not closed
-    assert g.graph["tolerance_snaps_used"] == []
-    assert g.graph["tolerance_snaps_unresolved"] == []  # beyond tol => not a candidate
-
-
-def test_two_adjacent_junctions_near_each_other_are_not_a_candidate():
-    # The aqueduct/parallel-canal case: two fully-connected 3-way chains whose
-    # interior junctions sit within tolerance, with NO dangling tips between
-    # them. Neither interior node is a tip => no snap candidate at all.
-    # chain 1: p1 -> p2 -> p3 -> p4   (p2,p3 are junctions, deg 2)
-    ways = [
-        _way(1, WaterwayKind.CANAL, "A", [11, 12], [(51.7000, -1.2000), (51.7100, -1.2100)]),
-        _way(2, WaterwayKind.CANAL, "B", [12, 13], [(51.7100, -1.2100), (51.7200, -1.2200)]),
-        _way(3, WaterwayKind.CANAL, "C", [13, 14], [(51.7200, -1.2200), (51.7300, -1.2300)]),
-        # chain 2: q1 -> q2 -> q3 -> q4, with q2 ~3 m from p3 (within 10 m)
-        _way(4, WaterwayKind.CANAL, "D", [21, 22], [(51.8000, -1.3000), (51.7201, -1.2201)]),
-        _way(5, WaterwayKind.CANAL, "E", [22, 23], [(51.7201, -1.2201), (51.7400, -1.2400)]),
-        _way(6, WaterwayKind.CANAL, "F", [23, 24], [(51.7400, -1.2400), (51.7500, -1.2500)]),
-    ]
-    g = build_graph(_features(ways), tolerance_m=10.0)
-    # Two components (the two chains never touch); no snap was built or queued.
-    assert nx.number_connected_components(g) == 2
-    assert g.graph["tolerance_snaps_used"] == []
-    assert g.graph["tolerance_snaps_unresolved"] == []
-    # (The chain tips DO snap among themselves only if within tol of another tip;
-    # here each chain's tips are far apart from each other, so none fire.)
-
-
-# --- overrides -------------------------------------------------------------
-
-
-def test_join_override_resolves_snap_out_of_unresolved(tmp_path):
-    import json
-
-    ovr_path = tmp_path / "overrides.json"
-    ovr_path.write_text(
-        json.dumps(
-            {
-                "join": [["2", "3"]],  # node id 2 (A end) joins node id 3 (B start)
-                "split": [],
-            }
-        )
-    )
-    ways = [
-        _way(1, WaterwayKind.CANAL, "A", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
-        _way(
-            2, WaterwayKind.CANAL, "B", [3, 4], [(51.7520, -1.26204), (51.7540, -1.2640)]
-        ),  # ~3 m west of A's end
-    ]
-    ovr = load_overrides(ovr_path)
-    g = build_graph(_features(ways), tolerance_m=10.0, overrides=ovr)
-    assert nx.number_connected_components(g) == 1
-    assert len(g.graph["tolerance_snaps_used"]) == 1
-    assert g.graph["tolerance_snaps_unresolved"] == []  # join override resolved it
-    assert g.graph["overrides_applied"] == 1
-
-
-def test_split_override_suppresses_snap_keeps_them_disconnected(tmp_path):
-    import json
-
-    ovr_path = tmp_path / "overrides.json"
-    ovr_path.write_text(
-        json.dumps(
-            {
-                "join": [],
-                "split": [["1", "2"]],  # the aqueduct case: ways 1 and 2 must NOT snap
-            }
-        )
-    )
-    ways = [
-        _way(1, WaterwayKind.CANAL, "A", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
-        _way(
-            2, WaterwayKind.CANAL, "B", [3, 4], [(51.7520, -1.26204), (51.7540, -1.2640)]
-        ),  # ~3 m west of A's end
-    ]
-    ovr = load_overrides(ovr_path)
-    g = build_graph(_features(ways), tolerance_m=10.0, overrides=ovr)
-    assert nx.number_connected_components(g) == 2  # snap suppressed
-    assert g.graph["tolerance_snaps_used"] == []
-    assert g.graph["tolerance_snaps_unresolved"] == []
-    assert g.graph["overrides_applied"] == 1
-
-
-def test_join_override_bridges_a_beyond_tolerance_gap(tmp_path):
-    # genuine gap in OSM: coords are far apart (no candidate snap), but a join
-    # override connects the two node ids directly.
-    import json
-
-    ovr_path = tmp_path / "overrides.json"
-    ovr_path.write_text(
-        json.dumps(
-            {
-                "join": [["2", "3"]],
-                "split": [],
-            }
-        )
-    )
-    ways = [
-        _way(1, WaterwayKind.CANAL, "A", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
-        _way(
-            2, WaterwayKind.CANAL, "B", [3, 4], [(51.7600, -1.2720), (51.7620, -1.2740)]
-        ),  # ~1.3 km away — no snap candidate
-    ]
-    ovr = load_overrides(ovr_path)
-    g = build_graph(_features(ways), tolerance_m=10.0, overrides=ovr)
-    assert nx.number_connected_components(g) == 1  # bridge override connected them
-    assert g.graph["overrides_applied"] == 1
-
-
-# --- Phase 3: grid-bucket correctness (longitude cos-lat correction) --------
-
-
-def test_phase3_grid_bucket_finds_longitude_separated_tip_within_tolerance():
-    """The grid-bucket cell size must account for cos(latitude): 1° longitude
-    at England's latitudes is only ~57-63% of 1° latitude in meters. If the
-    cell uses the latitude factor for both dims, longitude cells are undersized
-    and the 3×3 Moore neighbourhood misses candidates 2 cells away in lon.
-    This test places two tips ~9.5 m apart in LONGITUDE at lat 51° (within 10 m
-    tolerance) positioned so the pre-fix grid put them 2 cells apart."""
-    import math
-
-    lat = 51.0
-    lon_per_m = 1.0 / (111_320.0 * math.cos(math.radians(lat)))
-    # Position the tips so they straddle a cell boundary (the bug trigger)
-    tip_a_lon = -0.9999550844
-    tip_b_lon = tip_a_lon + 9.5 * lon_per_m  # ~9.5 m east, within 10 m tolerance
-    ways = [
-        _way(1, WaterwayKind.CANAL, "A", [1, 2], [(lat, tip_a_lon), (lat + 0.001, tip_a_lon)]),
-        _way(2, WaterwayKind.CANAL, "B", [3, 4], [(lat, tip_b_lon), (lat - 0.001, tip_b_lon)]),
-    ]
-    g = build_graph(_features(ways), tolerance_m=10.0)
-    # The tips are within tolerance and must snap — the grid must not miss them.
-    assert len(g.graph["tolerance_snaps_used"]) >= 1, (
-        "Phase 3 grid missed a longitude-separated tip within tolerance "
-        "(cell_deg does not account for cos(lat))"
-    )
+    g = build_graph(_features(ways))
     assert nx.number_connected_components(g) == 1
 
 
-# --- Phase 3: grid-bucket perf (relative speedup) --------------------------
-
-
-def test_phase3_grid_bucket_preserves_snap_results_and_is_sub_linear():
-    """Phase 3's grid-bucket refactor must produce >=1500 snaps and complete in
-    < 2 seconds on a 3000-tip synthetic graph (3000 chain pairs -> ~6000 nodes).
-    The all-pairs scan took multiple seconds on this size; < 2 s is generous."""
-    # 3000 disjoint chain tips, each ~0.5 m from a target tip within 1 m tolerance
-    ways = []
-    for i in range(3000):
-        base_lat = 51.0000 + i * 0.001
-        lon = -1.0000
-        tip_a_lat = round(base_lat, 7)
-        tip_b_lat = round(base_lat + 0.0000045, 7)
-        # Unique node_ids per pair so Phase 1 node-ref does NOT merge them
-        n0, n1, n2, n3 = i * 4 + 1, i * 4 + 2, i * 4 + 3, i * 4 + 4
-        ways.append(
-            _way(
-                100 + i * 10,
-                WaterwayKind.CANAL,
-                f"A{i}",
-                [n0, n1],
-                [(tip_a_lat, lon), (round(base_lat + 0.0000900, 7), lon)],
-            )
-        )
-        ways.append(
-            _way(
-                200 + i * 10,
-                WaterwayKind.CANAL,
-                f"B{i}",
-                [n2, n3],
-                [(round(base_lat - 0.0000900, 7), lon), (tip_b_lat, lon)],
-            )
-        )
-
-    start = time.perf_counter()
-    g = build_graph(_features(ways), tolerance_m=1.0)
-    elapsed = time.perf_counter() - start
-
-    # Sufficient snaps fired: at least 1500 (one per i; tip->tip pairs collapse).
-    assert len(g.graph["tolerance_snaps_used"]) >= 1500
-    # Perf: this should be well under a second on any modern machine.
-    assert elapsed < 2.0, f"Phase 3 took {elapsed:.2f}s — grid not sub-linear"
-
-
-def test_duplicate_edge_candidate_recorded_unresolved_not_built():
-    # A and B share node id 7 (authoritative join) at (51.7520,-1.2620). C is a
-    # near-duplicate of the A edge: C's two ends each sit ~1 m off A's two ends,
-    # so snapping C's near tip onto A's far junction (the shared node) leaves C's
-    # far tip snapping onto A's near end — recreating edge A -> duplicate.
-    # (NetworkX Graph is simple: that's a clobber, so we record it unresolved.)
+def test_distinct_osm_ids_rounding_to_same_coord_collapse_to_one_node():
+    # two ways that don't share an OSM node id but meet at the same rounded coord
+    # become ONE graph node (coord authority); both ids land in osm_node_ids.
     ways = [
-        _way(1, WaterwayKind.CANAL, "A", [1, 7], [(51.7500, -1.2600), (51.7520, -1.2620)]),
-        _way(2, WaterwayKind.CANAL, "B", [7, 9], [(51.7520, -1.2620), (51.7540, -1.2640)]),
-        _way(
-            3, WaterwayKind.CANAL, "C", [10, 11], [(51.7520, -1.2619), (51.7501, -1.2601)]
-        ),  # near-dup of A; far end is a tip near A's start
+        _way(1, WaterwayKind.CANAL, "A", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
+        _way(2, WaterwayKind.CANAL, "B", [3, 4], [(51.7540, -1.2640), (51.7520, -1.2620)]),
     ]
-    g = build_graph(_features(ways), tolerance_m=10.0)
-    # The would-duplicate snap is recorded unresolved, and no existing edge's
-    # data is clobbered: A and B are still present as distinct edges.
-    edge_ids = {d["osm_way_id"] for _, _, d in g.edges(data=True)}
-    assert {1, 2}.issubset(edge_ids)  # A and B intact
-    # at least one candidate landed in the queue (the duplicate-creating one)
-    # — the implementer should confirm the geometry triggers duplication; if
-    # the chosen coords instead build cleanly, adjust C's far-end coord to
-    # genuinely recreate A's endpoints and re-run.
-    assert isinstance(g.graph["tolerance_snaps_unresolved"], list)
+    g = build_graph(_features(ways))
+    assert nx.number_connected_components(g) == 1
+    shared = next(n for n, d in g.nodes(data=True) if {"2", "4"} <= d.get("osm_node_ids", set()))
+    assert g.nodes[shared]["osm_node_ids"] == {"2", "4"}
 
 
-# --- Closed-ring ways (self-loop prevention) -------------------------------
-# A closed way (first coord == last coord) is an area polygon — a lock-chamber
-# outline, a basin, a wetland, a water body — never a routable edge. On real
-# England data all 135 closed rings are such areas (locks, wetlands, amusement
-# rides, water bodies); none are navigable ring passages, because a navigable
-# ring trip is a graph cycle of distinct linear ways, not a single closed way.
-# Skipping them at emission keeps the `self_loops == 0` gate honest without an
-# override, and drops no routable geometry.
+# --- Closed-ring skip (area polygons are never routable) -------------------
 
 
 def test_closed_ring_way_emits_no_self_loop_and_no_isolated_node():
@@ -342,9 +159,6 @@ def test_closed_ring_way_emits_no_self_loop_and_no_isolated_node():
 
 
 def test_closed_ring_does_not_mask_a_real_routable_cycle():
-    # A navigable ring is a cycle of DISTINCT linear ways joining at junction
-    # nodes (A->B->C->A), not one closed way. Such a cycle must survive the
-    # closed-ring skip unchanged.
     a, b, c = (51.7500, -1.2600), (51.7520, -1.2600), (51.7510, -1.2620)
     ways = [
         _way(10, WaterwayKind.CANAL, "AB", [1, 2], [a, b]),
@@ -354,55 +168,253 @@ def test_closed_ring_does_not_mask_a_real_routable_cycle():
     g = build_graph(_features(ways))
     assert g.number_of_edges() == 3
     assert nx.number_connected_components(g) == 1
-    # 3 junction nodes, no self-loops
     assert all(u != v for u, v in g.edges())
 
 
-def test_closed_ring_sharing_coord_with_linear_way_joins_cleanly():
-    # A closed ring whose coordinate coincides with a linear way's endpoint:
-    # the linear way emits the node; the ring contributes nothing. No self-loop.
-    shared = (51.7500, -1.2600)
-    ring_geom = [shared, (51.7510, -1.2600), (51.7510, -1.2610), shared]
+def test_consecutive_duplicate_id_or_coord_segment_is_skipped():
+    # a way that references the same OSM id twice in a row (or two coords that
+    # round equal) would yield a zero-length self-loop; dedupe-then-iterate.
     ways = [
-        _way(1, WaterwayKind.CANAL, "Linear", [1, 2], [shared, (51.7520, -1.2600)]),
-        _way(2, WaterwayKind.CANAL, "Ring", [2, 3, 4, 2], ring_geom),
+        _way(
+            1,
+            WaterwayKind.CANAL,
+            "A",
+            [1, 1, 2],
+            [(51.7500, -1.2600), (51.7500, -1.2600), (51.7520, -1.2620)],
+        )
     ]
     g = build_graph(_features(ways))
-    assert g.number_of_edges() == 1  # only the linear way
+    assert g.number_of_edges() == 1
     assert all(u != v for u, v in g.edges())
 
 
-# --- Phase 3: overlapping snap candidates ---------------------------------
+# --- Edge collision: merge attrs (§3.3) — acceptance crit 6 ----------------
 
 
-def test_overlapping_snap_candidates_share_node():
-    # Regression: the snap-build loop pre-computes all candidates, then builds
-    # them one-by-one via _contract, which REMOVES the non-representative node.
-    # A later candidate referencing an already-removed node crashed in
-    # _contract with KeyError on g.nodes[rep] (has_edge returns False, not an
-    # error, for missing nodes, so the guard did not catch it). This surfaced
-    # on the real England build at --tolerance-m 10 (at 1 m the candidates
-    # were independent and the bug stayed latent).
-    #
-    # Geometry: three dangling tips x < m < y in tuple order, each with a far
-    # sole neighbor (>10 m) so the only within-tolerance pairs are {x,m} and
-    # {m,y}. Node insertion order yields candidate list [(x,m),(m,y),(y,m)];
-    # dedup -> [(x,m),(m,y)]. pair1 {x,m} rep=x removes m; pair2 {m,y} rep=m
-    # (gone) must be skipped, not crash.
-    x, A = (0.0, 0.0), (0.0, -0.00020)
-    m, B = (0.0, 0.00006), (0.00020, 0.00006)
-    y, C = (0.0, 0.00010), (0.0, 0.00020)
+def test_coincident_lock_and_canal_ways_merge_to_one_lock_edge():
+    """Acceptance crit 6: a lock-tagged edge coincident with a canal-tagged edge
+    resolves to one edge with kind==LOCK, the LOCK way's osm_way_id kept (so
+    attach_locks finds it), and locks==1 both at build (§3.3 merge sets it) and
+    after attach_locks."""
+    # routable ways sort before locks in read_pbf/parse, but the merge is
+    # order-independent; mirror the measured case (canal emissible first).
     ways = [
-        _way(1, WaterwayKind.CANAL, "xa", [1, 2], [x, A]),
-        _way(2, WaterwayKind.CANAL, "mb", [3, 4], [m, B]),
-        _way(3, WaterwayKind.CANAL, "yc", [5, 6], [y, C]),
+        _way(100, WaterwayKind.CANAL, "Canal", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
+        _way(200, WaterwayKind.LOCK, "Lock", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
     ]
-    g = build_graph(_features(ways), tolerance_m=10.0)
-    # The first snap (x<->m) is built; the stale {m,y} candidate is skipped
-    # because m was removed. y stays a dangling tip (its own nearest was m,
-    # now gone), so the graph has 2 components, no crash.
-    assert nx.number_connected_components(g) == 2
-    # exactly one snap recorded
-    used = g.graph["tolerance_snaps_used"]
-    assert len(used) == 1
-    assert sorted(used[0]) == sorted([x, m])
+    g = build_graph(_features(ways))
+    assert g.number_of_edges() == 1
+    e = next(d for _, _, d in g.edges(data=True))
+    assert e["kind"] == WaterwayKind.LOCK
+    assert e["osm_way_id"] == 200  # LOCK way's id kept
+    assert e["locks"] == 1  # set at merge (one party LOCK)
+    # after attach_locks (deep copy), the way-loop finds osm_way_id==200 -> locks=1
+    g2, _ = attach_locks(g, _features(ways))
+    e2 = next(d for _, _, d in g2.edges(data=True))
+    assert e2["locks"] == 1
+
+
+def test_coincident_river_and_canal_merge_prefers_canal():
+    ways = [
+        _way(300, WaterwayKind.RIVER, "R", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
+        _way(400, WaterwayKind.CANAL, "C", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
+    ]
+    g = build_graph(_features(ways))
+    assert g.number_of_edges() == 1
+    e = next(d for _, _, d in g.edges(data=True))
+    assert e["kind"] == WaterwayKind.CANAL  # Calder-and-Hebble dual-classification
+
+
+def test_collision_union_tightens_dimensions():
+    ways = [
+        _way(
+            500,
+            WaterwayKind.CANAL,
+            "C",
+            [1, 2],
+            [(51.7500, -1.2600), (51.7520, -1.2620)],
+            dims=WayDimensions(max_beam_m=2.0, max_draft_m=0.8),
+        ),
+        _way(
+            501,
+            WaterwayKind.CANAL,
+            "C2",
+            [1, 2],
+            [(51.7500, -1.2600), (51.7520, -1.2620)],
+            dims=WayDimensions(max_beam_m=2.2, max_draft_m=None, max_length_m=18.0),
+        ),
+    ]
+    g = build_graph(_features(ways))
+    d = g.edges[next(iter(g.edges))]["dimensions"]
+    assert d.max_beam_m == 2.0  # min
+    assert d.max_draft_m == 0.8  # carried from the other way
+    assert d.max_length_m == 18.0
+
+
+# --- attach_locks flight-level chamber model (§3.5, OQ-A Model D) --------
+
+
+def test_multi_node_lock_way_counts_chambers_by_gates():
+    """A multi-node LOCK way with internal gate nodes: chambers = gates-1, set
+    on the downstream-gate segments, not on every segment (Model B) and not on
+    the first segment only (Model A). A 4-node, 3-gate way (gate-shape-gate-
+    gate) => 2 chambers on the two downstream-gate segments; the shape-to-first-
+    gate segment carries 0."""
+    # nodes 1(gate), 2(shape), 3(gate), 4(gate). Segment 2->3 has downstream
+    # node 3 (a gate) => 1 chamber; segment 3->4 has downstream 4 (gate) =>
+    # 1 chamber. Total 2.
+    ways = [
+        _way(
+            700,
+            WaterwayKind.LOCK,
+            "L",
+            [1, 2, 3, 4],
+            [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620), (51.7530, -1.2630)],
+        )
+    ]
+    gates = [
+        WaterwayNode(
+            osm_id=1,
+            lat=51.7500,
+            lon=-1.2600,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=3,
+            lat=51.7520,
+            lon=-1.2620,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=4,
+            lat=51.7530,
+            lon=-1.2630,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+    ]
+    feats = _features(ways, gates)
+    g, _ = attach_locks(build_graph(feats), feats)
+    assert sum(d.get("locks", 0) for _, _, d in g.edges(data=True)) == 2
+    assert sum(1 for _, _, d in g.edges(data=True) if d.get("locks", 0) >= 1) == 2
+
+
+def test_three_lock_gates_in_a_row_yields_two_chambers():
+    """Kurt's prescription: three lock gates in a row => two chambers. A
+    3-node way gate-gate-gate (G=3) => 2 chambers; both segments' downstream
+    nodes are gates => 2 lock edges."""
+    ways = [
+        _way(
+            701,
+            WaterwayKind.LOCK,
+            "L",
+            [10, 11, 12],
+            [(51.7500, -1.2600), (51.7510, -1.2610), (51.7520, -1.2620)],
+        )
+    ]
+    gates = [
+        WaterwayNode(
+            osm_id=10,
+            lat=51.7500,
+            lon=-1.2600,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=11,
+            lat=51.7510,
+            lon=-1.2610,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=12,
+            lat=51.7520,
+            lon=-1.2620,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+    ]
+    feats = _features(ways, gates)
+    g, report = attach_locks(build_graph(feats), feats)
+    assert sum(d.get("locks", 0) for _, _, d in g.edges(data=True)) == 2
+    assert report["lock_ways_attached"] == 1
+
+
+def test_flight_level_shared_gate_counted_once():
+    """Two LOCK ways sharing a gate endpoint (one chamber's exit IS the next's
+    entrance — the cross-way staircase case): the shared gate bounds both
+    chambers once, not twice. Two 2-node ways [1,2] and [2,3] where node 2 is a
+    gate: G=3 (gates 1,2,3) => 2 chambers across the flight; each way's single
+    segment has a downstream gate => 2 lock edges, not 3."""
+    ways = [
+        _way(800, WaterwayKind.LOCK, "Lower", [1, 2], [(51.7500, -1.2600), (51.7510, -1.2610)]),
+        _way(801, WaterwayKind.LOCK, "Upper", [2, 3], [(51.7510, -1.2610), (51.7520, -1.2620)]),
+    ]
+    gates = [
+        WaterwayNode(
+            osm_id=1,
+            lat=51.7500,
+            lon=-1.2600,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=2,
+            lat=51.7510,
+            lon=-1.2610,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+        WaterwayNode(
+            osm_id=3,
+            lat=51.7520,
+            lon=-1.2620,
+            tags={"waterway": "lock_gate"},
+            kind=NodeKind.LOCK_GATE,
+        ),
+    ]
+    feats = _features(ways, gates)
+    g, _ = attach_locks(build_graph(feats), feats)
+    # G=3 distinct gates across the flight => 2 chambers => 2 lock edges, not 3
+    # (the shared gate 2 is counted once, not by each way).
+    assert sum(d.get("locks", 0) for _, _, d in g.edges(data=True)) == 2
+    assert sum(1 for _, _, d in g.edges(data=True) if d.get("locks", 0) >= 1) == 2
+
+
+def test_gateless_flight_floors_to_one_lock():
+    """The gateless-flight floor (the 244 gateless flights in England): a LOCK
+    way whose gates aren't mapped gets locks=1 on its first segment, not 0."""
+    ways = [_way(900, WaterwayKind.LOCK, "L", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)])]
+    feats = _features(ways, [])  # no gate nodes
+    g, report = attach_locks(build_graph(feats), feats)
+    assert sum(d.get("locks", 0) for _, _, d in g.edges(data=True)) == 1
+    assert report["lock_ways_attached"] == 1
+
+
+# --- attach_locks lock-node tie-break (§3.5) — acceptance crit 7 ----------
+
+
+def test_lock_node_tie_goes_to_lock_edge_not_canal_spur():
+    """Acceptance crit 7: a lock=yes gate node coincident with BOTH a LOCK
+    segment and a canal spur (sharing the junction node) gets locks=1 on the
+    LOCK segment and leaves the spur at 0, deterministically (not by emission
+    order)."""
+    ways = [
+        _way(100, WaterwayKind.LOCK, "Lock", [1, 2], [(51.7500, -1.2600), (51.7520, -1.2620)]),
+        _way(
+            200, WaterwayKind.CANAL, "Spur", [2, 3], [(51.7520, -1.2620), (51.7540, -1.2640)]
+        ),  # shares node 2 with the lock
+    ]
+    nodes = [
+        WaterwayNode(osm_id=999, lat=51.7520, lon=-1.2620, tags={"lock": "yes"}, kind=NodeKind.LOCK)
+    ]
+    feats = _features(ways, nodes)
+    g, report = attach_locks(build_graph(feats), feats)
+    lock_e = next(d for _, _, d in g.edges(data=True) if d["osm_way_id"] == 100)
+    spur_e = next(d for _, _, d in g.edges(data=True) if d["osm_way_id"] == 200)
+    assert lock_e["locks"] == 1
+    assert spur_e["locks"] == 0
+    assert report["lock_nodes_attached"] >= 1

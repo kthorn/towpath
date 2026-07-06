@@ -9,8 +9,11 @@ from tests.fixtures import oxford_fixture_path
 
 
 def _features():
-    with open(oxford_fixture_path()) as f:
-        return parse(json.load(f)["elements"], None)
+    try:
+        with open(oxford_fixture_path()) as f:
+            return parse(json.load(f)["elements"], None)
+    except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+        raise RuntimeError(f"Failed to load Oxford fixture: {e}") from e
 
 
 def test_build_returns_networkx_graph():
@@ -25,14 +28,16 @@ def test_build_excludes_derelict_ways():
     assert 1005 not in ids  # derelict_canal
 
 
-def test_build_main_chain_and_pendant_have_five_edges():
+def test_build_main_chain_and_pendant_counts_match_noded_model():
     g = build_graph(_features())
-    # chain 1001->1002->1003 (exact-coord joins), pendant 1007 snapped to 1003 far-end,
-    # Duke's Cut 1006 isolated
+    # chain 1001(2 edges)->1002(1)->1003(1), pendant 1007(1) joins 1003 far-end
+    # by shared id 3002, Duke's Cut 1006(1 edge) isolated.
     ids = {d["osm_way_id"] for _, _, d in g.edges(data=True)}
     assert ids == {1001, 1002, 1003, 1006, 1007}
-    # 4 chain nodes (A,B,C,D) + pendant far-end (F) + Duke's 2 = 7
-    assert g.number_of_nodes() == 7
+    # main-chain+pendant component = 6 nodes (11,12,13,5003,3002,7002); Duke's = 2 -> 8 total
+    assert g.number_of_nodes() == 8
+    # 1001 yields 2 segment edges; 1002/1003/1006/1007 yield 1 each -> 6 total
+    assert g.number_of_edges() == 6
 
 
 def test_build_edge_has_length_and_dims():
@@ -54,4 +59,4 @@ def test_build_lock_way_edge_kind():
 def test_build_tunnel_flag():
     g = build_graph(_features())
     edge = next(d for _, _, d in g.edges(data=True) if d["osm_way_id"] == 1006)
-    assert edge["has_tunnel"] is True
+    assert edge["has_tunnel"]
