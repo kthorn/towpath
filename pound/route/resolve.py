@@ -18,19 +18,10 @@ import math
 
 import networkx as nx
 
-from pound.graph.build import _node_key
+from pound.graph.build import _haversine_m, _node_key
 
 _DEFAULT_SNAP_TOLERANCE_M = 50.0
 
-
-def _haversine_m(a, b) -> float:
-    r = 6_371_000.0
-    lat1, lon1 = math.radians(a[0]), math.radians(a[1])
-    lat2, lon2 = math.radians(b[0]), math.radians(b[1])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(h))
 
 
 def resolve_place(
