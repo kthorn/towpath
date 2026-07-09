@@ -89,6 +89,22 @@ Bulk tests are skipped by default; run them explicitly:
 uv run pytest --run-bulk
 ```
 
+## Planning a route (`pound-plan`)
+
+Minimal, eyeballing-only surface over the loaded artifact:
+
+```bash
+uv run pound-plan Oxford Banbury --days 3
+# override the artifact:
+uv run pound-plan Oxford Banbury --days 3 --artifact pound/artifacts/england.pkl
+# boat constraints:
+uv run pound-plan Oxford Banbury --days 3 --boat-beam 2.0 --boat-draft 0.8
+```
+
+Unknown / ambiguous place names and un-routable constraints produce a clear
+error, not a traceback. A REST API will eventually supersede this CLI for
+product use; it is deliberately a test harness, not a planner.
+
 ## Data attribution
 
 OSM data is © OpenStreetMap contributors, licensed ODbL. Derived artifacts
