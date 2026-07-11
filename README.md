@@ -104,7 +104,8 @@ uv run pound-plan Oxford Banbury --days 3 --boat-beam 2.0 --boat-draft 0.8
 `--days` is optional: omit it and the day count is inferred from `--hours-per-day`
 (you get as many days as the route needs, no cap). Default output is the route
 header + totals + per-day summary + warnings; add `--verbose` for the
-node-to-node leg list.
+node-to-node leg list, or `--locks` to fold a per-day lock count into the day
+summary (how many locks each day's cruise works through).
 
 Unknown / ambiguous place names and un-routable constraints produce a clear
 error, not a traceback. A REST API will eventually supersede this CLI for
