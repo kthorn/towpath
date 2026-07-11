@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class CanalConstraints(BaseModel):
     start: str
     end: str | None = None  # None => ring / round trip
-    days: int = Field(gt=0)
+    days: int | None = Field(gt=0, default=None)  # None => infer from hours_per_day (no cap)
     hours_per_day: float = Field(gt=0, default=6.0)
     boat_length_m: float | None = None
     boat_beam_m: float | None = None
@@ -36,7 +36,7 @@ class ResolvedConstraints(BaseModel):
 
     start_uid: int
     end_uid: int
-    days: int = Field(gt=0)
+    days: int | None = Field(gt=0, default=None)  # None => infer from hours_per_day (no cap)
     hours_per_day: float = Field(gt=0, default=6.0)
     boat_length_m: float | None = None
     boat_beam_m: float | None = None

@@ -215,3 +215,35 @@ def test_plan_route_from_constraints_bridge():
     assert r.start == "Oxford"
     assert r.end == "Hayfield"
     assert r.legs  # non-empty
+
+
+def test_days_none_infers_no_cap():
+    # days omitted (None) => hours_per_day alone drives chunking; no cap.
+    # 4 ~162-min edges at 3 h/day => 4 days; None cap behaves like max_days=inf.
+    g, _ = _graph_and_gaz()
+    g = copy.deepcopy(g)
+    for _, _, d in g.edges(data=True):
+        d["length_m"] = 13000.0
+    rc = ResolvedConstraints(
+        start_uid=resolve_first("Oxford", g),
+        end_uid=resolve_first("Hayfield", g),
+        days=None,
+        hours_per_day=3.0,
+    )
+    r = plan_route(rc, graph=g)
+    assert len(r.days) == 4  # uncapped -> one day per edge, no folding
+
+
+def test_days_none_with_more_time_fits_in_fewer_days():
+    g, _ = _graph_and_gaz()
+    g = copy.deepcopy(g)
+    for _, _, d in g.edges(data=True):
+        d["length_m"] = 1000.0  # tiny edges; whole route fits one day
+    rc = ResolvedConstraints(
+        start_uid=resolve_first("Oxford", g),
+        end_uid=resolve_first("Hayfield", g),
+        days=None,
+        hours_per_day=6.0,
+    )
+    r = plan_route(rc, graph=g)
+    assert len(r.days) == 1

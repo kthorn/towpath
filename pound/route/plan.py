@@ -133,7 +133,15 @@ def plan_route_from_constraints(
 
 
 def _chunk_days(legs, hours_per_day, max_days) -> list[DayPlan]:
-    """Greedy cumulative-minute packing (Scope C, unchanged). See git history."""
+    """Greedy cumulative-minute packing. max_days=None => no cap (infer).
+
+    Each day's cruising_minutes <= hours_per_day*60. Emits as many non-empty
+    days as the route needs. With max_days set, the cap folds trailing legs
+    into the last day once max_days days exist (OQ-8: no empty padding).
+    With max_days=None (the default since days became optional), day count is
+    inferred from hours_per_day alone and never folds. Mooring-aware placement
+    is a Scope D concern; end_near is the day's last leg to_place for now.
+    """
     budget = hours_per_day * 60.0
     days: list[DayPlan] = []
     current: list[RouteLeg] = []
@@ -155,7 +163,7 @@ def _chunk_days(legs, hours_per_day, max_days) -> list[DayPlan]:
     for leg in legs:
         if current and current_min + leg.est_minutes > budget:
             flush()
-        if len(days) >= max_days and not current and days:
+        if max_days is not None and len(days) >= max_days and not current and days:
             last = days[-1]
             last.legs.append(leg)
             last.cruising_minutes += leg.est_minutes

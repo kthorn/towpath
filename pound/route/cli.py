@@ -7,13 +7,18 @@ REST API supersedes it.
 Usage:
     pound-plan <start> <end> [--days N] [--hours-per-day H]
                [--boat-beam M] [--boat-draft M] [--boat-length M] [--boat-height M]
-               [--artifact PATH]
+               [--verbose] [--artifact PATH]
 
 `start` and `end` each accept EITHER a place name (resolved via the gazetteer)
 OR a graph node uid (the integer `pound-locate` prints). Auto-detected by shape:
 all-digits -> uid, else -> name. Mixed (one uid, one name) is allowed. A place
 literally named "42" would mis-resolve as a uid (vanishingly rare; gazetteer
 keys are "Oxford"/"Banbury"/etc.); add --start-uid/--end-uid flags if it ever bites.
+
+`--days` is optional: omit it and the day count is inferred from `--hours-per-day`
+(you get as many days as the route needs, no cap). Default output is the route
+header + totals + the per-day summary + warnings; the node-to-node `Legs:` list
+is only printed with `--verbose`.
 """
 
 import argparse
@@ -40,7 +45,7 @@ def _resolve_start_end(
     end_tok: str,
     graph,
     *,
-    days: int,
+    days: int | None,
     hours_per_day: float,
     boat_length_m: float | None,
     boat_beam_m: float | None,
@@ -92,14 +97,15 @@ def _resolve_start_end(
     )
 
 
-def _render(result) -> str:
+def _render(result, *, verbose: bool = False) -> str:
     lines = [f"Route: {result.start} -> {result.end}"]
-    lines.append("Legs:")
-    for leg in result.legs:
-        lines.append(
-            f"  {leg.from_place} -> {leg.to_place}: "
-            f"{leg.distance_km} km, {leg.locks} locks, {leg.est_minutes} min"
-        )
+    if verbose:
+        lines.append("Legs:")
+        for leg in result.legs:
+            lines.append(
+                f"  {leg.from_place} -> {leg.to_place}: "
+                f"{leg.distance_km} km, {leg.locks} locks, {leg.est_minutes} min"
+            )
     lines.append(
         f"Totals: {result.total_km} km, {result.total_locks} locks, {result.total_minutes} min"
     )
@@ -117,8 +123,14 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="pound-plan")
     p.add_argument("start")
     p.add_argument("end")
-    p.add_argument("--days", type=int, required=True)
+    p.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help="max day count; omit to infer from --hours-per-day",
+    )
     p.add_argument("--hours-per-day", type=float, default=6.0)
+    p.add_argument("--verbose", action="store_true", help="show the per-leg node-to-node list")
     p.add_argument("--boat-beam", type=float, default=None)
     p.add_argument("--boat-draft", type=float, default=None)
     p.add_argument("--boat-length", type=float, default=None)
@@ -162,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(e), file=sys.stderr)
         return 1
 
-    print(_render(result))
+    print(_render(result, verbose=args.verbose))
     return 0
 
 

@@ -37,9 +37,10 @@ def test_pound_plan_prints_human_readable_route(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Oxford" in out
     assert "Hayfield" in out
-    # per-leg list + totals + days + warnings sections present
-    assert "legs" in out.lower() or "Leg" in out
-    assert "total" in out.lower()
+    # default output: route header + Totals + Days, NO node-to-node Legs: list
+    assert "Totals:" in out
+    assert "Days:" in out
+    assert "Legs:" not in out  # node-to-node list is --verbose only
 
 
 def test_pound_plan_rejects_days_zero(tmp_path, capsys):
@@ -114,3 +115,29 @@ def test_pound_plan_unknown_uid_clear_error_not_traceback(tmp_path, capsys):
     rc = cli.main(["999999", "0", "--days", "1", "--artifact", str(art)])
     assert rc != 0
     assert capsys.readouterr().err  # non-empty, not a traceback
+
+
+def test_pound_plan_days_optional_infers_day_count(tmp_path, capsys):
+    art = _build_oxford_artifact(tmp_path / "oxford.pkl")
+    # Omit --days entirely; hours_per_day alone drives day-count inference.
+    rc = cli.main(["Oxford", "Hayfield", "--hours-per-day", "6", "--artifact", str(art)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Days:" in out  # reports the inferred day count + per-day summary
+
+
+def test_pound_plan_default_hides_leg_list(tmp_path, capsys):
+    art = _build_oxford_artifact(tmp_path / "oxford.pkl")
+    rc = cli.main(["Oxford", "Hayfield", "--days", "1", "--artifact", str(art)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Totals:" in out
+    assert "Legs:" not in out  # node-to-node leg list is verbose-only
+
+
+def test_pound_plan_verbose_shows_leg_list(tmp_path, capsys):
+    art = _build_oxford_artifact(tmp_path / "oxford.pkl")
+    rc = cli.main(["Oxford", "Hayfield", "--days", "1", "--verbose", "--artifact", str(art)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Legs:" in out  # verbose => per-leg node-to-node list present

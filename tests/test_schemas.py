@@ -90,3 +90,12 @@ def test_canal_constraints_accepts_positive_days():
     c = CanalConstraints(start="Oxford", end="Banbury", days=1, hours_per_day=6.0)
     assert c.days == 1
     assert c.hours_per_day == 6.0
+
+
+def test_constraints_days_defaults_to_none_meaning_infer():
+    # days=None => "infer day count from hours_per_day" (no cap).
+    rc = ResolvedConstraints(start_uid=0, end_uid=1, hours_per_day=6.0)
+    assert rc.days is None
+    c = CanalConstraints(start="Oxford", end="Banbury")
+    assert c.days is None
+    assert c.hours_per_day == 6.0  # default unchanged
