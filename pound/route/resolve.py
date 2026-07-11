@@ -8,10 +8,11 @@ coordinate isn't already a node. No network, no LLM, hermetic in this scope.
 # future: GeocodeResolver (network) — a deferred scope will add a network
 # geocoder behind the same resolve_place surface; do not pre-build a protocol
 # here. The seam is this docstring + the resolve_place function.
-# future: resolve_coord(lat, lon, graph) -> uid — geography-first entry for a
-# map-click UI (snap a raw coordinate to the nearest node uid). Mechanically the
-# nearest-node loop resolve_place already performs, minus the gazetteer lookup.
-# Do not pre-build it; trigger is a real geography-first caller, not PR2.
+#
+# resolve_coord(lat, lon, graph) -> (uid, distance_m) now SHIPS here (was a
+# # future seam earlier in PR2): snap a raw coordinate to the nearest node uid
+# and report the distance, no tolerance gate. pound-locate and a future
+# map-click UI both build on it.
 """
 
 import math
@@ -21,7 +22,6 @@ import networkx as nx
 from pound.graph.build import _haversine_m, _node_key
 
 _DEFAULT_SNAP_TOLERANCE_M = 50.0
-
 
 
 def resolve_place(
@@ -74,3 +74,26 @@ def resolve_place(
             f"of any graph node (nearest {best_d:.1f} m)"
         )
     return best
+
+
+def resolve_coord(lat: float, lon: float, graph: nx.Graph) -> tuple[int, float]:
+    """Resolve a coordinate to the nearest graph node uid + distance (offline only).
+
+    Geography-first entry (supersedes PR2's `# future: resolve_coord` seam).
+    No tolerance gate: always returns the nearest node and its haversine distance
+    in metres; the caller decides whether the distance is acceptable. A future
+    map-click UI compares the distance to its own tolerance; `pound-locate`
+    offers `--max-distance-m` for that scripting need.
+
+    Raises ValueError for an empty graph (defensive; production graphs always
+    have nodes). Linear scan over node lat/lon attrs — ms at England scale
+    (YAGNI for spatial indexing).
+    """
+    best, best_d = None, math.inf
+    for uid, nd in graph.nodes(data=True):
+        d = _haversine_m((lat, lon), (nd["lat"], nd["lon"]))
+        if d < best_d:
+            best, best_d = uid, d
+    if best is None:
+        raise ValueError("no graph nodes to resolve against")
+    return best, best_d
