@@ -1,57 +1,41 @@
-"""Request-time entry point — real plan_route (design §5).
+"""Request-time entry point — pure plan_route over ResolvedConstraints (design §5, Scope D).
 
-Loads the prebuilt graph artifact once (module-level cache), snaps start/end
-to graph nodes via the offline gazetteer, filters edges by boat dimensions,
-runs Dijkstra by time-cost, and assembles a RouteResult. Pure: no network,
-no LLM. Point-to-point only in this scope; rings raise NotImplementedError.
-Day budgeting is trivial cumulative-minute chunking (design §5.3): legs are
-packed greedily into consecutive DayPlans within hours_per_day, emitting as
-many non-empty days as the route needs (NOT padded to constraints.days —
-OQ-8). Mooring-aware day placement is deferred to Scope D.
+Routing runs Dijkstra by time-cost over the loaded graph (passed explicitly);
+leg names come from the `name` node attribute PR1 attached (falling back to a
+coordinate string). Zero network, zero LLM, hermetic by construction. Rings
+(end_uid not applicable / CanalConstraints.end is None) raise
+NotImplementedError. The Scope C `_graph`/`_features` test kwargs are retired;
+tests inject an in-memory graph directly.
+
+`plan_route_from_constraints` is the CanalConstraints -> resolve -> plan_route
+bridge the CLI and Agent Core use.
 """
 
 import networkx as nx
 
-from pound.graph.build import _node_key
-from pound.graph.gazetteer import build_gazetteer
-from pound.ingest.ir import WaterwayFeatures
 from pound.route.cost import is_eligible, time_min
-from pound.schemas import CanalConstraints, DayPlan, RouteLeg, RouteResult
+from pound.route.resolve import resolve_place
+from pound.schemas import (
+    CanalConstraints,
+    DayPlan,
+    ResolvedConstraints,
+    RouteLeg,
+    RouteResult,
+)
 
 
-def plan_route(
-    constraints: CanalConstraints,
-    *,
-    _graph: nx.Graph | None = None,
-    _features: WaterwayFeatures | None = None,
-) -> RouteResult:
-    """Plan a point-to-point canal route.
+def plan_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> RouteResult:
+    """Plan a point-to-point canal route over `graph`. Pure."""
+    # ResolvedConstraints carries the graph's own node handles — no coord->uid
+    # mapping, no name lookup, no graph mutation. Pure on the resolved uids.
+    start, end = constraints.start_uid, constraints.end_uid
 
-    Production callers omit the underscore-prefixed kwargs; those are for
-    hermetic testing (inject a graph + features built from the fixture without
-    pickle IO). Rings (end is None) are not yet supported.
-    """
-    if constraints.end is None:
-        raise NotImplementedError(
-            "rings not yet supported (design §5.3; scope C is point-to-point)"
-        )
+    def _name_attr(uid):
+        n = graph.nodes[uid]
+        return n.get("name") or f"{n['lat']},{n['lon']}"
 
-    if _graph is None or _features is None:
-        # Production path: load the artifact. Wired when the build CLI lands
-        # the artifact; for now this branch is not exercised by tests.
-        raise RuntimeError(
-            "artifact loading not wired in this scope; pass _graph and _features for testing"
-        )
+    start_name = _name_attr(start)
 
-    graph, features = _graph, _features
-    gaz = build_gazetteer(features)
-    start_node = _resolve_place(constraints.start, gaz, graph)
-    end_node = _resolve_place(constraints.end, gaz, graph)
-
-    if not nx.has_path(graph, start_node, end_node):
-        raise ValueError(f"no path between {constraints.start!r} and {constraints.end!r}")
-
-    # Build the weight function, applying dimension eligibility.
     unknown_edges: list[str] = []
 
     def weight(u, v, d):
@@ -63,17 +47,24 @@ def plan_route(
             d["dimensions"],
         )
         if not eligible:
-            return None  # NetworkX treats None as impassable
+            return None
         if unknown:
             unknown_edges.append(str(d["osm_way_id"]))
-        return time_min(
-            d["length_m"],
-            d.get("locks", 0),
-        )
+        return time_min(d["length_m"], d.get("locks", 0))
 
-    path = nx.shortest_path(graph, start_node, end_node, weight=weight)
+    try:
+        path = nx.shortest_path(graph, start, end, weight=weight)
+    except nx.NetworkXNoPath:
+        if nx.has_path(graph, start, end):
+            raise ValueError(
+                f"no path between '{start_name}' and '{_name_attr(end)}' "
+                f"meets the boat's dimensions"
+            ) from None
+        raise ValueError(
+            f"no path between '{start_name}' and '{_name_attr(end)}' "
+            f"(graph is not connected between these nodes)"
+        ) from None
 
-    # Assemble legs from consecutive path edges.
     legs: list[RouteLeg] = []
     for u, v in zip(path, path[1:], strict=False):
         d = graph.edges[u, v]
@@ -81,8 +72,8 @@ def plan_route(
         locks = d.get("locks", 0)
         legs.append(
             RouteLeg(
-                from_place=_name_for(u, graph, gaz),
-                to_place=_name_for(v, graph, gaz),
+                from_place=_name_attr(u),
+                to_place=_name_attr(v),
                 distance_km=round(km, 4),
                 locks=locks,
                 est_minutes=round(time_min(d["length_m"], locks)),
@@ -99,53 +90,57 @@ def plan_route(
         warnings.append(f"draft/beam unknown on {len(set(unknown_edges))} segment(s)")
 
     days = _chunk_days(legs, constraints.hours_per_day, constraints.days)
-    if len(days) > 1 and any(day.cruising_minutes > constraints.hours_per_day * 60 for day in days):
+    budget = constraints.hours_per_day * 60
+    if any(day.cruising_minutes > budget for day in days):
         warnings.append("one or more days exceed hours_per_day budget")
 
     return RouteResult(
-        start=constraints.start,
-        end=constraints.end,
+        start=start_name,
+        end=_name_attr(end),
         is_ring=False,
         legs=legs,
         days=days,
         total_km=total_km,
         total_locks=total_locks,
         total_minutes=total_minutes,
-        amenities=[],  # amenities are design §5.4, out of scope
+        amenities=[],
         warnings=warnings,
-        graph_source_date=features.fetched_at,
+        graph_source_date=graph.graph.get("fetched_at", ""),
     )
 
 
-def _resolve_place(name: str, gaz: dict, graph: nx.Graph) -> int:
-    """Resolve a place name to a graph node uid by rounded-coordinate match.
+def plan_route_from_constraints(
+    c: CanalConstraints,
+    *,
+    graph: nx.Graph,
+    snap_tolerance_m: float = 50.0,
+) -> RouteResult:
+    """CanalConstraints -> resolve -> plan_route. The CLI/Agent Core path."""
+    if c.end is None:
+        raise NotImplementedError("rings not yet supported (design §5.3)")
+    resolved = ResolvedConstraints(
+        start_uid=resolve_place(c.start, graph, snap_tolerance_m=snap_tolerance_m),
+        end_uid=resolve_place(c.end, graph, snap_tolerance_m=snap_tolerance_m),
+        days=c.days,
+        hours_per_day=c.hours_per_day,
+        boat_length_m=c.boat_length_m,
+        boat_beam_m=c.boat_beam_m,
+        boat_draft_m=c.boat_draft_m,
+        boat_height_m=c.boat_height_m,
+        allow_derelict=c.allow_derelict,
+    )
+    return plan_route(resolved, graph=graph)
 
-    Interim implementation: build_gazetteer returns name -> rounded coord (or a
-    list of coords for ambiguous names). The graph is keyed by internal uids, so
-    we match by reading each node's lat/lon attrs. Ambiguous names raise (PR2's
-    OfflineResolver owns the real ambiguous-name handling); an unresolved name
-    raises. O(|nodes|) per call — acceptable on the fixture-scale test path;
-    the production path raises RuntimeError before reaching this.
-    """
-    if name not in gaz:
-        raise ValueError(f"unknown place: {name!r}")
-    coord = gaz[name]
-    if isinstance(coord, list):
-        raise ValueError(f"ambiguous place: {name!r} (PR2 resolve_place owns handling)")
-    for uid, nd in graph.nodes(data=True):
-        if _node_key(nd["lat"], nd["lon"]) == coord:
-            return uid
-    raise ValueError(f"place {name!r} snaps to a node not in the graph")
 
-
-def _chunk_days(legs: list[RouteLeg], hours_per_day: float, max_days: int) -> list[DayPlan]:
-    """Greedily pack legs into consecutive DayPlans within the per-day budget.
+def _chunk_days(legs, hours_per_day, max_days) -> list[DayPlan]:
+    """Greedy cumulative-minute packing. max_days=None => no cap (infer).
 
     Each day's cruising_minutes <= hours_per_day*60. Emits as many non-empty
-    days as the route needs, up to max_days (OQ-8: no empty padding). A single
-    leg longer than the budget forms its own day (overflows; caller warns).
-    Mooring-aware placement is a Scope D concern; end_near is the day's last
-    leg to_place for now.
+    days as the route needs. With max_days set, the cap folds trailing legs
+    into the last day once max_days days exist (OQ-8: no empty padding).
+    With max_days=None (the default since days became optional), day count is
+    inferred from hours_per_day alone and never folds. Mooring-aware placement
+    is a Scope D concern; end_near is the day's last leg to_place for now.
     """
     budget = hours_per_day * 60.0
     days: list[DayPlan] = []
@@ -163,16 +158,12 @@ def _chunk_days(legs: list[RouteLeg], hours_per_day: float, max_days: int) -> li
                     cruising_minutes=current_min,
                 )
             )
-            current = []
-            current_min = 0
+            current, current_min = [], 0
 
     for leg in legs:
-        # Start a new day when adding this leg would overflow the current one.
         if current and current_min + leg.est_minutes > budget:
             flush()
-        # max_days cap: if we've already emitted max_days days, fold the
-        # remaining legs into the last day instead of opening a new one.
-        if len(days) >= max_days and not current and days:
+        if max_days is not None and len(days) >= max_days and not current and days:
             last = days[-1]
             last.legs.append(leg)
             last.cruising_minutes += leg.est_minutes
@@ -182,15 +173,3 @@ def _chunk_days(legs: list[RouteLeg], hours_per_day: float, max_days: int) -> li
         current_min += leg.est_minutes
     flush()
     return days
-
-
-def _name_for(node_uid, graph, gazetteer) -> str:
-    """Reverse-lookup a node uid to a place name via its rounded coord;
-    fall back to a coordinate string. The gazetteer is name -> coord (or list);
-    ambiguous (list-valued) entries never match a coord string and fall through
-    to the fallback (the documented interim regression; PR2 owns ambiguity)."""
-    coord = _node_key(graph.nodes[node_uid]["lat"], graph.nodes[node_uid]["lon"])
-    for name, key in gazetteer.items():
-        if not isinstance(key, list) and key == coord:
-            return name
-    return f"{coord[0]},{coord[1]}"

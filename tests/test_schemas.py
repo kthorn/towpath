@@ -1,7 +1,11 @@
+import pytest
+from pydantic import ValidationError
+
 from pound.schemas import (
     Amenity,
     CanalConstraints,
     DayPlan,
+    ResolvedConstraints,
     RouteLeg,
     RouteResult,
 )
@@ -47,3 +51,51 @@ def test_route_result_round_trip():
     assert restored == result
     assert restored.legs[0].flagged_unknown_dims is False
     assert restored.warnings == []
+
+
+def test_resolved_constraints_has_uids_not_strings():
+    rc = ResolvedConstraints(
+        start_uid=42,
+        end_uid=43,
+        days=3,
+    )
+    assert rc.start_uid == 42
+    assert rc.end_uid == 43
+    assert rc.hours_per_day == 6.0
+    assert not hasattr(rc, "start")
+    assert not hasattr(rc, "start_node")
+
+
+def test_resolved_constraints_rejects_days_zero():
+    with pytest.raises(ValidationError):
+        ResolvedConstraints(start_uid=0, end_uid=1, days=0)
+
+
+def test_resolved_constraints_rejects_hours_per_day_zero():
+    with pytest.raises(ValidationError):
+        ResolvedConstraints(start_uid=0, end_uid=1, days=1, hours_per_day=0)
+
+
+def test_canal_constraints_rejects_days_zero():
+    with pytest.raises(ValidationError):
+        CanalConstraints(start="Oxford", end="Banbury", days=0)
+
+
+def test_canal_constraints_rejects_hours_per_day_zero():
+    with pytest.raises(ValidationError):
+        CanalConstraints(start="Oxford", end="Banbury", days=1, hours_per_day=0)
+
+
+def test_canal_constraints_accepts_positive_days():
+    c = CanalConstraints(start="Oxford", end="Banbury", days=1, hours_per_day=6.0)
+    assert c.days == 1
+    assert c.hours_per_day == 6.0
+
+
+def test_constraints_days_defaults_to_none_meaning_infer():
+    # days=None => "infer day count from hours_per_day" (no cap).
+    rc = ResolvedConstraints(start_uid=0, end_uid=1, hours_per_day=6.0)
+    assert rc.days is None
+    c = CanalConstraints(start="Oxford", end="Banbury")
+    assert c.days is None
+    assert c.hours_per_day == 6.0  # default unchanged

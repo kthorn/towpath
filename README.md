@@ -89,6 +89,61 @@ Bulk tests are skipped by default; run them explicitly:
 uv run pytest --run-bulk
 ```
 
+## Planning a route (`pound-plan`)
+
+Minimal, eyeballing-only surface over the loaded artifact:
+
+```bash
+uv run pound-plan Oxford Banbury --days 3
+# override the artifact:
+uv run pound-plan Oxford Banbury --days 3 --artifact pound/artifacts/england.pkl
+# boat constraints:
+uv run pound-plan Oxford Banbury --days 3 --boat-beam 2.0 --boat-draft 0.8
+```
+
+`--days` is optional: omit it and the day count is inferred from `--hours-per-day`
+(you get as many days as the route needs, no cap). Default output is the route
+header + totals + per-day summary + warnings; add `--verbose` for the
+node-to-node leg list, or `--locks` to fold a per-day lock count into the day
+summary (how many locks each day's cruise works through).
+
+Unknown / ambiguous place names and un-routable constraints produce a clear
+error, not a traceback. A REST API will eventually supersede this CLI for
+product use; it is deliberately a test harness, not a planner.
+
+### Routing by uid
+
+`pound-plan` accepts a graph node **uid** (the integer `pound-locate` prints,
+below) as well as a place name for `start` and `end` — auto-detected by shape
+(all-digits → uid, else → name), and mixable:
+
+```bash
+uv run pound-plan Oxford Hayfield --days 1            # names (as above)
+uv run pound-plan 0 1 --days 1                        # uids
+uv run pound-plan 0 Hayfield --days 1                  # mixed uid + name
+```
+
+A uid not in the loaded graph exits nonzero with `uid N is not a node in the
+graph` — clear error, not a traceback.
+
+## Locating the nearest canal node (`pound-locate`)
+
+Resolve a coordinate to the nearest canal-network node uid + distance:
+
+```bash
+uv run pound-locate --lat 51.75 --lon -1.26
+# override the artifact:
+uv run pound-locate --lat 51.75 --lon -1.26 --artifact pound/artifacts/england.pkl
+# fail if the nearest canal is farther than N metres (for scripting):
+uv run pound-locate --lat 51.75 --lon -1.26 --max-distance-m 200
+```
+
+Prints `<uid>  <name|->  <distance_m>` (one line). `name` is the matched
+node's `name` if it has one, else `-`. Closes the loop with `pound-plan`:
+`pound-locate` finds the uid a map click snaps to, then `pound-plan` routes
+from it. A future map-click UI uses the same `resolve_coord` function this CLI
+wraps.
+
 ## Data attribution
 
 OSM data is © OpenStreetMap contributors, licensed ODbL. Derived artifacts
