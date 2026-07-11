@@ -7,7 +7,7 @@ REST API supersedes it.
 Usage:
     pound-plan <start> <end> [--days N] [--hours-per-day H]
                [--boat-beam M] [--boat-draft M] [--boat-length M] [--boat-height M]
-               [--verbose] [--artifact PATH]
+               [--verbose] [--locks] [--artifact PATH]
 
 `start` and `end` each accept EITHER a place name (resolved via the gazetteer)
 OR a graph node uid (the integer `pound-locate` prints). Auto-detected by shape:
@@ -97,7 +97,7 @@ def _resolve_start_end(
     )
 
 
-def _render(result, *, verbose: bool = False) -> str:
+def _render(result, *, verbose: bool = False, locks: bool = False) -> str:
     lines = [f"Route: {result.start} -> {result.end}"]
     if verbose:
         lines.append("Legs:")
@@ -111,7 +111,14 @@ def _render(result, *, verbose: bool = False) -> str:
     )
     lines.append("Days:")
     for day in result.days:
-        lines.append(f"  Day {day.day}: {day.cruising_minutes} min, ends near {day.end_near}")
+        day_locks = sum(leg.locks for leg in day.legs)
+        if locks:
+            lines.append(
+                f"  Day {day.day}: {day.cruising_minutes} min, "
+                f"{day_locks} locks, ends near {day.end_near}"
+            )
+        else:
+            lines.append(f"  Day {day.day}: {day.cruising_minutes} min, ends near {day.end_near}")
     if result.warnings:
         lines.append("Warnings:")
         for w in result.warnings:
@@ -131,6 +138,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--hours-per-day", type=float, default=6.0)
     p.add_argument("--verbose", action="store_true", help="show the per-leg node-to-node list")
+    p.add_argument(
+        "--locks",
+        action="store_true",
+        help="show the per-day lock count in the day summary",
+    )
     p.add_argument("--boat-beam", type=float, default=None)
     p.add_argument("--boat-draft", type=float, default=None)
     p.add_argument("--boat-length", type=float, default=None)
@@ -174,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(e), file=sys.stderr)
         return 1
 
-    print(_render(result, verbose=args.verbose))
+    print(_render(result, verbose=args.verbose, locks=args.locks))
     return 0
 
 

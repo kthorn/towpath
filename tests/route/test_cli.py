@@ -141,3 +141,23 @@ def test_pound_plan_verbose_shows_leg_list(tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "Legs:" in out  # verbose => per-leg node-to-node list present
+
+
+def test_pound_plan_locks_flag_shows_per_day_lock_count(tmp_path, capsys):
+    art = _build_oxford_artifact(tmp_path / "oxford.pkl")
+    rc = cli.main(["Oxford", "Hayfield", "--days", "1", "--locks", "--artifact", str(art)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    # The per-day line gains a locks count; Oxford->Hayfield has exactly 1 lock.
+    assert "locks" in out.lower()
+    day_line = [ln for ln in out.splitlines() if ln.strip().startswith("Day 1")][0]
+    assert "1 locks" in day_line
+
+
+def test_pound_plan_no_locks_flag_omits_per_day_lock_count(tmp_path, capsys):
+    art = _build_oxford_artifact(tmp_path / "oxford.pkl")
+    rc = cli.main(["Oxford", "Hayfield", "--days", "1", "--artifact", str(art)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    day_line = [ln for ln in out.splitlines() if ln.strip().startswith("Day 1")][0]
+    assert "locks" not in day_line.lower()  # default per-day line has no lock count
