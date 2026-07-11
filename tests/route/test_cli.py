@@ -77,3 +77,40 @@ def test_pound_plan_no_path_clear_error(tmp_path, capsys):
     assert rc != 0
     err = capsys.readouterr().err
     assert "no path" in err.lower()
+
+
+def test_pound_plan_accepts_uid_start_and_end(tmp_path, capsys):
+    art = _build_oxford_artifact(tmp_path / "oxford.pkl")
+    from pound.graph.artifact import load_artifact
+    from pound.route.resolve import resolve_place
+
+    graph, _ = load_artifact(Path(art))
+    o_uid = resolve_place("Oxford", graph)
+    h_uid = resolve_place("Hayfield", graph)
+    rc = cli.main([str(o_uid), str(h_uid), "--days", "1", "--artifact", str(art)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Oxford" in out
+    assert "Hayfield" in out
+
+
+def test_pound_plan_mixes_uid_start_and_name_end(tmp_path, capsys):
+    art = _build_oxford_artifact(tmp_path / "oxford.pkl")
+    from pound.graph.artifact import load_artifact
+    from pound.route.resolve import resolve_place
+
+    graph, _ = load_artifact(Path(art))
+    o_uid = resolve_place("Oxford", graph)
+    rc = cli.main([str(o_uid), "Hayfield", "--days", "1", "--artifact", str(art)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Oxford" in out
+    assert "Hayfield" in out
+
+
+def test_pound_plan_unknown_uid_clear_error_not_traceback(tmp_path, capsys):
+    art = _build_oxford_artifact(tmp_path / "oxford.pkl")
+    # A uid that is not a graph node -> plan_route raises ValueError; CLI catches it.
+    rc = cli.main(["999999", "0", "--days", "1", "--artifact", str(art)])
+    assert rc != 0
+    assert capsys.readouterr().err  # non-empty, not a traceback

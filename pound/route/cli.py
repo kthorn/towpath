@@ -8,6 +8,12 @@ Usage:
     pound-plan <start> <end> [--days N] [--hours-per-day H]
                [--boat-beam M] [--boat-draft M] [--boat-length M] [--boat-height M]
                [--artifact PATH]
+
+`start` and `end` each accept EITHER a place name (resolved via the gazetteer)
+OR a graph node uid (the integer `pound-locate` prints). Auto-detected by shape:
+all-digits -> uid, else -> name. Mixed (one uid, one name) is allowed. A place
+literally named "42" would mis-resolve as a uid (vanishingly rare; gazetteer
+keys are "Oxford"/"Banbury"/etc.); add --start-uid/--end-uid flags if it ever bites.
 """
 
 import argparse
@@ -17,10 +23,73 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from pound.graph.artifact import load_artifact
-from pound.route.plan import plan_route_from_constraints
-from pound.schemas import CanalConstraints
+from pound.route.plan import plan_route, plan_route_from_constraints
+from pound.route.resolve import resolve_place
+from pound.schemas import CanalConstraints, ResolvedConstraints
 
 _DEFAULT_ARTIFACT = Path("pound/artifacts/england.pkl")
+
+
+def _is_uid(tok: str) -> bool:
+    """A bare all-digits token is a uid; anything else is a place name."""
+    return tok.isdigit()
+
+
+def _resolve_start_end(
+    start_tok: str,
+    end_tok: str,
+    graph,
+    *,
+    days: int,
+    hours_per_day: float,
+    boat_length_m: float | None,
+    boat_beam_m: float | None,
+    boat_draft_m: float | None,
+    boat_height_m: float | None,
+) -> CanalConstraints | ResolvedConstraints:
+    """Build the routing constraints, auto-detecting uid vs name per token.
+
+    Returns a ResolvedConstraints when any token was a uid (caller routes via
+    pure plan_route) or a CanalConstraints when both are names (caller uses the
+    plan_route_from_constraints bridge, unchanged from PR2). Mixed uid/name is
+    allowed. Dispatch is by isinstance, so the caller does not need a flag.
+    """
+    start_is_uid = _is_uid(start_tok)
+    end_is_uid = _is_uid(end_tok)
+
+    def _resolve(tok: str, is_uid: bool) -> int:
+        if is_uid:
+            uid = int(tok)
+            if uid not in graph:
+                raise ValueError(f"uid {uid} is not a node in the graph")
+            return uid
+        return resolve_place(tok, graph)
+
+    start_uid = _resolve(start_tok, start_is_uid)
+    end_uid = _resolve(end_tok, end_is_uid)
+
+    boat = dict(
+        boat_length_m=boat_length_m,
+        boat_beam_m=boat_beam_m,
+        boat_draft_m=boat_draft_m,
+        boat_height_m=boat_height_m,
+    )
+
+    if start_is_uid or end_is_uid:
+        return ResolvedConstraints(
+            start_uid=start_uid,
+            end_uid=end_uid,
+            days=days,
+            hours_per_day=hours_per_day,
+            **boat,
+        )
+    return CanalConstraints(
+        start=start_tok,
+        end=end_tok,
+        days=days,
+        hours_per_day=hours_per_day,
+        **boat,
+    )
 
 
 def _render(result) -> str:
@@ -57,10 +126,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--artifact", default=str(_DEFAULT_ARTIFACT))
     args = p.parse_args(argv)
 
+    artifact = Path(args.artifact)
+    if not artifact.exists():
+        print(f"artifact not found: {artifact}", file=sys.stderr)
+        return 2
+
+    graph, meta = load_artifact(artifact)
+    graph.graph["fetched_at"] = meta.get("fetched_at", "")
+
     try:
-        constraints = CanalConstraints(
-            start=args.start,
-            end=args.end,
+        constraints = _resolve_start_end(
+            args.start,
+            args.end,
+            graph,
             days=args.days,
             hours_per_day=args.hours_per_day,
             boat_length_m=args.boat_length,
@@ -71,17 +149,15 @@ def main(argv: list[str] | None = None) -> int:
     except ValidationError as e:
         print(str(e), file=sys.stderr)
         return 2
-
-    artifact = Path(args.artifact)
-    if not artifact.exists():
-        print(f"artifact not found: {artifact}", file=sys.stderr)
-        return 2
-
-    graph, meta = load_artifact(artifact)
-    graph.graph["fetched_at"] = meta.get("fetched_at", "")
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
 
     try:
-        result = plan_route_from_constraints(constraints, graph=graph)
+        if isinstance(constraints, ResolvedConstraints):
+            result = plan_route(constraints, graph=graph)
+        else:
+            result = plan_route_from_constraints(constraints, graph=graph)
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 1
