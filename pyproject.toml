@@ -16,6 +16,7 @@ bulk = ["osmium>=3.7"]
 [project.scripts]
 pound-ingest = "pound.ingest.cli:main"
 pound-plan = "pound.route.cli:main"
+pound-locate = "pound.route.locate_cli:main"
 
 [build-system]
 requires = ["hatchling"]
