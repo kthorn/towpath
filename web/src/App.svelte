@@ -25,4 +25,8 @@
     <TripSummary state={$store} />
   </div>
 </main>
-<footer>Canal routes are planning guidance; verify navigation restrictions and safe access locally. Map data © Google.</footer>
+<footer>
+  Canal routes are planning guidance; verify navigation restrictions and safe access locally.
+  Map data © Google and
+  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a>.
+</footer>

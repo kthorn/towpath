@@ -46,6 +46,13 @@ function setup(overrides: { unavailable?: boolean; mapReject?: boolean; sameNode
 }
 
 describe('trip planning interface', () => {
+  it('shows linked OpenStreetMap attribution', () => {
+    render(App, { props: { dependencies: setup().dependencies } });
+    const attribution = screen.getByRole('link', { name: '© OpenStreetMap contributors' });
+    expect(attribution).toHaveAttribute('href', 'https://www.openstreetmap.org/copyright');
+    expect(attribution).toBeVisible();
+  });
+
   it('connects both place searches and map clicks to the active endpoint', async () => {
     const { dependencies, selects, mapClick, calls } = setup();
     render(App, { props: { dependencies } });

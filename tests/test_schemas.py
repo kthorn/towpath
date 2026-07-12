@@ -102,6 +102,30 @@ def test_constraints_days_defaults_to_none_meaning_infer():
     assert c.hours_per_day == 6.0  # default unchanged
 
 
+@pytest.mark.parametrize("model", [CanalConstraints, ResolvedConstraints])
+@pytest.mark.parametrize(
+    "field", ["boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"]
+)
+@pytest.mark.parametrize("value", [0, -0.1])
+def test_constraints_reject_nonpositive_boat_dimensions(model, field: str, value: float):
+    required = {"start": "Oxford"} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
+    with pytest.raises(ValidationError):
+        model(**required, **{field: value})
+
+
+@pytest.mark.parametrize("model", [CanalConstraints, ResolvedConstraints])
+def test_constraints_accept_positive_boat_dimensions(model):
+    required = {"start": "Oxford"} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
+    constraints = model(
+        **required,
+        boat_length_m=18,
+        boat_beam_m=2.1,
+        boat_draft_m=0.7,
+        boat_height_m=2.4,
+    )
+    assert constraints.boat_length_m == 18
+
+
 def test_coordinate_uses_named_lat_lon_fields():
     coordinate = schemas.Coordinate(lat=51.752, lon=-1.258)
 

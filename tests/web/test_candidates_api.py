@@ -69,3 +69,12 @@ def test_candidates_rejects_missing_coordinates(web_client: TestClient):
 def test_candidates_rejects_out_of_range_coordinates(web_client: TestClient):
     for payload in ({"lat": 91, "lon": 0}, {"lat": 0, "lon": -181}):
         assert web_client.post("/api/canal-candidates", json=payload).status_code == 422
+
+
+def test_candidates_rejects_string_coordinates(web_client: TestClient):
+    for payload in (
+        {"lat": "51", "lon": -1},
+        {"lat": 51, "lon": "-1"},
+        {"lat": True, "lon": -1},
+    ):
+        assert web_client.post("/api/canal-candidates", json=payload).status_code == 422

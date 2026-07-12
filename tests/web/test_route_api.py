@@ -47,6 +47,32 @@ def test_route_leaves_body_type_errors_as_422(web_client: TestClient, changes: d
     assert web_client.post("/api/canal-route", json=_request(**changes)).status_code == 422
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"start_uid": "1"},
+        {"end_uid": "3"},
+        {"start_uid": True},
+        {"allow_derelict": 1},
+        {"allow_derelict": "true"},
+        {"hours_per_day": "6"},
+        {"artifact_revision": 123},
+    ],
+)
+def test_route_rejects_coercible_wrong_json_types(web_client: TestClient, changes: dict):
+    assert web_client.post("/api/canal-route", json=_request(**changes)).status_code == 422
+
+
+@pytest.mark.parametrize(
+    "field", ["boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"]
+)
+@pytest.mark.parametrize("value", [0, -0.1])
+def test_route_rejects_nonpositive_boat_dimensions(
+    web_client: TestClient, field: str, value: float
+):
+    assert web_client.post("/api/canal-route", json=_request(**{field: value})).status_code == 422
+
+
 def test_route_rejects_syntactically_malformed_json(web_client: TestClient):
     response = web_client.post(
         "/api/canal-route", content="{", headers={"content-type": "application/json"}

@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api")
 class CanalCandidatesRequest(BaseModel):
     """Coordinate used to find nearby canal graph nodes."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     lat: float = Field(ge=-90, le=90)
     lon: float = Field(ge=-180, le=180)
@@ -22,17 +22,17 @@ class CanalCandidatesRequest(BaseModel):
 class CanalRouteRequest(BaseModel):
     """Artifact-scoped node handles and constraints accepted by the route API."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     start_uid: int
     end_uid: int
     artifact_revision: str
     days: int | None = Field(gt=0, default=None)
     hours_per_day: float = Field(gt=0, default=6.0)
-    boat_length_m: float | None = None
-    boat_beam_m: float | None = None
-    boat_draft_m: float | None = None
-    boat_height_m: float | None = None
+    boat_length_m: float | None = Field(gt=0, default=None)
+    boat_beam_m: float | None = Field(gt=0, default=None)
+    boat_draft_m: float | None = Field(gt=0, default=None)
+    boat_height_m: float | None = Field(gt=0, default=None)
     allow_derelict: bool = False
 
 
