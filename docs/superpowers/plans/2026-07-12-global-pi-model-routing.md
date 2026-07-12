@@ -206,7 +206,8 @@ inheritance or silently substitute a fallback.
 | Work | Agent | Model | Thinking |
 |------|-------|-------|----------|
 | Planning and implementation plans | `planner` | `openai-codex/gpt-5.6-sol` | medium |
-| Context building and research | `context-builder`, `researcher` | `openai-codex/gpt-5.6-sol` | medium |
+| Context building | `context-builder` | `openai-codex/gpt-5.6-sol` | low |
+| Research | `researcher` | `openai-codex/gpt-5.6-sol` | medium |
 | Architecture advice and decision consistency | `oracle` | `openai-codex/gpt-5.6-sol` | high |
 | Final whole-branch review | `reviewer` | `openai-codex/gpt-5.6-sol` | xhigh |
 | Routine implementation | `worker`, `delegate` | `opencode-go/mimo-v2.5-pro` | high |
@@ -214,11 +215,11 @@ inheritance or silently substitute a fallback.
 | Broad-codebase execution of an approved design | `worker-architecture` | `openai-codex/gpt-5.6-luna` | max |
 | Mechanical transcription/testing and bounded scouting | `worker-mechanical`, `scout` | `opencode-go/deepseek-v4-flash` | max |
 
-The global interactive default is GPT-5.6 Luna Max. Routine organization and
-execution stay on Luna. Upgrade explicitly to Sol Medium for planning, design,
-context building, and research; use Sol High for oracle work, unresolved
-architecture decisions, and final whole-branch review. A hard implementation
-still runs on Luna after Sol resolves and approves the design.
+The global interactive default is GPT-5.6 Luna High. Context building uses Sol
+Low. Planning and research use Sol Medium. Oracle uses Sol High. Final
+whole-branch review uses Sol xhigh. Routine organization and execution stay on
+Luna. A hard implementation still runs on Luna after Sol resolves and approves
+the design.
 
 ### Per-task review rotation
 
