@@ -1,7 +1,7 @@
 # Pareto-Frontier Pi Model Routing Update
 
-**Date:** 2026-07-12  
-**Status:** Approved design  
+**Date:** 2026-07-12
+**Status:** Approved design
 **Scope:** User-wide Pi configuration under `~/.pi/agent/`, the global routing contract, and its repository documentation
 
 ## Context
