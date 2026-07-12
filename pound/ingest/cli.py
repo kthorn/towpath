@@ -17,9 +17,10 @@ from pound.graph.artifact import save_artifact
 from pound.graph.build import build_graph
 from pound.graph.gazetteer import attach_node_names, build_gazetteer
 from pound.graph.locks import attach_locks
+from pound.graph.pois import attach_pois
 from pound.ingest.osm import read_england
 from pound.ingest.overpass import fetch_oxford
-from pound.ingest.summarize import summarize
+from pound.ingest.summarize import summarize, summarize_pois
 from pound.validate.connectivity import validate_graph
 
 _GEOFABRIK_ENGLAND_URL = (
@@ -45,29 +46,35 @@ def _build_from_features(features, args) -> int:
     graph.graph["gazetteer"] = build_gazetteer(features)
     graph.graph["place_nodes_seen"] = sum(1 for n in features.nodes if "place" in n.tags)
     graph, lock_report = attach_locks(graph, features)
-    validation = validate_graph(graph, lock_report)
+    poi_result = attach_pois(graph, features.poi_candidates)
+    validation = validate_graph(graph, lock_report, poi_result.summary)
+    poi_summary = summarize_pois(
+        poi_result.pois, features.poi_ingest_report, poi_result.summary
+    )
 
     metadata = {
         "source": features.source,
         "fetched_at": features.fetched_at,
         "built_at": datetime.now(UTC).isoformat(),
-        "version": "1",
         "validation": validation,
+        "poi_summary": poi_summary,
     }
-    print(json.dumps(validation, indent=2))
+    print(json.dumps({"validation": validation, "poi_summary": poi_summary}, indent=2))
 
     fail_reasons = []
     if validation["derelict_edges"] > 0:
         fail_reasons.append("derelict_edges > 0 (filter is broken)")
     if validation["self_loops"] > 0:
         fail_reasons.append("self_loops > 0")
+    if validation["poi_duplicate_identities"] > 0:
+        fail_reasons.append("poi_duplicate_identities > 0")
     if fail_reasons:
         for r in fail_reasons:
             print(f"BUILD FAILED: {r}", file=sys.stderr)
         return 1
 
     out = Path(args.out)
-    save_artifact(graph, out, metadata)
+    save_artifact(graph, poi_result.pois, out, metadata)
     return 0
 
 

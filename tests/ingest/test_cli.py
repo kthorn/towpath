@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import networkx as nx
+
 from pound.graph.artifact import load_artifact
 from pound.ingest import cli
 from pound.ingest.ir import (
@@ -82,9 +84,11 @@ def test_build_subcommand_writes_artifact(tmp_path: Path, monkeypatch):
     rc = cli.main(["build", "oxford", "--out", str(out)])
     assert rc == 0
     assert out.exists()
-    g, meta = load_artifact(out)
-    assert g.number_of_edges() > 0
-    assert "validation" in meta
+    artifact = load_artifact(out)
+    assert artifact.graph.number_of_edges() > 0
+    assert "validation" in artifact.metadata
+    assert artifact.metadata["poi_summary"]["retained"] == len(artifact.pois)
+    assert "version" not in artifact.metadata
 
 
 def test_build_england_missing_pbf_prints_url_and_exits(capsys, monkeypatch, tmp_path):
@@ -125,7 +129,91 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
     )
     assert rc == 0
     assert out.exists()
-    g, meta = load_artifact(out)
-    assert "validation" in meta
-    assert "gazetteer" in g.graph
-    assert "Oxford" in g.graph["gazetteer"]
+    artifact = load_artifact(out)
+    assert "validation" in artifact.metadata
+    assert "gazetteer" in artifact.graph.graph
+    assert "Oxford" in artifact.graph.graph["gazetteer"]
+
+
+def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_path, monkeypatch):
+    events = []
+    features = _sample_features()
+    graph = nx.Graph()
+    attached_graph = nx.Graph()
+    poi_result = type(
+        "Result",
+        (),
+        {
+            "pois": (),
+            "summary": {
+                "duplicate_identities": 0,
+                "empty_geometry": 0,
+                "invalid_geometry": 0,
+                "rejected_by_corridor": 0,
+            },
+        },
+    )()
+    monkeypatch.setattr(cli, "build_graph", lambda _features: graph)
+    monkeypatch.setattr(cli, "attach_node_names", lambda *_args: None)
+    monkeypatch.setattr(cli, "build_gazetteer", lambda _features: {})
+    monkeypatch.setattr(cli, "attach_locks", lambda _graph, _features: (attached_graph, {}))
+    monkeypatch.setattr(
+        cli,
+        "attach_pois",
+        lambda actual_graph, candidates: events.append(("pois", actual_graph, candidates))
+        or poi_result,
+    )
+    monkeypatch.setattr(
+        cli,
+        "validate_graph",
+        lambda actual_graph, lock_report, poi_validation: events.append(
+            ("validate", actual_graph, poi_validation)
+        )
+        or {"derelict_edges": 0, "self_loops": 0, "poi_duplicate_identities": 0},
+    )
+    monkeypatch.setattr(
+        cli,
+        "save_artifact",
+        lambda actual_graph, pois, out, metadata: events.append(
+            ("save", actual_graph, pois, out, metadata)
+        ),
+    )
+
+    rc = cli._build_from_features(features, type("Args", (), {"out": tmp_path / "x.pkl"})())
+
+    assert rc == 0
+    assert [event[0] for event in events] == ["pois", "validate", "save"]
+    assert events[0][1:] == (attached_graph, features.poi_candidates)
+    assert events[2][1:4] == (attached_graph, (), tmp_path / "x.pkl")
+    assert set(events[2][4]) == {
+        "source",
+        "fetched_at",
+        "built_at",
+        "validation",
+        "poi_summary",
+    }
+
+
+def test_build_does_not_save_when_poi_identity_validation_is_fatal(tmp_path, monkeypatch):
+    features = _sample_features()
+    result = type(
+        "Result",
+        (),
+        {
+            "pois": (),
+            "summary": {
+                "duplicate_identities": 1,
+                "empty_geometry": 0,
+                "invalid_geometry": 0,
+                "rejected_by_corridor": 0,
+            },
+        },
+    )()
+    monkeypatch.setattr(cli, "attach_pois", lambda *_args: result)
+    saved = []
+    monkeypatch.setattr(cli, "save_artifact", lambda *_args: saved.append(True))
+
+    rc = cli._build_from_features(features, type("Args", (), {"out": tmp_path / "x.pkl"})())
+
+    assert rc == 1
+    assert saved == []

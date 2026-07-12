@@ -2,16 +2,22 @@ import json
 from pathlib import Path
 
 import pytest
+from shapely import wkt
 
 from pound.ingest.ir import NodeKind, WaterwayKind
 from pound.ingest.overpass import OXFORD_BBOX, build_query, fetch_oxford, parse
 from tests.fixtures import oxford_fixture_path
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "oxford_overpass_sample.json"
+POI_FIXTURE = Path(__file__).parent.parent / "fixtures" / "poi_overpass_sample.json"
 
 
 def load_fixture() -> dict:
     return json.loads(FIXTURE.read_text())
+
+
+def load_poi_fixture() -> dict:
+    return json.loads(POI_FIXTURE.read_text())
 
 
 def test_build_query_contains_bbox_and_filters():
@@ -21,6 +27,25 @@ def test_build_query_contains_bbox_and_filters():
     assert "waterway" in q
     assert "lock_gate" in q
     assert "out geom;" in q
+
+
+def test_build_query_uses_explicit_poi_and_pedestrian_clauses():
+    q = build_query(OXFORD_BBOX)
+    for clause in (
+        'nwr["waterway"="water_point"]',
+        'nwr["amenity"~"^(sanitary_dump_station|fuel|pub|cafe|restaurant|taxi)$"]',
+        'nwr["shop"~"^(supermarket|convenience|bakery|greengrocer|butcher|deli|general)$"]',
+        'nwr["highway"~"^(footway|path|pedestrian|steps|bus_stop)$"]',
+        'nwr["barrier"~"^(gate|stile|kissing_gate|cycle_barrier)$"]',
+    ):
+        assert clause in q
+    assert 'nwr["access"' not in q
+    assert 'nwr["foot"="no"]' not in q
+    assert "nwr[amenity]" not in q
+    assert "nwr[shop]" not in q
+    assert 'nwr["amenity"="drinking_water"]' not in q
+    assert 'nwr["amenity"="toilets"]' not in q
+    assert 'nwr["amenity"="shower"]' not in q
 
 
 def test_parse_keeps_canal_ways():
@@ -132,3 +157,252 @@ def test_parse_geometry_carried_through():
     w = next(w for w in feats.ways if w.osm_id == 1001)
     assert len(w.geometry) == 3
     assert w.geometry[0] == (pytest.approx(51.75), pytest.approx(-1.26))
+
+
+def test_parse_emits_deduplicated_ordered_poi_candidates_with_normalized_tags():
+    feats = parse(load_poi_fixture()["elements"], OXFORD_BBOX)
+    identities = [(str(p.osm_type), p.osm_id, p.kind) for p in feats.poi_candidates]
+    assert identities == [
+        ("node", 2001, "water_point"),
+        ("node", 2002, "pub"),
+        ("node", 2003, "supermarket"),
+        ("node", 2004, "rail_station"),
+        ("node", 2005, "bus_stop"),
+        ("node", 2006, "entrance"),
+        ("node", 2007, "gate"),
+        ("relation", 2301, "fuel"),
+        ("way", 2101, "marina"),
+        ("way", 2102, "cafe"),
+        ("way", 2103, "path_connection"),
+    ]
+    by_identity = {(p.osm_type, p.osm_id, p.kind): p for p in feats.poi_candidates}
+    water = by_identity[("node", 2001, "water_point")]
+    assert water.tags == {"waterway": "water_point", "drinking_water": "yes"}
+    assert water.geometry_source == "point"
+    assert wkt.loads(water.geometry_wkt).geom_type == "Point"
+    pub = by_identity[("node", 2002, "pub")]
+    assert pub.tags == {"amenity": "pub", "opening_hours": "Mo-Su 12:00-22:00"}
+    marina = by_identity[("way", 2101, "marina")]
+    assert marina.geometry_source == "area"
+    assert wkt.loads(marina.geometry_wkt).geom_type == "Polygon"
+    path = by_identity[("way", 2103, "path_connection")]
+    assert path.geometry_source == "derived_path"
+    assert wkt.loads(path.geometry_wkt).geom_type == "LineString"
+    relation = by_identity[("relation", 2301, "fuel")]
+    assert relation.geometry_source == "area"
+    assert wkt.loads(relation.geometry_wkt).geom_type == "Polygon"
+    assert len(wkt.loads(relation.geometry_wkt).interiors) == 1
+
+
+def test_parse_reports_unknown_and_incomplete_area_geometry_without_center_fallback():
+    feats = parse(load_poi_fixture()["elements"], OXFORD_BBOX)
+    assert feats.poi_ingest_report.skipped_counts == {
+        "missing_area_geometry": 1,
+        "invalid_geometry": 1,
+        "unknown_value": 1,
+    }
+    assert feats.poi_ingest_report.skipped_examples["unknown_value"] == ["node/2009:shop=magic"]
+    assert feats.poi_ingest_report.skipped_examples["missing_area_geometry"] == ["way/2104"]
+    assert feats.poi_ingest_report.skipped_examples["invalid_geometry"] == ["way/2105"]
+    assert not any(p.osm_id in (2104, 2105) for p in feats.poi_candidates)
+    assert not any(p.osm_id in (2008, 2010, 2011, 2012) for p in feats.poi_candidates)
+
+
+@pytest.mark.parametrize(
+    ("relation", "extra_elements"),
+    [
+        ({"members": [{"type": "way", "ref": 999, "role": "outer"}]}, []),
+        (
+            {"members": [{"type": "way", "ref": 2401, "role": "outer"}]},
+            [{"type": "way", "id": 2401, "geometry": []}],
+        ),
+        ({"members": []}, []),
+        (
+            {"members": [{"type": "way", "ref": 2402, "role": "outer"}]},
+            [
+                {
+                    "type": "way",
+                    "id": 2402,
+                    "geometry": [{"lat": 51.7, "lon": -1.2}, {"lat": 51.8, "lon": -1.2}],
+                }
+            ],
+        ),
+        (
+            {
+                "members": [
+                    {"type": "way", "ref": 2403, "role": "outer"},
+                    {"type": "way", "ref": 2404, "role": "inner"},
+                ]
+            },
+            [
+                {
+                    "type": "way",
+                    "id": 2403,
+                    "geometry": [
+                        {"lat": 51.7, "lon": -1.2},
+                        {"lat": 51.7, "lon": -1.1},
+                        {"lat": 51.8, "lon": -1.1},
+                        {"lat": 51.8, "lon": -1.2},
+                        {"lat": 51.7, "lon": -1.2},
+                    ],
+                },
+                {
+                    "type": "way",
+                    "id": 2404,
+                    "geometry": [
+                        {"lat": 52.0, "lon": -1.0},
+                        {"lat": 52.0, "lon": -0.9},
+                        {"lat": 52.1, "lon": -0.9},
+                        {"lat": 52.1, "lon": -1.0},
+                        {"lat": 52.0, "lon": -1.0},
+                    ],
+                },
+            ],
+        ),
+        (
+            {"members": [{"type": "way", "ref": 2405, "role": "label"}]},
+            [
+                {
+                    "type": "way",
+                    "id": 2405,
+                    "geometry": [
+                        {"lat": 51.7, "lon": -1.2},
+                        {"lat": 51.7, "lon": -1.1},
+                        {"lat": 51.8, "lon": -1.1},
+                        {"lat": 51.8, "lon": -1.2},
+                        {"lat": 51.7, "lon": -1.2},
+                    ],
+                }
+            ],
+        ),
+    ],
+)
+def test_parse_rejects_incomplete_relation_geometry(relation, extra_elements):
+    element = {
+        "type": "relation",
+        "id": 2500,
+        "tags": {"type": "multipolygon", "amenity": "pub"},
+        **relation,
+    }
+    feats = parse([*extra_elements, element], OXFORD_BBOX)
+    assert feats.poi_candidates == []
+    assert feats.poi_ingest_report.skipped_counts["incomplete_relation_geometry"] == 1
+    assert feats.poi_ingest_report.skipped_examples["incomplete_relation_geometry"] == [
+        "relation/2500"
+    ]
+
+
+def test_parse_rejects_nested_relation_cycle_and_accepts_complete_nested_relation():
+    ring = {
+        "type": "way",
+        "id": 2601,
+        "geometry": [
+            {"lat": 51.7, "lon": -1.2},
+            {"lat": 51.7, "lon": -1.1},
+            {"lat": 51.8, "lon": -1.1},
+            {"lat": 51.8, "lon": -1.2},
+            {"lat": 51.7, "lon": -1.2},
+        ],
+    }
+    nested = {
+        "type": "relation",
+        "id": 2602,
+        "members": [{"type": "way", "ref": 2601, "role": "outer"}],
+    }
+    tagged = {
+        "type": "relation",
+        "id": 2603,
+        "tags": {"amenity": "cafe"},
+        "members": [{"type": "relation", "ref": 2602, "role": "outer"}],
+    }
+    cycle_a = {
+        "type": "relation",
+        "id": 2610,
+        "tags": {"amenity": "pub"},
+        "members": [{"type": "relation", "ref": 2611, "role": "outer"}],
+    }
+    cycle_b = {
+        "type": "relation",
+        "id": 2611,
+        "members": [{"type": "relation", "ref": 2610, "role": "outer"}],
+    }
+    feats = parse([ring, nested, tagged, cycle_a, cycle_b], OXFORD_BBOX)
+    assert [(p.osm_id, p.kind) for p in feats.poi_candidates] == [(2603, "cafe")]
+    assert feats.poi_ingest_report.skipped_examples["incomplete_relation_geometry"] == [
+        "relation/2610"
+    ]
+
+
+def test_parse_resolves_inline_member_geometry_and_way_node_references():
+    node_elements = [
+        {"type": "node", "id": 2701, "lat": 51.70, "lon": -1.20},
+        {"type": "node", "id": 2702, "lat": 51.70, "lon": -1.10},
+        {"type": "node", "id": 2703, "lat": 51.80, "lon": -1.10},
+        {"type": "node", "id": 2704, "lat": 51.80, "lon": -1.20},
+    ]
+    node_ref_way = {
+        "type": "way",
+        "id": 2710,
+        "nodes": [2701, 2702, 2703, 2704, 2701],
+        "tags": {"shop": "general"},
+    }
+    inline_relation = {
+        "type": "relation",
+        "id": 2720,
+        "tags": {"amenity": "cafe"},
+        "members": [
+            {
+                "type": "way",
+                "ref": 2721,
+                "role": "outer",
+                "geometry": [
+                    {"lat": 51.70, "lon": -1.20},
+                    {"lat": 51.70, "lon": -1.10},
+                    {"lat": 51.80, "lon": -1.10},
+                    {"lat": 51.80, "lon": -1.20},
+                    {"lat": 51.70, "lon": -1.20},
+                ],
+            }
+        ],
+    }
+    feats = parse([*node_elements, node_ref_way, inline_relation], OXFORD_BBOX)
+    assert [(p.osm_id, p.kind) for p in feats.poi_candidates] == [
+        (2720, "cafe"),
+        (2710, "general"),
+    ]
+    assert all(wkt.loads(p.geometry_wkt).geom_type == "Polygon" for p in feats.poi_candidates)
+
+
+def test_parse_polygonizes_a_relation_outer_ring_split_across_member_ways():
+    ways = [
+        {
+            "type": "way",
+            "id": 2801,
+            "geometry": [
+                {"lat": 51.70, "lon": -1.20},
+                {"lat": 51.70, "lon": -1.10},
+                {"lat": 51.80, "lon": -1.10},
+            ],
+        },
+        {
+            "type": "way",
+            "id": 2802,
+            "geometry": [
+                {"lat": 51.80, "lon": -1.10},
+                {"lat": 51.80, "lon": -1.20},
+                {"lat": 51.70, "lon": -1.20},
+            ],
+        },
+    ]
+    relation = {
+        "type": "relation",
+        "id": 2810,
+        "tags": {"amenity": "restaurant"},
+        "members": [
+            {"type": "way", "ref": 2801, "role": "outer"},
+            {"type": "way", "ref": 2802, "role": "outer"},
+        ],
+    }
+    feats = parse([*ways, relation], OXFORD_BBOX)
+    assert [(p.osm_id, p.kind) for p in feats.poi_candidates] == [(2810, "restaurant")]
+    assert wkt.loads(feats.poi_candidates[0].geometry_wkt).geom_type == "Polygon"

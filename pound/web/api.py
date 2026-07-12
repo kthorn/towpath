@@ -62,6 +62,7 @@ def canal_candidates(
         body.lat,
         body.lon,
         graph,
+        request.app.state.spatial_index,
         artifact_revision=revision,
         limit=settings.candidate_pool_size,
     )

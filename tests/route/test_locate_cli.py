@@ -21,12 +21,14 @@ def _build_oxford_artifact(out: Path) -> Path:
     g.graph["fetched_at"] = feats.fetched_at
     save_artifact(
         g,
+        (),
         out,
         {
             "source": feats.source,
             "fetched_at": feats.fetched_at,
             "built_at": "t",
-            "version": "1",
+            "validation": {},
+            "poi_summary": {},
         },
     )
     return out
@@ -35,7 +37,7 @@ def _build_oxford_artifact(out: Path) -> Path:
 def test_pound_locate_prints_nearest_uid_and_distance(tmp_path, capsys):
     art = _build_oxford_artifact(tmp_path / "oxford.pkl")
     # Click exactly on a known node (read from the built graph) -> distance 0.
-    graph, _ = load_artifact(Path(art))
+    graph = load_artifact(Path(art)).graph
     known_uid = next(iter(graph.nodes))
     lat = graph.nodes[known_uid]["lat"]
     lon = graph.nodes[known_uid]["lon"]
@@ -51,7 +53,7 @@ def test_pound_locate_includes_node_name_when_present(tmp_path, capsys):
     # Click near the Oxford place node's gazetteer coord via resolve_place.
     from pound.route.resolve import resolve_place
 
-    graph, _ = load_artifact(Path(art))
+    graph = load_artifact(Path(art)).graph
     oxford_uid = resolve_place("Oxford", graph)
     lat = graph.nodes[oxford_uid]["lat"]
     lon = graph.nodes[oxford_uid]["lon"]
@@ -65,7 +67,7 @@ def test_pound_locate_includes_node_name_when_present(tmp_path, capsys):
 
 def test_pound_locate_max_distance_exceeded_exits_nonzero(tmp_path, capsys):
     art = _build_oxford_artifact(tmp_path / "oxford.pkl")
-    graph, _ = load_artifact(Path(art))
+    graph = load_artifact(Path(art)).graph
     known_uid = next(iter(graph.nodes))
     lat = graph.nodes[known_uid]["lat"]
     lon = graph.nodes[known_uid]["lon"]

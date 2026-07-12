@@ -10,6 +10,17 @@ from pound.route import cli
 from tests.fixtures import oxford_fixture_path
 
 
+def _metadata(feats) -> dict:
+    return {
+        "artifact_revision": "route-cli-test",
+        "source": feats.source,
+        "fetched_at": feats.fetched_at,
+        "built_at": "t",
+        "validation": {},
+        "poi_summary": {},
+    }
+
+
 def _build_oxford_artifact(out: Path) -> Path:
     raw = json.loads(Path(oxford_fixture_path()).read_text())
     feats = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
@@ -19,13 +30,9 @@ def _build_oxford_artifact(out: Path) -> Path:
     g.graph["fetched_at"] = feats.fetched_at
     save_artifact(
         g,
+        [],
         out,
-        {
-            "source": feats.source,
-            "fetched_at": feats.fetched_at,
-            "built_at": "t",
-            "version": "1",
-        },
+        _metadata(feats),
     )
     return out
 
@@ -85,7 +92,7 @@ def test_pound_plan_accepts_uid_start_and_end(tmp_path, capsys):
     from pound.graph.artifact import load_artifact
     from pound.route.resolve import resolve_place
 
-    graph, _ = load_artifact(Path(art))
+    graph = load_artifact(Path(art)).graph
     o_uid = resolve_place("Oxford", graph)
     h_uid = resolve_place("Hayfield", graph)
     rc = cli.main([str(o_uid), str(h_uid), "--days", "1", "--artifact", str(art)])
@@ -100,7 +107,7 @@ def test_pound_plan_mixes_uid_start_and_name_end(tmp_path, capsys):
     from pound.graph.artifact import load_artifact
     from pound.route.resolve import resolve_place
 
-    graph, _ = load_artifact(Path(art))
+    graph = load_artifact(Path(art)).graph
     o_uid = resolve_place("Oxford", graph)
     rc = cli.main([str(o_uid), "Hayfield", "--days", "1", "--artifact", str(art)])
     assert rc == 0

@@ -15,14 +15,20 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+from shapely import wkt as shapely_wkt
+
 from pound.ingest import filters
 from pound.ingest.filters import filter_navigable_ways
 from pound.ingest.ir import (
+    OsmElementType,
+    PoiCandidate,
+    PoiIngestReport,
     WaterwayFeatures,
     WaterwayKind,
     WaterwayNode,
     WaterwayWay,
 )
+from pound.ingest.pois import classify_poi, normalize_source_tags
 from pound.ingest.prune import prune_non_navigable_infra
 
 # Pinned OSM-filter expression (design §3.1, Scope D OQ-D1).
@@ -34,6 +40,16 @@ n/waterway=lock_gate,mooring
 n/lock=yes
 n/leisure=marina
 n/place
+nwr/waterway=water_point,sanitary_station,fuel
+nwr/amenity=pub,cafe,restaurant,fuel,sanitary_dump_station,taxi
+nwr/shop=supermarket,convenience,bakery,greengrocer,butcher,deli,general
+nwr/leisure=marina
+nwr/mooring
+nwr/railway=station,halt
+nwr/public_transport=platform,stop_position
+nwr/highway=footway,path,pedestrian,steps,bus_stop
+nwr/entrance
+nwr/barrier=gate,stile,kissing_gate,cycle_barrier
 """
 
 
@@ -62,80 +78,142 @@ def read_pbf(pbf_path: Path) -> WaterwayFeatures:
 
     ways: list[WaterwayWay] = []
     nodes: list[WaterwayNode] = []
+    candidates: dict[tuple[OsmElementType, int, str], PoiCandidate] = {}
+    skipped_counts: dict[str, int] = {}
+    skipped_examples: dict[str, list[str]] = {}
+    pending_areas: dict[tuple[OsmElementType, int], tuple[dict[str, str], int | None]] = {}
+    emitted_areas: set[tuple[OsmElementType, int]] = set()
     pbf_path = Path(pbf_path)
 
-    class _Handler(osmium.SimpleHandler):
-        def way(self, w):
-            tags = {t.k: t.v for t in w.tags}
+    def skip(reason: str, example: str) -> None:
+        skipped_counts[reason] = skipped_counts.get(reason, 0) + 1
+        skipped_examples.setdefault(reason, []).append(example)
+
+    def emit(osm_type, osm_id, tags, geometry_wkt, geometry_source, classifications) -> None:
+        geometry = shapely_wkt.loads(geometry_wkt)
+        if geometry.geom_type == "MultiPolygon" and len(geometry.geoms) == 1:
+            geometry_wkt = geometry.geoms[0].wkt
+        for classification in classifications:
+            candidate = PoiCandidate(
+                osm_type=osm_type,
+                osm_id=osm_id,
+                category=classification.category,
+                kind=classification.kind,
+                name=tags.get("name"),
+                tags=normalize_source_tags(tags, classification),
+                geometry_wkt=geometry_wkt,
+                geometry_source=geometry_source,
+            )
+            candidates.setdefault(candidate.identity, candidate)
+
+    wkt_factory = osmium.geom.WKTFactory()
+    processor = osmium.FileProcessor(str(pbf_path)).with_locations().with_areas()
+    for obj in processor:
+        tags = {tag.k: tag.v for tag in obj.tags}
+        object_name = type(obj).__name__
+        if object_name == "Way":
+            w = obj
             if filters.is_derelict(tags):
-                return
+                continue
             kind = filters.classify_way(tags)
-            if kind is None:
-                return
-            # Build node_ids and geometry from ONE pass over w.nodes, keeping the
-            # (ref, (lat, lon)) pair only when the node has a valid location.
-            # This guarantees len(node_ids) == len(geometry), element-wise paired
-            # — the invariant the noded build zips on. node_ids lists locatable
-            # refs only (not every raw ref): the reader cannot represent
-            # un-locatable refs in the geometry anyway, so including them in
-            # node_ids alone would silently misalign the two lists.
-            node_ids: list[int] = []
-            geom: list[tuple[float, float]] = []
-            for n in w.nodes:
-                try:
-                    lat = n.location.lat
-                    lon = n.location.lon
-                except osmium.InvalidLocationError:
-                    continue
-                node_ids.append(n.ref)
-                geom.append((lat, lon))
-            if len(geom) < 2:
-                return
-            ways.append(
-                WaterwayWay(
-                    osm_id=w.id,
-                    kind=kind,
-                    name=tags.get("name"),
-                    tags=tags,
-                    node_ids=node_ids,
-                    geometry=geom,
-                    dimensions=filters.extract_dimensions(tags),
-                    has_tunnel=tags.get("tunnel") == "yes",
-                    has_movable_bridge=(
-                        "bridge:movable" in tags or tags.get("bridge") == "movable"
-                    ),
-                )
-            )
-
-        def node(self, n):
-            tags = {t.k: t.v for t in n.tags} if n.tags else {}
+            if kind is not None:
+                node_ids: list[int] = []
+                geom: list[tuple[float, float]] = []
+                for node_ref in w.nodes:
+                    try:
+                        lat = node_ref.location.lat
+                        lon = node_ref.location.lon
+                    except osmium.InvalidLocationError:
+                        continue
+                    node_ids.append(node_ref.ref)
+                    geom.append((lat, lon))
+                if len(geom) >= 2:
+                    ways.append(
+                        WaterwayWay(
+                            osm_id=w.id, kind=kind, name=tags.get("name"), tags=tags,
+                            node_ids=node_ids, geometry=geom,
+                            dimensions=filters.extract_dimensions(tags),
+                            has_tunnel=tags.get("tunnel") == "yes",
+                            has_movable_bridge=(
+                                "bridge:movable" in tags or tags.get("bridge") == "movable"
+                            ),
+                        )
+                    )
+            classifications = classify_poi(tags)
+            for diagnostic in classifications.skips:
+                skip(diagnostic.reason, f"way/{w.id}:{diagnostic.key}={diagnostic.value}")
+            if classifications:
+                if tags.get("highway") in {"footway", "path", "pedestrian"}:
+                    try:
+                        emit(OsmElementType.WAY, w.id, tags, wkt_factory.create_linestring(w),
+                             "derived_path", classifications)
+                    except osmium.geom.GeometryError:
+                        skip("invalid_geometry", f"way/{w.id}")
+                else:
+                    pending_areas[(OsmElementType.WAY, w.id)] = (tags, len(w.nodes))
+        elif object_name == "Node":
+            n = obj
+            classifications = classify_poi(tags)
+            for diagnostic in classifications.skips:
+                skip(diagnostic.reason, f"node/{n.id}:{diagnostic.key}={diagnostic.value}")
+            if classifications and n.location.valid:
+                emit(OsmElementType.NODE, n.id, tags, wkt_factory.create_point(n), "point",
+                     classifications)
             kind = filters.classify_node(tags)
-            if kind is None:
-                return
-            if not n.location.valid:
-                return
-            nodes.append(
-                WaterwayNode(
-                    osm_id=n.id,
-                    lat=n.location.lat,
-                    lon=n.location.lon,
-                    tags=tags,
-                    kind=kind,
+            if kind is not None and n.location.valid:
+                nodes.append(
+                    WaterwayNode(osm_id=n.id, lat=n.location.lat, lon=n.location.lon,
+                                 tags=tags, kind=kind)
                 )
-            )
+        elif object_name == "Relation":
+            classifications = classify_poi(tags)
+            for diagnostic in classifications.skips:
+                skip(diagnostic.reason, f"relation/{obj.id}:{diagnostic.key}={diagnostic.value}")
+            if classifications:
+                pending_areas[(OsmElementType.RELATION, obj.id)] = (tags, None)
+        elif object_name == "Area":
+            osm_type = OsmElementType.WAY if obj.from_way() else OsmElementType.RELATION
+            osm_id = obj.orig_id()
+            key = (osm_type, osm_id)
+            classifications = classify_poi(tags)
+            if classifications and key not in emitted_areas:
+                try:
+                    emit(osm_type, osm_id, tags, wkt_factory.create_multipolygon(obj), "area",
+                         classifications)
+                    emitted_areas.add(key)
+                except osmium.geom.GeometryError:
+                    pass
 
-    _Handler().apply_file(str(pbf_path), locations=True)
+    for (osm_type, osm_id), (_, node_count) in pending_areas.items():
+        if (osm_type, osm_id) in emitted_areas:
+            continue
+        if osm_type == OsmElementType.RELATION:
+            reason = "incomplete_relation_geometry"
+        else:
+            reason = "missing_area_geometry" if (node_count or 0) < 2 else "invalid_geometry"
+        skip(reason, f"{osm_type.value}/{osm_id}")
 
     routable = {WaterwayKind.CANAL, WaterwayKind.RIVER, WaterwayKind.FAIRWAY}
     ways.sort(key=lambda w: (0 if w.kind in routable else 1, w.osm_id))
 
     fetched_at = datetime.fromtimestamp(pbf_path.stat().st_mtime, tz=UTC).isoformat()
+    ordered_candidates = sorted(
+        candidates.values(),
+        key=lambda candidate: (
+            candidate.osm_type.value, candidate.osm_id,
+            candidate.category.value, candidate.kind,
+        ),
+    )
     return WaterwayFeatures(
         ways=ways,
         nodes=nodes,
         source="geofabrik",
         fetched_at=fetched_at,
         bbox=None,
+        poi_candidates=ordered_candidates,
+        poi_ingest_report=PoiIngestReport(
+            skipped_counts=skipped_counts, skipped_examples=skipped_examples
+        ),
     )
 
 

@@ -155,8 +155,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"artifact not found: {artifact}", file=sys.stderr)
         return 2
 
-    graph, meta = load_artifact(artifact)
-    graph.graph["fetched_at"] = meta.get("fetched_at", "")
+    loaded = load_artifact(artifact)
+    graph = loaded.graph
 
     try:
         constraints = _resolve_start_end(

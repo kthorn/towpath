@@ -1,34 +1,250 @@
-"""Serialize/load the built graph artifact (design §4.4).
+"""Validate and serialize locally produced routing graph artifacts.
 
-Pickle for the NetworkX first cut (design says pickle or PostGIS). The artifact
-is gitignored (like pound/data/); tests build it into a tmp path. Not a long-
-term portable format — revisit at the scale scope. No network.
+Artifacts use pickle and therefore must only be loaded from trusted, local Pound builds. Pickle is
+not a safe interchange format and this module does not make untrusted pickle data safe to load.
 """
 
+import math
 import pickle
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
+import networkx as nx
+from pydantic import ValidationError
+from shapely.geometry import Point
 
-def save_artifact(graph, path: Path, metadata: dict) -> None:
+from pound.graph.pois import _edge_line_wgs84, _routing_eligible, _to_bng
+from pound.ingest.ir import PointOfInterest
+
+_PAYLOAD_FIELDS = {"graph", "pois", "metadata"}
+_METADATA_FIELDS = {
+    "artifact_revision",
+    "source",
+    "fetched_at",
+    "built_at",
+    "validation",
+    "poi_summary",
+}
+_NODE_FIELDS = {"lat", "lon", "osm_node_ids"}
+_EDGE_FIELDS = {
+    "osm_way_id",
+    "name",
+    "kind",
+    "length_m",
+    "dimensions",
+    "has_tunnel",
+    "has_movable_bridge",
+    "locks",
+    "geometry",
+}
+_CORRIDOR_M = {
+    "canal_service": 250.0,
+    "pedestrian_access": 250.0,
+    "provisions": 1000.0,
+    "transport": 1000.0,
+}
+
+
+class InvalidArtifactError(ValueError):
+    """An artifact does not satisfy the current strict build contract."""
+
+
+def _invalid(field: str, value: Any, problem: str) -> InvalidArtifactError:
+    return InvalidArtifactError(
+        f"Invalid artifact {field}={value!r}: {problem}. "
+        "Rebuild the artifact with this Pound version."
+    )
+
+
+def _finite_coordinate(field: str, value: Any, lower: float, upper: float) -> None:
+    if (
+        not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not lower <= value <= upper
+    ):
+        raise _invalid(field, value, f"expected a finite value from {lower} through {upper}")
+
+
+def _validate_graph(graph: Any) -> nx.Graph:
+    if not isinstance(graph, nx.Graph) or graph.is_directed() or graph.is_multigraph():
+        raise _invalid("graph", type(graph).__name__, "expected an undirected networkx.Graph")
+    for uid, data in graph.nodes(data=True):
+        missing = _NODE_FIELDS - data.keys()
+        if missing:
+            attribute = sorted(missing)[0]
+            raise _invalid(
+                f"graph node {uid} attribute {attribute}", None, "required attribute missing"
+            )
+        _finite_coordinate(f"graph node {uid} lat", data["lat"], -90, 90)
+        _finite_coordinate(f"graph node {uid} lon", data["lon"], -180, 180)
+    for u, v, data in graph.edges(data=True):
+        missing = _EDGE_FIELDS - data.keys()
+        if missing:
+            attribute = sorted(missing)[0]
+            raise _invalid(
+                f"graph edge {(u, v)} attribute {attribute}", None, "required attribute missing"
+            )
+        geometry = data["geometry"]
+        if not isinstance(geometry, (list, tuple)) or len(geometry) < 2:
+            raise _invalid(
+                f"graph edge {(u, v)} attribute geometry",
+                geometry,
+                "expected at least two (lat, lon) coordinate pairs",
+            )
+        for index, coordinate in enumerate(geometry):
+            if not isinstance(coordinate, (list, tuple)) or len(coordinate) != 2:
+                raise _invalid(
+                    f"graph edge {(u, v)} geometry[{index}]",
+                    coordinate,
+                    "expected a (lat, lon) coordinate pair",
+                )
+            _finite_coordinate(
+                f"graph edge {(u, v)} geometry[{index}].lat", coordinate[0], -90, 90
+            )
+            _finite_coordinate(
+                f"graph edge {(u, v)} geometry[{index}].lon", coordinate[1], -180, 180
+            )
+    return graph
+
+
+def _parse_pois(raw_pois: Any) -> tuple[PointOfInterest, ...]:
+    if not isinstance(raw_pois, (list, tuple)):
+        raise _invalid("pois", raw_pois, "expected a list or tuple")
+    parsed = []
+    expected_fields = set(PointOfInterest.model_fields)
+    for index, raw_poi in enumerate(raw_pois):
+        values = raw_poi.model_dump() if isinstance(raw_poi, PointOfInterest) else raw_poi
+        if not isinstance(values, dict):
+            raise _invalid(f"pois[{index}]", values, "expected a PointOfInterest mapping")
+        unexpected = values.keys() - expected_fields
+        if unexpected:
+            raise _invalid(
+                f"pois[{index}] unexpected fields", sorted(unexpected), "fields are not permitted"
+            )
+        try:
+            poi = PointOfInterest.model_validate(values)
+        except ValidationError as exc:
+            errors = exc.errors(include_url=False)
+            location = ".".join(str(part) for part in errors[0]["loc"])
+            value = values.get(location)
+            raise _invalid(f"pois[{index}].{location}", value, errors[0]["msg"]) from exc
+        for field, lower, upper in (
+            ("lat", -90, 90),
+            ("lon", -180, 180),
+            ("projected_lat", -90, 90),
+            ("projected_lon", -180, 180),
+        ):
+            _finite_coordinate(f"pois[{index}].{field}", getattr(poi, field), lower, upper)
+        distance = poi.nearest_waterway_distance_m
+        if not math.isfinite(distance):
+            raise _invalid(
+                f"pois[{index}].nearest_waterway_distance_m", distance, "expected a finite distance"
+            )
+        limit = _CORRIDOR_M[poi.category.value]
+        if distance > limit:
+            raise _invalid(
+                f"pois[{index}].nearest_waterway_distance_m",
+                distance,
+                f"distance exceeds the {limit} m {poi.category.value} corridor",
+            )
+        parsed.append(poi)
+    return tuple(parsed)
+
+
+def _validate_attachments(graph: nx.Graph, pois: tuple[PointOfInterest, ...]) -> None:
+    identities = set()
+    for index, poi in enumerate(pois):
+        if poi.identity in identities:
+            raise _invalid(f"pois[{index}].identity", poi.identity, "duplicate POI identity")
+        identities.add(poi.identity)
+        u, v = poi.nearest_edge
+        if not graph.has_edge(u, v):
+            raise _invalid(f"pois[{index}].nearest_edge", poi.nearest_edge, "edge is absent")
+        if poi.nearest_node_uid not in poi.nearest_edge:
+            raise _invalid(
+                f"pois[{index}].nearest_node_uid",
+                poi.nearest_node_uid,
+                "node must be an endpoint of nearest_edge",
+            )
+        edge_data = graph.edges[u, v]
+        if not _routing_eligible(edge_data):
+            raise _invalid(
+                f"pois[{index}].nearest_edge", poi.nearest_edge, "edge is not navigable"
+            )
+        edge_bng = _to_bng(_edge_line_wgs84(graph, u, v, edge_data))
+        projected_bng = _to_bng(Point(poi.projected_lon, poi.projected_lat))
+        offset_m = projected_bng.distance(edge_bng)
+        if not math.isfinite(offset_m) or offset_m > 0.01:
+            raise _invalid(
+                f"pois[{index}].projected point",
+                (poi.projected_lat, poi.projected_lon),
+                f"point is {offset_m:.6f} m from its attached edge; maximum is 0.01 m",
+            )
+
+
+def _validate_metadata(metadata: Any) -> dict:
+    if not isinstance(metadata, dict):
+        raise _invalid("metadata", metadata, "expected a mapping")
+    fields = set(metadata)
+    if fields != _METADATA_FIELDS:
+        missing = sorted(_METADATA_FIELDS - fields)
+        unexpected = sorted(fields - _METADATA_FIELDS)
+        detail = f"metadata fields must be exact; missing={missing}, unexpected={unexpected}"
+        field = missing[0] if missing else "metadata fields"
+        raise _invalid(field, metadata, detail)
+    for field in ("artifact_revision", "source", "fetched_at", "built_at"):
+        if not isinstance(metadata[field], str) or not metadata[field]:
+            raise _invalid(f"metadata.{field}", metadata[field], "expected a non-empty string")
+    for field in ("validation", "poi_summary"):
+        if not isinstance(metadata[field], dict):
+            raise _invalid(f"metadata.{field}", metadata[field], "expected a mapping")
+    return dict(metadata)
+
+
+@dataclass(frozen=True)
+class GraphArtifact:
+    graph: nx.Graph
+    pois: tuple[PointOfInterest, ...]
+    metadata: dict
+
+    def __post_init__(self) -> None:
+        graph = _validate_graph(self.graph)
+        pois = _parse_pois(self.pois)
+        metadata = _validate_metadata(self.metadata)
+        _validate_attachments(graph, pois)
+        object.__setattr__(self, "pois", pois)
+        object.__setattr__(self, "metadata", metadata)
+
+
+def save_artifact(graph: nx.Graph, pois, path: Path, metadata: dict) -> None:
+    """Validate and save exactly one graph, POI collection, and metadata mapping."""
+    complete_metadata = dict(metadata)
+    if "artifact_revision" not in complete_metadata:
+        complete_metadata["artifact_revision"] = str(uuid4())
+    artifact = GraphArtifact(graph=graph, pois=tuple(pois), metadata=complete_metadata)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_revision = (
-        metadata["artifact_revision"]
-        if "artifact_revision" in metadata
-        else str(uuid4())
+    with path.open("wb") as stream:
+        pickle.dump(
+            {"graph": artifact.graph, "pois": list(artifact.pois), "metadata": artifact.metadata},
+            stream,
+        )
+
+
+def load_artifact(path: Path) -> GraphArtifact:
+    """Load a trusted local pickle and validate its exact artifact contract."""
+    try:
+        with Path(path).open("rb") as stream:
+            payload = pickle.load(stream)
+    except Exception as exc:
+        raise _invalid("pickle", str(path), f"could not load trusted local pickle: {exc}") from exc
+    if not isinstance(payload, dict) or set(payload) != _PAYLOAD_FIELDS:
+        keys = sorted(payload) if isinstance(payload, dict) else type(payload).__name__
+        raise _invalid("top-level keys", keys, f"expected exactly {sorted(_PAYLOAD_FIELDS)}")
+    return GraphArtifact(
+        graph=payload["graph"],
+        pois=tuple(payload["pois"]) if isinstance(payload["pois"], list) else payload["pois"],
+        metadata=payload["metadata"],
     )
-    meta = {
-        **metadata,
-        "built_at": metadata.get("built_at", datetime.now(UTC).isoformat()),
-        "artifact_revision": artifact_revision,
-    }
-    with open(path, "wb") as f:
-        pickle.dump({"graph": graph, "metadata": meta}, f)
-
-
-def load_artifact(path: Path) -> tuple:
-    with open(path, "rb") as f:
-        blob = pickle.load(f)
-    return blob["graph"], blob["metadata"]

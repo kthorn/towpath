@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import networkx as nx
 
 from pound.graph.build import _haversine_m
+from pound.graph.spatial import GraphSpatialIndex, nearest_node_distances
 from pound.schemas import CanalCandidate, Coordinate
 
 _UNNAMED_POINT = "Unnamed canal point"
@@ -27,6 +28,7 @@ def nearest_coord_candidates(
     lat: float,
     lon: float,
     graph: nx.Graph,
+    spatial_index: GraphSpatialIndex,
     *,
     artifact_revision: str,
     limit: int,
@@ -35,22 +37,16 @@ def nearest_coord_candidates(
     if limit <= 0:
         raise ValueError("limit must be greater than zero")
 
-    ranked = sorted(
-        (
-            (_haversine_m((lat, lon), (data["lat"], data["lon"])), uid, data)
-            for uid, data in graph.nodes(data=True)
-        ),
-        key=lambda item: (item[0], item[1]),
-    )
+    ranked = nearest_node_distances(lat, lon, graph, spatial_index, limit=limit)
     return [
         CanalCandidate(
             uid=int(uid),
             artifact_revision=artifact_revision,
-            coordinate=Coordinate(lat=data["lat"], lon=data["lon"]),
+            coordinate=Coordinate(lat=graph.nodes[uid]["lat"], lon=graph.nodes[uid]["lon"]),
             straight_line_distance_m=distance,
             display_name=_display_name(graph, uid),
         )
-        for distance, uid, data in ranked[:limit]
+        for distance, uid in ranked
     ]
 
 

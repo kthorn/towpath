@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from pound.graph.artifact import load_artifact
+from pound.graph.spatial import GraphSpatialIndex
 from pound.route.resolve import resolve_coord
 
 _DEFAULT_ARTIFACT = Path("pound/artifacts/england.pkl")
@@ -32,9 +33,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"artifact not found: {artifact}", file=sys.stderr)
         return 2
 
-    graph, _ = load_artifact(artifact)
+    loaded = load_artifact(artifact)
+    graph = loaded.graph
+    spatial_index = GraphSpatialIndex(graph)
     try:
-        uid, dist_m = resolve_coord(args.lat, args.lon, graph)
+        uid, dist_m = resolve_coord(args.lat, args.lon, graph, spatial_index)
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 1

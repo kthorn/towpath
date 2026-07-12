@@ -6,11 +6,12 @@ from fastapi.testclient import TestClient
 from pound.graph.artifact import save_artifact
 from pound.web.app import create_app
 from pound.web.config import WebSettings
+from tests.web.conftest import artifact_metadata
 
 
 def _client(tmp_path: Path, static_dir: Path) -> TestClient:
     artifact = tmp_path / "graph.pkl"
-    save_artifact(nx.Graph(), artifact, {"artifact_revision": "static-test"})
+    save_artifact(nx.Graph(), [], artifact, artifact_metadata("static-test"))
     return TestClient(create_app(WebSettings(artifact_path=artifact, static_dir=static_dir)))
 
 

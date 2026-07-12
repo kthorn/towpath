@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from shapely import wkt
 
 from pound.ingest.ir import NodeKind
 from pound.ingest.osm import TAGS_FILTER_EXPR, read_pbf
@@ -21,6 +22,16 @@ def test_tags_filter_expr_is_pinned():
     assert "w/maxwidth" not in TAGS_FILTER_EXPR
     assert "w/bridge:movable" not in TAGS_FILTER_EXPR
     assert "w/waterway=lock_gate" not in TAGS_FILTER_EXPR
+    for clause in (
+        'nwr/waterway=water_point',
+        'nwr/amenity=pub,cafe,restaurant,fuel,sanitary_dump_station,taxi',
+        'nwr/shop=supermarket,convenience,bakery,greengrocer,butcher,deli,general',
+        'nwr/highway=footway,path,pedestrian,steps,bus_stop',
+    ):
+        assert clause in TAGS_FILTER_EXPR
+    assert "amenity=drinking_water" not in TAGS_FILTER_EXPR
+    assert "amenity=toilets" not in TAGS_FILTER_EXPR
+    assert "amenity=shower" not in TAGS_FILTER_EXPR
 
 
 def test_read_pbf_populates_node_ids_and_features():
@@ -38,8 +49,30 @@ def test_read_pbf_captures_place_and_lock_gate_nodes():
     feats = read_pbf(_tiny_pbf_path())
     places = [n for n in feats.nodes if n.kind == NodeKind.PLACE]
     gates = [n for n in feats.nodes if n.kind == NodeKind.LOCK_GATE]
-    assert {n.osm_id for n in places} == {1, 4}
+    assert {n.osm_id for n in places} == {1, 4, 6}
     assert {n.osm_id for n in gates} == {5}
+
+
+def test_read_pbf_emits_bulk_pois_with_area_assembly_and_deduplication():
+    feats = read_pbf(_tiny_pbf_path())
+    identities = [(str(p.osm_type), p.osm_id, p.kind) for p in feats.poi_candidates]
+    assert identities == [
+        ("node", 2001, "water_point"), ("node", 2002, "pub"),
+        ("node", 2003, "supermarket"), ("node", 2004, "rail_station"),
+        ("node", 2005, "bus_stop"), ("node", 2006, "entrance"),
+        ("node", 2007, "gate"), ("relation", 2301, "fuel"),
+        ("way", 2101, "marina"), ("way", 2102, "cafe"),
+        ("way", 2103, "path_connection"),
+    ]
+    geometries = {p.osm_id: wkt.loads(p.geometry_wkt).geom_type for p in feats.poi_candidates}
+    assert geometries[2001] == "Point"
+    assert geometries[2101] == geometries[2301] == "Polygon"
+    assert geometries[2103] == "LineString"
+    assert not any(p.osm_id in {2008, 2010, 2011, 2012} for p in feats.poi_candidates)
+    assert feats.poi_ingest_report.skipped_examples["incomplete_relation_geometry"] == [
+        "relation/2302"
+    ]
+    assert not any(p.osm_id == 2302 for p in feats.poi_candidates)
 
 
 def test_tags_filter_round_trip_matches_overpass_shape(monkeypatch, tmp_path):
@@ -63,7 +96,34 @@ def test_tags_filter_round_trip_matches_overpass_shape(monkeypatch, tmp_path):
     assert overpass_kinds == bulk_kinds
     overpass_places = {n.tags["name"] for n in overpass_feats.nodes if n.kind == NodeKind.PLACE}
     bulk_places = {n.tags["name"] for n in bulk_feats.nodes if n.kind == NodeKind.PLACE}
-    assert overpass_places == bulk_places == {"Oxford", "Hayfield"}
+    assert overpass_places == bulk_places == {"Oxford", "Hayfield", "Marston"}
+
+
+def test_bulk_poi_candidates_match_overpass_after_source_fields_are_excluded():
+    from pound.ingest.overpass import parse
+
+    fixture = Path(__file__).parent.parent / "fixtures" / "poi_overpass_sample.json"
+    overpass = parse(json.loads(fixture.read_text())["elements"], None)
+    bulk = read_pbf(_tiny_pbf_path())
+
+    def source_neutral(candidate):
+        return (
+            str(candidate.osm_type), candidate.osm_id, str(candidate.category), candidate.kind,
+            candidate.name, candidate.tags, candidate.geometry_source,
+        )
+
+    assert [source_neutral(candidate) for candidate in bulk.poi_candidates] == [
+        source_neutral(candidate) for candidate in overpass.poi_candidates
+    ]
+    bulk_geometries = {candidate.identity: wkt.loads(candidate.geometry_wkt)
+                       for candidate in bulk.poi_candidates}
+    overpass_geometries = {candidate.identity: wkt.loads(candidate.geometry_wkt)
+                           for candidate in overpass.poi_candidates}
+    assert bulk_geometries.keys() == overpass_geometries.keys()
+    assert all(
+        bulk_geometries[identity].equals(overpass_geometries[identity])
+        for identity in bulk_geometries
+    )
 
 
 def test_read_england_applies_prune_then_filter_chain(monkeypatch, tmp_path):

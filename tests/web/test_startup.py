@@ -6,9 +6,11 @@ import networkx as nx
 import pytest
 from fastapi.testclient import TestClient
 
-from pound.graph.artifact import load_artifact, save_artifact
-from pound.web.app import create_app
+from pound.graph.artifact import InvalidArtifactError, load_artifact, save_artifact
+from pound.graph.spatial import GraphSpatialIndex
+from pound.web.app import _load_web_artifact, create_app
 from pound.web.config import WebSettings
+from tests.web.conftest import artifact_metadata
 
 
 def _settings(artifact_path: Path, static_dir: Path) -> WebSettings:
@@ -63,23 +65,20 @@ def test_settings_reject_invalid_tuning(field: str, value: int | float, tmp_path
 
 def test_startup_reports_missing_artifact_path(tmp_path: Path):
     artifact = tmp_path / "missing.pkl"
-    app = create_app(_settings(artifact, tmp_path / "missing-static"))
 
     with pytest.raises(RuntimeError, match=str(artifact)) as exc_info:
-        with TestClient(app):
-            pass
+        _load_web_artifact(_settings(artifact, tmp_path / "missing-static"))
 
-    assert isinstance(exc_info.value.__cause__, FileNotFoundError)
+    assert isinstance(exc_info.value.__cause__, InvalidArtifactError)
+    assert isinstance(exc_info.value.__cause__.__cause__, FileNotFoundError)
 
 
 def test_startup_reports_invalid_pickle(tmp_path: Path):
     artifact = tmp_path / "invalid.pkl"
     artifact.write_text("not a pickle")
-    app = create_app(_settings(artifact, tmp_path / "missing-static"))
 
     with pytest.raises(RuntimeError, match=str(artifact)) as exc_info:
-        with TestClient(app):
-            pass
+        _load_web_artifact(_settings(artifact, tmp_path / "missing-static"))
 
     assert exc_info.value.__cause__ is not None
 
@@ -87,15 +86,14 @@ def test_startup_reports_invalid_pickle(tmp_path: Path):
 def test_startup_reports_malformed_artifact_wrapper(tmp_path: Path):
     artifact = tmp_path / "malformed.pkl"
     _write_blob(artifact, ["not", "an", "artifact", "mapping"])
-    app = create_app(_settings(artifact, tmp_path / "missing-static"))
 
     with pytest.raises(RuntimeError) as exc_info:
-        with TestClient(app):
-            pass
+        _load_web_artifact(_settings(artifact, tmp_path / "missing-static"))
 
     assert str(artifact) in str(exc_info.value)
     assert "load" in str(exc_info.value).lower()
-    assert isinstance(exc_info.value.__cause__, TypeError)
+    assert "rebuild" in str(exc_info.value).lower()
+    assert isinstance(exc_info.value.__cause__, InvalidArtifactError)
 
 
 @pytest.mark.parametrize(
@@ -110,38 +108,43 @@ def test_startup_rejects_incomplete_artifact(
 ):
     artifact = tmp_path / "incomplete.pkl"
     _write_blob(artifact, blob)
-    app = create_app(_settings(artifact, tmp_path / "missing-static"))
 
-    with pytest.raises(RuntimeError, match=rf"{artifact}.*{missing}"):
-        with TestClient(app):
-            pass
+    with pytest.raises(RuntimeError, match=rf"{artifact}.*{missing}.*[Rr]ebuild"):
+        _load_web_artifact(_settings(artifact, tmp_path / "missing-static"))
 
 
 @pytest.mark.parametrize("revision", [None, ""])
 def test_startup_rejects_missing_or_falsey_revision(tmp_path: Path, revision: str | None):
     artifact = tmp_path / "revisionless.pkl"
-    _write_blob(artifact, {"graph": nx.Graph(), "metadata": {"artifact_revision": revision}})
-    app = create_app(_settings(artifact, tmp_path / "missing-static"))
+    metadata = artifact_metadata("temporary")
+    metadata["artifact_revision"] = revision
+    _write_blob(artifact, {"graph": nx.Graph(), "pois": [], "metadata": metadata})
 
-    with pytest.raises(RuntimeError, match=rf"{artifact}.*artifact_revision"):
-        with TestClient(app):
-            pass
+    with pytest.raises(RuntimeError, match=rf"{artifact}.*artifact_revision.*[Rr]ebuild"):
+        _load_web_artifact(_settings(artifact, tmp_path / "missing-static"))
 
 
 def test_startup_attaches_artifact_state_and_loads_once(tmp_path: Path):
     artifact = tmp_path / "graph.pkl"
-    graph = nx.Graph()
-    graph.add_node(7)
-    save_artifact(graph, artifact, {"artifact_revision": "revision-7", "source": "test"})
+    graph = nx.Graph(marker={"stable": True})
+    save_artifact(graph, [], artifact, artifact_metadata("revision-7"))
     settings = _settings(artifact, tmp_path / "missing-static")
     app = create_app(settings)
 
-    with patch("pound.web.app.load_artifact", wraps=load_artifact) as load:
+    with (
+        patch("pound.web.app.load_artifact", wraps=load_artifact) as load,
+        patch("pound.web.app.GraphSpatialIndex", wraps=GraphSpatialIndex) as build_index,
+    ):
         with TestClient(app) as client:
             assert app.state.graph.nodes == graph.nodes
+            assert app.state.artifact.graph is app.state.graph
+            assert app.state.artifact.pois == ()
+            assert app.state.pois is app.state.artifact.pois
             assert app.state.metadata["source"] == "test"
+            assert app.state.metadata is app.state.artifact.metadata
             assert app.state.artifact_revision == "revision-7"
             assert app.state.settings is settings
+            assert isinstance(app.state.spatial_index, GraphSpatialIndex)
             assert client.get("/api/health").json() == {
                 "status": "healthy",
                 "artifact_revision": "revision-7",
@@ -149,3 +152,20 @@ def test_startup_attaches_artifact_state_and_loads_once(tmp_path: Path):
             client.get("/api/health")
 
     load.assert_called_once_with(artifact)
+    build_index.assert_called_once_with(app.state.graph)
+
+
+def test_startup_does_not_mutate_loaded_artifact_fields(tmp_path: Path):
+    artifact_path = tmp_path / "graph.pkl"
+    graph = nx.Graph(marker={"stable": True})
+    metadata = artifact_metadata("revision-immutable")
+    save_artifact(graph, [], artifact_path, metadata)
+    loaded = load_artifact(artifact_path)
+
+    with patch("pound.web.app.load_artifact", return_value=loaded):
+        with TestClient(create_app(_settings(artifact_path, tmp_path / "static"))):
+            pass
+
+    assert loaded.graph.graph == {"marker": {"stable": True}}
+    assert loaded.metadata == metadata
+    assert loaded.pois == ()

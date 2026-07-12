@@ -1,6 +1,7 @@
 import networkx as nx
 import pytest
 
+from pound.graph.spatial import GraphSpatialIndex
 from pound.route.resolve import resolve_coord
 
 
@@ -15,21 +16,21 @@ def _graph_with_gazetteer(gaz, nodes):
 
 def test_resolve_coord_returns_nearest_uid_and_distance():
     g = _graph_with_gazetteer({}, [(0, 51.75, -1.26), (1, 52.06, -1.34)])
-    uid, dist = resolve_coord(51.7501, -1.2601, g)
+    uid, dist = resolve_coord(51.7501, -1.2601, g, GraphSpatialIndex(g))
     assert uid == 0
     assert dist == pytest.approx(13, abs=5)  # ~13 m from node 0
 
 
 def test_resolve_coord_picks_closer_of_two_nodes():
     g = _graph_with_gazetteer({}, [(0, 51.75, -1.26), (1, 52.06, -1.34)])
-    uid, dist = resolve_coord(52.0599, -1.3399, g)
+    uid, dist = resolve_coord(52.0599, -1.3399, g, GraphSpatialIndex(g))
     assert uid == 1
     assert dist < 50
 
 
 def test_resolve_coord_exact_node_returns_zero_distance():
     g = _graph_with_gazetteer({}, [(0, 51.75, -1.26)])
-    uid, dist = resolve_coord(51.75, -1.26, g)
+    uid, dist = resolve_coord(51.75, -1.26, g, GraphSpatialIndex(g))
     assert uid == 0
     assert dist == 0
 
@@ -37,4 +38,12 @@ def test_resolve_coord_exact_node_returns_zero_distance():
 def test_resolve_coord_empty_graph_raises():
     g = nx.Graph()
     with pytest.raises(ValueError, match="no graph nodes"):
-        resolve_coord(51.75, -1.26, g)
+        resolve_coord(51.75, -1.26, g, GraphSpatialIndex(g))
+
+
+def test_resolve_coord_deterministic_tie_uses_lowest_uid():
+    graph = _graph_with_gazetteer({}, [(9, 0, -0.01), (2, 0, 0.01)])
+
+    uid, _ = resolve_coord(0, 0, graph, GraphSpatialIndex(graph))
+
+    assert uid == 2

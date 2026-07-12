@@ -1,6 +1,6 @@
 # OSM POI Ingest and Spatial Lookup Design
 
-> **Status:** validated design
+> **Status:** implementation-ready after updated in-session review
 > **Builds on:** noded waterway graph, artifact revisions, and local map UI
 > **Scope:** offline OSM POI ingestion and spatial lookup foundation; remote deployment deferred
 
@@ -24,6 +24,9 @@ retained feature to the waterway graph without changing graph topology.
 - Use a 250 m waterway corridor for canal services and pedestrian-access signals.
 - Use a 1,000 m corridor for provisions and public transport.
 - Do not import parking.
+- Do not import toilets or showers, and do not preserve toilet-availability metadata on other POIs.
+- Import boat water points only; generic drinking-water amenities are not sufficient evidence that a
+  boat tank can be filled.
 - Preserve pedestrian restriction signals, but do not build a pedestrian routing network.
 - Keep route endpoints as existing graph-node UIDs. Mid-edge route starts are deferred.
 - Replace the current artifact tuple with a structurally validated `GraphArtifact` containing
@@ -37,16 +40,18 @@ Every retained record has a broad `category` and a stable `kind`.
 
 | Category | Radius | Kinds and primary OSM tags |
 |---|---:|---|
-| `canal_service` | 250 m | `water_point`: `amenity=drinking_water` or `waterway=water_point`; `sanitary_disposal`: `amenity=sanitary_dump_station` or `waterway=sanitary_station`; `toilets`: `amenity=toilets`; `shower`: `amenity=shower`; `fuel`: `amenity=fuel` or `waterway=fuel`; `marina`: `leisure=marina`; `mooring`: `mooring=*` except explicit `no` |
+| `canal_service` | 250 m | `water_point`: `waterway=water_point`; `sanitary_disposal`: `amenity=sanitary_dump_station` or `waterway=sanitary_station`; `fuel`: `amenity=fuel` or `waterway=fuel`; `marina`: `leisure=marina`; `mooring`: `mooring=*` except explicit `no` |
 | `provisions` | 1,000 m | `pub`, `cafe`, `restaurant` from `amenity=*`; `supermarket`, `convenience`, `bakery`, `greengrocer`, `butcher`, `deli`, `general` from `shop=*` |
 | `transport` | 1,000 m | `rail_station`: `railway=station`; `rail_halt`: `railway=halt`; `bus_stop`: `highway=bus_stop`, `public_transport=platform`, or `public_transport=stop_position` with bus evidence; `taxi_rank`: `amenity=taxi` |
 | `pedestrian_access` | 250 m | `entrance`: public/permissive `entrance=*`; `path_connection`: nearest canal-side point derived from `highway=footway/path/pedestrian`; `pedestrian_bridge`: eligible path with bridge evidence; `steps`: `highway=steps`; `gate`, `stile`, `kissing_gate`, `cycle_barrier`: matching `barrier=*` |
 
 The classifier uses an explicit allowlist. Unknown `amenity`, `shop`, `railway`, `waterway`, or
 `barrier` values are skipped and counted by source tag/value. Parking tags are ignored.
+Standalone toilet, shower, and generic drinking-water amenity tags are also ignored rather than
+classified or reported as unknown.
 
 Selected operational properties are normalized from `access`, `foot`, `wheelchair`,
-`opening_hours`, `fee`, `operator`, `brand`, `drinking_water`, and `toilets`. The normalized record
+`opening_hours`, `fee`, `operator`, `brand`, and `drinking_water`. The normalized record
 also preserves a filtered `source_tags` mapping containing these fields and the tag(s) responsible
 for classification. It does not copy arbitrary OSM tags into the artifact.
 
@@ -117,6 +122,11 @@ The build-time writer remains `save_artifact(graph, pois, path, metadata)`: it c
 validates a `GraphArtifact` before serializing the exact top-level payload. Callers never construct
 or pickle the payload mapping directly.
 
+`nearest_edge` contains the canonical graph-node UIDs of the attached edge in `(min_uid, max_uid)`
+order; they are not positional indexes. `projected_lat` and `projected_lon` are WGS84 coordinates.
+Here “projected” means snapped to the nearest point on the edge, not stored in a projected CRS;
+EPSG:27700 coordinates remain build-time/indexing data.
+
 ## 5. Geometry and Data Flow
 
 ```text
@@ -134,8 +144,14 @@ OSM PBF / Overpass JSON
 Bulk ingest uses pyosmium area assembly for closed ways and multipolygon relations. Overpass parsing
 accepts node coordinates, way geometry, and relation-member geometry. Every POI way/relation query
 must request geometry with `out geom` (or an equivalent recursion that returns complete member
-geometry). An area element whose geometry is absent or incomplete is skipped with a structured
-reason; it must never be converted from a label/center coordinate as though that were its full area.
+geometry). Relation queries must recursively fetch referenced way geometry and the nodes needed to
+complete it; nested relation members are resolved recursively with a cycle guard. A multipolygon is
+complete only when every member with an `outer` or `inner` role resolves to nonempty geometry and
+those members polygonize into closed outer rings with any inner rings assigned to an outer. Missing
+members, open rings, unassigned inner rings, and unsupported member roles are skipped as
+`incomplete_relation_geometry` rather than partially polygonized. An area element whose geometry is
+absent or incomplete is skipped with a structured reason; it must never be converted from a
+label/center coordinate as though that were its full area.
 Both paths construct Shapely
 points, lines, or polygons and pass them through the same normalization function. Invalid geometry
 gets one `make_valid()` attempt; empty or still-unusable geometry is skipped and reported.
@@ -169,8 +185,12 @@ projection stores EPSG:27700 lines. `nearest_coord_candidates()` finds exact hav
 with an expanding search:
 
 1. Query the node tree with a conservative longitude/latitude envelope containing the complete
-   spherical circle for radius `r` around the requested coordinate. Clamp latitude and handle
-   antimeridian intervals explicitly, even though current England data does not cross it.
+   spherical circle for radius `r` around the requested coordinate. With mean Earth radius `R`, use
+   angular radius `delta = min(r / R, pi)`: latitude bounds are `lat +/- delta`, clamped to the
+   poles. If either pole is reached, query every longitude. Otherwise the longitude half-width is
+   `asin(min(1, sin(delta) / cos(lat)))`; normalize its endpoints to `[-180, 180]` and split a
+   wrapped interval into two boxes at the antimeridian. All trigonometry uses radians and envelope
+   coordinates are converted back to degrees for the WGS84 STRtree.
 2. Compute current `_haversine_m()` distances for every returned UID and sort by `(distance, uid)`.
 3. If at least `k` nodes have been found and the kth exact distance is `<= r`, stop: every node
    outside the spherical radius is farther away and cannot enter the result. Otherwise double `r`
@@ -206,9 +226,12 @@ The serialized pickle must contain exactly `graph`, `pois`, and `metadata`. Load
 - metadata contains `artifact_revision`, `source`, `fetched_at`, `built_at`, `validation`, and
   `poi_summary`;
 - POI identities are unique and coordinates are finite and within WGS84 bounds;
-- attachment UIDs and edges exist;
+- attachment UIDs and edges exist, and every attached edge belongs to the same routing-eligible
+  navigable-edge subset used to build the corridor STRtree;
 - stored distances are nonnegative and do not exceed the category threshold;
-- projected points are consistent with the attached edge within a documented numeric tolerance.
+- projected points are consistent with the attached edge: after transforming the stored projected
+  coordinate back to EPSG:27700, its Cartesian distance from the closest point on the attached
+  EPSG:27700 edge line must be at most 0.01 m.
 
 Any structural error raises `InvalidArtifactError` with field-level details and a rebuild instruction.
 There is no legacy fallback or migration. Pickles remain trusted local build products and must never
@@ -229,7 +252,8 @@ barriers, malformed geometry, and unknown values.
 Acceptance criteria:
 
 1. Overpass and pyosmium fixtures normalize equivalent OSM features to equivalent candidates.
-2. All allowlisted kinds are classified; unknown kinds and parking are excluded and reported.
+2. All allowlisted kinds are classified; unknown kinds are excluded and reported, while parking and
+   the explicitly ignored amenity tags are excluded without diagnostics.
 3. Area representative points lie inside valid polygons, while corridor distance uses full geometry.
 4. Canal-service and pedestrian-access records are retained through 250 m; provisions and transport
    are retained through 1,000 m; records beyond the boundary are excluded.

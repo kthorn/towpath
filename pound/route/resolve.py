@@ -20,6 +20,7 @@ import math
 import networkx as nx
 
 from pound.graph.build import _haversine_m, _node_key
+from pound.graph.spatial import GraphSpatialIndex, nearest_node_distances
 
 _DEFAULT_SNAP_TOLERANCE_M = 50.0
 
@@ -76,7 +77,12 @@ def resolve_place(
     return best
 
 
-def resolve_coord(lat: float, lon: float, graph: nx.Graph) -> tuple[int, float]:
+def resolve_coord(
+    lat: float,
+    lon: float,
+    graph: nx.Graph,
+    spatial_index: GraphSpatialIndex,
+) -> tuple[int, float]:
     """Resolve a coordinate to the nearest graph node uid + distance (offline only).
 
     Geography-first entry (supersedes PR2's `# future: resolve_coord` seam).
@@ -86,14 +92,11 @@ def resolve_coord(lat: float, lon: float, graph: nx.Graph) -> tuple[int, float]:
     offers `--max-distance-m` for that scripting need.
 
     Raises ValueError for an empty graph (defensive; production graphs always
-    have nodes). Linear scan over node lat/lon attrs — ms at England scale
-    (YAGNI for spatial indexing).
+    have nodes). The caller supplies the immutable artifact-level spatial index
+    so repeated request-time lookups reuse one STRtree.
     """
-    best, best_d = None, math.inf
-    for uid, nd in graph.nodes(data=True):
-        d = _haversine_m((lat, lon), (nd["lat"], nd["lon"]))
-        if d < best_d:
-            best, best_d = uid, d
-    if best is None:
+    ranked = nearest_node_distances(lat, lon, graph, spatial_index, limit=1)
+    if not ranked:
         raise ValueError("no graph nodes to resolve against")
-    return best, best_d
+    distance, uid = ranked[0]
+    return uid, distance
