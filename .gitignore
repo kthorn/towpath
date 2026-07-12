@@ -30,6 +30,9 @@ pound/artifacts/
 .vscode/
 .idea/
 
+# Local map-prototype environment (may contain browser credentials)
+.env.sh
+
 # git worktrees (local isolation for feature work)
 .worktrees/
 
