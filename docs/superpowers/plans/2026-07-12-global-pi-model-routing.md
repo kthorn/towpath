@@ -86,7 +86,7 @@ Write exactly:
     "npm:pi-subagents",
     "npm:pi-lens",
     "npm:pi-web-access",
-    "git:github.com/kthorn/kthorn-skills",
+    "git:github.com/kthorn/kthorn-skills@88d462f9a06290640bd9bed440b44be3bf223496",
     "npm:pi-intercom",
     "npm:pi-prompt-template-model"
   ],
@@ -215,11 +215,11 @@ inheritance or silently substitute a fallback.
 | Broad-codebase execution of an approved design | `worker-architecture` | `openai-codex/gpt-5.6-luna` | max |
 | Mechanical transcription/testing and bounded scouting | `worker-mechanical`, `scout` | `opencode-go/deepseek-v4-flash` | max |
 
-The global interactive default is GPT-5.6 Luna High. Context building uses Sol
-Low. Planning and research use Sol Medium. Oracle uses Sol High. Final
-whole-branch review uses Sol xhigh. Routine organization and execution stay on
-Luna. A hard implementation still runs on Luna after Sol resolves and approves
-the design.
+The global interactive default is GPT-5.6 Luna High. MiMo Pro handles routine
+implementation at lower cost. Luna xhigh and max handle progressively harder
+approved execution. Sol low is sufficient for context assembly; Sol medium,
+high, and xhigh are reserved for progressively more demanding planning,
+advisory, and final-review work.
 
 ### Per-task review rotation
 
