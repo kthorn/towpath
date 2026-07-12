@@ -51,8 +51,50 @@ describe('Google places adapter', () => {
       },
     });
 
-    search.attach(document.createElement('input'), onSelect);
+    const cleanup = search.attach(document.createElement('input'), onSelect);
     expect(() => select()).not.toThrow();
     expect(onSelect).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it('exposes legacy Google predictions semantically and restores owned attributes', async () => {
+    const search = createGooglePlaceSearch({
+      createAutocomplete() {
+        return {
+          addListener() { return { remove() {} }; },
+          getPlace: () => ({}),
+        };
+      },
+    });
+    const input = document.createElement('input');
+    input.setAttribute('role', 'searchbox');
+    document.body.append(input);
+
+    const cleanup = search.attach(input, vi.fn());
+    expect(input).toHaveAttribute('role', 'combobox');
+    expect(input).toHaveAttribute('aria-autocomplete', 'list');
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+
+    const container = document.createElement('div');
+    container.className = 'pac-container';
+    const prediction = document.createElement('div');
+    prediction.className = 'pac-item';
+    container.append(prediction);
+    document.body.append(container);
+    await vi.waitFor(() => expect(prediction).toHaveAttribute('role', 'option'));
+
+    expect(container).toHaveAttribute('role', 'listbox');
+    expect(input).toHaveAttribute('aria-expanded', 'true');
+    prediction.remove();
+    await vi.waitFor(() => expect(input).toHaveAttribute('aria-expanded', 'false'));
+    cleanup();
+
+    expect(input).toHaveAttribute('role', 'searchbox');
+    expect(input).not.toHaveAttribute('aria-autocomplete');
+    expect(input).not.toHaveAttribute('aria-expanded');
+    expect(container).not.toHaveAttribute('role');
+    expect(prediction).not.toHaveAttribute('role');
+    container.remove();
+    input.remove();
   });
 });

@@ -38,7 +38,8 @@ function setup() {
     }),
     fitBounds: vi.fn(),
   };
-  return { view: createGoogleMapView(facade, document.createElement('div')), facade, map, mapListeners, markers, polylines };
+  const element = document.createElement('div');
+  return { view: createGoogleMapView(facade, element), element, facade, map, mapListeners, markers, polylines };
 }
 
 describe('Google map adapter', () => {
@@ -62,11 +63,14 @@ describe('Google map adapter', () => {
   });
 
   it('owns land and canal overlays independently and converts GeoJSON while drawing', () => {
-    const { view, facade, markers, polylines } = setup();
+    const { view, element, facade, markers, polylines } = setup();
     view.marker('origin', { lat: 51, lon: -1 });
     view.land('origin', { path: [{ lat: 51, lon: -1 }], durationSeconds: 3, distanceMeters: 4 });
     view.canal({ type: 'LineString', coordinates: [[-1.5, 52.5], [-1.6, 52.6]] });
+    expect(element).toHaveAttribute('data-origin-land-overlay', 'visible');
+    expect(element).toHaveAttribute('data-canal-overlay', 'visible');
     view.clearLand('origin');
+    expect(element).not.toHaveAttribute('data-origin-land-overlay');
 
     expect(polylines[0].setMap).toHaveBeenCalledWith(null);
     expect(polylines[1].setMap).not.toHaveBeenCalled();
@@ -76,6 +80,7 @@ describe('Google map adapter', () => {
     expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [{ lat: 52.5, lng: -1.5 }, { lat: 52.6, lng: -1.6 }]);
 
     view.canal(null);
+    expect(element).not.toHaveAttribute('data-canal-overlay');
     expect(polylines[1].setMap).toHaveBeenCalledWith(null);
   });
 

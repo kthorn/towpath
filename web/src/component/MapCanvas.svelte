@@ -10,4 +10,4 @@
   });
 </script>
 
-<section class="map-shell" aria-label="Journey map" aria-describedby="map-help"><span id="map-help" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Interactive map for selecting trip endpoints and viewing land and canal routes.</span><div class="map" bind:this={element}></div>{#if error}<p role="status" class="map-error">Map unavailable: {error}. Candidate lists and route planning remain available.</p>{/if}</section>
+<section class="map-shell" aria-label="Journey map" aria-describedby="map-help"><span id="map-help" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Interactive map for selecting trip endpoints and viewing land and canal routes.</span><div class="map" data-testid="journey-map-canvas" bind:this={element}></div>{#if error}<p role="status" class="map-error">Map unavailable: {error}. Candidate lists and route planning remain available.</p>{/if}</section>

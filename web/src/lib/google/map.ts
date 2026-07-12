@@ -50,6 +50,7 @@ export function createGoogleMapView(
   const clearLandSlot = (slot: EndpointSlot) => {
     landRoutes[slot]?.setMap(null);
     delete landRoutes[slot];
+    element.removeAttribute(`data-${slot}-land-overlay`);
   };
 
   return {
@@ -84,12 +85,14 @@ export function createGoogleMapView(
           strokeColor: '#2563eb',
           strokeWeight: 5,
         });
+        element.setAttribute(`data-${slot}-land-overlay`, 'visible');
         facade.fitBounds(map, path);
       }
     },
     canal(geometry) {
       canalRoute?.setMap(null);
       canalRoute = undefined;
+      element.removeAttribute('data-canal-overlay');
       if (geometry) {
         const path = geoJsonToGooglePath(geometry);
         canalRoute = facade.createPolyline({
@@ -98,6 +101,7 @@ export function createGoogleMapView(
           strokeColor: '#0891b2',
           strokeWeight: 6,
         });
+        element.setAttribute('data-canal-overlay', 'visible');
         facade.fitBounds(map, path);
       }
     },
