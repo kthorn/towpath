@@ -2,22 +2,26 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Configure user-wide Pi model routing so Luna Max handles routine work and execution, Sol Medium/High handles explicit complex roles, DeepSeek V4 Flash High handles bounded mechanical work, and per-task reviews rotate across four models.
+**Goal:** Implement Pareto-frontier Pi model routing using the frontier registry at `docs/pi-model-frontier.csv`. Select models along the quality-cost Pareto frontier: DeepSeek V4 Flash Max for scouting and mechanical work, MiMo V2.5 Pro High for routine implementation, Luna High/xhigh/Max for escalation tiers, Sol Low through xhigh for planning, advice, and review, and a five-model review roster for per-task diversity.
 
-**Architecture:** Builtin role routing lives in `~/.pi/agent/settings.json`; custom worker defaults remain in their agent frontmatter; the global orchestration contract lives in `~/.pi/agent/AGENTS.md`. Task-review diversity is deterministic and stateless: task number selects a reviewer model, while re-reviews retain that task's original reviewer.
+**Architecture:** Role routing is governed by the Pareto-frontier policy catalogued at `docs/pi-model-frontier.csv`. Builtin role routing lives in `~/.pi/agent/settings.json` with agent-specific overrides in their frontmatter; the global orchestration contract lives in `~/.pi/agent/AGENTS.md`. Task-review diversity is deterministic and stateless: task number selects a reviewer model from a five-entry roster, while re-reviews retain that task's original reviewer.
 
 **Tech Stack:** Pi JSON settings, pi-subagents Markdown agent definitions, global Markdown agent instructions, Python 3 JSON validation, Pi model and subagent discovery.
 
 ## Global Constraints
 
-- The global default is `openai-codex/gpt-5.6-luna` at `max` effort.
-- `planner`, `context-builder`, and `researcher` use `openai-codex/gpt-5.6-sol` at `medium` effort.
-- `oracle` and final whole-branch `reviewer` use `openai-codex/gpt-5.6-sol` at `high` effort.
-- `worker`, `delegate`, `worker-integration`, and `worker-architecture` use `openai-codex/gpt-5.6-luna` at `max` effort.
-- `scout` and `worker-mechanical` use `opencode-go/deepseek-v4-flash` at `high` effort.
-- New-task reviews rotate in this order at `high` effort: `opencode-go/deepseek-v4-pro`, `opencode-go/glm-5.2`, `opencode-go/mimo-v2.5-pro`, `opencode-go/kimi-k2.7-code`.
-- Task number `N` selects review roster index `(N - 1) mod 4`; re-reviews retain the original task model.
-- Every delegated run specifies a canonical `provider/model` ID explicitly.
+- The global default is `openai-codex/gpt-5.6-luna` at `high` effort.
+- `worker-mechanical` and `scout` use `opencode-go/deepseek-v4-flash` at `max` effort.
+- `worker` and `delegate` use `opencode-go/mimo-v2.5-pro` at `high` effort.
+- `worker-integration` uses `openai-codex/gpt-5.6-luna` at `xhigh` effort.
+- `worker-architecture` uses `openai-codex/gpt-5.6-luna` at `max` effort.
+- `context-builder` uses `openai-codex/gpt-5.6-sol` at `low` effort.
+- `planner` and `researcher` use `openai-codex/gpt-5.6-sol` at `medium` effort.
+- `oracle` uses `openai-codex/gpt-5.6-sol` at `high` effort.
+- Final whole-branch `reviewer` uses `openai-codex/gpt-5.6-sol` at `xhigh` effort.
+- New-task reviews rotate in this order: `opencode-go/deepseek-v4-pro` at `high`, `opencode-go/glm-5.2` at `high`, `opencode-go/mimo-v2.5-pro` at `high`, `opencode-go/kimi-k2.7-code` at `high`, `openai-codex/gpt-5.6-luna` at `xhigh`.
+- Task number `N` selects review roster index `(N - 1) mod 5`; re-reviews retain the original task model.
+- Every delegated run specifies a canonical `provider/model` ID and `thinking` level explicitly.
 - Model resolution fails loudly; do not add cross-model or cross-provider fallbacks.
 - Do not change provider registration, task-review criteria, output formats, or project-local Pi settings.
 - `~/.pi/agent` is not a Git repository, so global configuration changes cannot be committed there; verify them directly and commit only this repository's plan document.
@@ -263,7 +267,7 @@ gateway probe before changing the approved roster.
 Run:
 
 ```bash
-python -c 'import json, pathlib; p=pathlib.Path.home()/".pi/agent/settings.json"; s=json.loads(p.read_text()); assert (s["defaultProvider"], s["defaultModel"], s["defaultThinkingLevel"]) == ("openai-codex", "gpt-5.6-luna", "max"); o=s["subagents"]["agentOverrides"]; expected={"worker":("openai-codex/gpt-5.6-luna","max"),"delegate":("openai-codex/gpt-5.6-luna","max"),"context-builder":("openai-codex/gpt-5.6-sol","medium"),"oracle":("openai-codex/gpt-5.6-sol","high"),"planner":("openai-codex/gpt-5.6-sol","medium"),"researcher":("openai-codex/gpt-5.6-sol","medium"),"reviewer":("openai-codex/gpt-5.6-sol","high"),"scout":("opencode-go/deepseek-v4-flash","high")}; assert {k:(v["model"],v["thinking"]) for k,v in o.items()} == expected'
+python -c 'import json, pathlib; p=pathlib.Path.home()/".pi/agent/settings.json"; s=json.loads(p.read_text()); assert (s["defaultProvider"], s["defaultModel"], s["defaultThinkingLevel"]) == ("openai-codex", "gpt-5.6-luna", "high"); o=s["subagents"]["agentOverrides"]; expected={"worker":("opencode-go/mimo-v2.5-pro","high"),"delegate":("opencode-go/mimo-v2.5-pro","high"),"context-builder":("openai-codex/gpt-5.6-sol","low"),"oracle":("openai-codex/gpt-5.6-sol","high"),"planner":("openai-codex/gpt-5.6-sol","medium"),"researcher":("openai-codex/gpt-5.6-sol","medium"),"reviewer":("openai-codex/gpt-5.6-sol","xhigh"),"scout":("opencode-go/deepseek-v4-flash","max")}; assert {k:(v["model"],v["thinking"]) for k,v in o.items()} == expected'
 ```
 
 Expected: exit 0 with no output.
@@ -271,7 +275,7 @@ Expected: exit 0 with no output.
 Run:
 
 ```bash
-python -c 'from pathlib import Path; a=Path.home()/".pi/agent/agents"; expected={"worker-integration.md":("model: openai-codex/gpt-5.6-luna","thinking: max"),"worker-architecture.md":("model: openai-codex/gpt-5.6-luna","thinking: max"),"worker-mechanical.md":("model: opencode-go/deepseek-v4-flash","thinking: high"),"task-reviewer.md":("model: opencode-go/mimo-v2.5-pro","thinking: high")}; [(lambda t,p: (_ for _ in ()).throw(AssertionError(p)) if not all(x in t for x in pairs) else None)((a/p).read_text(),p) for p,pairs in expected.items()]'
+python -c 'from pathlib import Path; a=Path.home()/".pi/agent/agents"; expected={"worker-integration.md":("model: openai-codex/gpt-5.6-luna","thinking: xhigh"),"worker-architecture.md":("model: openai-codex/gpt-5.6-luna","thinking: max"),"worker-mechanical.md":("model: opencode-go/deepseek-v4-flash","thinking: max"),"task-reviewer.md":("model: opencode-go/mimo-v2.5-pro","thinking: high")}; [(lambda t,p: (_ for _ in ()).throw(AssertionError(p)) if not all(x in t for x in pairs) else None)((a/p).read_text(),p) for p,pairs in expected.items()]'
 ```
 
 Expected: exit 0 with no output.

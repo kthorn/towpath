@@ -1,0 +1,10 @@
+label,provider_model_id,thinking,cost,score
+DeepSeek V4 Flash,opencode-go/deepseek-v4-flash,max,0.03,56
+MiMo V2.5 Pro,opencode-go/mimo-v2.5-pro,high,0.04,60
+GPT-5.6 Luna,openai-codex/gpt-5.6-luna,high,0.09,63
+GPT-5.6 Luna,openai-codex/gpt-5.6-luna,xhigh,0.10,69
+GPT-5.6 Sol,openai-codex/gpt-5.6-sol,low,0.13,70
+GPT-5.6 Luna,openai-codex/gpt-5.6-luna,max,0.16,71
+GPT-5.6 Sol,openai-codex/gpt-5.6-sol,medium,0.18,76
+GPT-5.6 Sol,openai-codex/gpt-5.6-sol,high,0.22,77
+GPT-5.6 Sol,openai-codex/gpt-5.6-sol,xhigh,0.30,78

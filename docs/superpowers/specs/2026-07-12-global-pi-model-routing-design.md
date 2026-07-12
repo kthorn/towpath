@@ -5,50 +5,59 @@
 
 ## Goal
 
-Route routine Pi coordination and execution through GPT-5.6 Luna while
-reserving GPT-5.6 Sol for explicit planning and high-complexity advisory work.
-Delegate narrowly specified mechanical work to DeepSeek V4 Flash. Preserve
-diverse per-task review through a deterministic four-model cycle.
+Implement Pareto-frontier model routing for Pi sessions and subagents using the
+frontier registry at `docs/pi-model-frontier.csv`. Select models along the
+quality-cost Pareto frontier: use the least expensive model capable of
+completing each role reliably, upgrade explicitly to a more capable model when
+the work's complexity justifies the additional cost, and rotate per-task
+reviews across a five-model roster.
 
 ## Role Routing
 
 <!-- markdownlint-disable MD013 -->
 
-| Work type | Agent roles | Model | Effort |
+| Work | Agent roles | Model | Thinking |
 | --- | --- | --- | --- |
-| Default session and routine orchestration | global default | `openai-codex/gpt-5.6-luna` | max |
-| Planning, design, context building, research | `planner`, `context-builder`, `researcher` | `openai-codex/gpt-5.6-sol` | medium |
-| Architecture advice and final whole-branch review | `oracle`, `reviewer` | `openai-codex/gpt-5.6-sol` | high |
-| Normal execution | `worker`, `delegate`, `worker-integration`, `worker-architecture` | `openai-codex/gpt-5.6-luna` | max |
-| Bounded reconnaissance and mechanical execution | `scout`, `worker-mechanical` | `opencode-go/deepseek-v4-flash` | high |
-| Per-task review | `task-reviewer` | explicit rotating roster | high |
+| Default session and routine orchestration | global default | `openai-codex/gpt-5.6-luna` | `high` |
+| Mechanical transcription/testing and bounded scouting | `worker-mechanical`, `scout` | `opencode-go/deepseek-v4-flash` | `max` |
+| Routine implementation | `worker`, `delegate` | `opencode-go/mimo-v2.5-pro` | `high` |
+| Multi-file prose-spec implementation | `worker-integration` | `openai-codex/gpt-5.6-luna` | `xhigh` |
+| Broad-codebase execution of an approved design | `worker-architecture` | `openai-codex/gpt-5.6-luna` | `max` |
+| Context building | `context-builder` | `openai-codex/gpt-5.6-sol` | `low` |
+| Planning and research | `planner`, `researcher` | `openai-codex/gpt-5.6-sol` | `medium` |
+| Architecture advice and decision consistency | `oracle` | `openai-codex/gpt-5.6-sol` | `high` |
+| Final whole-branch review | `reviewer` | `openai-codex/gpt-5.6-sol` | `xhigh` |
 
 <!-- markdownlint-enable MD013 -->
 
 The parent session remains the decision-maker. Sol produces plans and handles
 explicitly escalated judgment. Luna handles routine organization and implements
-approved work. DeepSeek V4 Flash receives only bounded reconnaissance or
-mechanical tasks with clear acceptance criteria.
+approved work. MiMo V2.5 Pro handles routine implementation at lower cost.
+DeepSeek V4 Flash receives only bounded reconnaissance or mechanical tasks with
+clear acceptance criteria. The quality-cost frontier is catalogued at
+`docs/pi-model-frontier.csv`; the pinned `kthorn-skills` package checkout is
+intentionally outside this change.
 
 ## Task-Review Rotation
 
 Each new implementation task selects its reviewer from this ordered roster:
 
-1. `opencode-go/deepseek-v4-pro`
-2. `opencode-go/glm-5.2`
-3. `opencode-go/mimo-v2.5-pro`
-4. `opencode-go/kimi-k2.7-code`
+1. `opencode-go/deepseek-v4-pro` at `high`
+2. `opencode-go/glm-5.2` at `high`
+3. `opencode-go/mimo-v2.5-pro` at `high`
+4. `opencode-go/kimi-k2.7-code` at `high`
+5. `openai-codex/gpt-5.6-luna` at `xhigh`
 
-Selection is deterministic: task number `N` uses roster index `(N - 1) mod 4`.
-All task reviewers run at high effort. Re-reviews after fixes retain the
-original task's model so the same reviewer verifies resolution. The next new
-task advances the cycle.
+Selection is deterministic: task number `N` uses roster index `(N - 1) mod 5`.
+Each dispatch passes both the model and thinking level explicitly. Re-reviews
+after fixes retain the original task's model so the same reviewer verifies
+resolution. The next new task advances the cycle.
 
 The shared `task-reviewer` agent defines the review contract. The orchestrating
-parent must pass the selected model explicitly on every initial review and
-re-review dispatch. Direct task-reviewer invocations may retain MiMo V2.5 Pro
-at high effort as a safe fallback, but plan execution must not rely on that
-fallback.
+parent must pass the selected model and thinking level explicitly on every
+initial review and re-review dispatch. Direct task-reviewer invocations may
+retain MiMo V2.5 Pro at high effort as a safe fallback, but plan execution
+must not rely on that fallback.
 
 ## Configuration Changes
 
