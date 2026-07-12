@@ -1,6 +1,9 @@
 import json
+import pickle
 from pathlib import Path
+from uuid import UUID
 
+import pound.graph.artifact as artifact_module
 from pound.graph.artifact import load_artifact, save_artifact
 from pound.graph.build import build_graph
 from pound.ingest.overpass import parse
@@ -35,3 +38,53 @@ def test_save_and_load_preserves_embedded_gazetteer(tmp_path: Path):
     save_artifact(g, art, {"source": "overpass", "fetched_at": "t", "version": 1})
     loaded_g, _ = load_artifact(art)
     assert loaded_g.graph["gazetteer"] == {"Oxford": (51.75, -1.26)}
+
+
+def test_save_artifact_adds_revision_when_missing(tmp_path: Path):
+    art = tmp_path / "g.pkl"
+
+    save_artifact(_graph(), art, {"source": "overpass"})
+
+    _, meta = load_artifact(art)
+    UUID(meta["artifact_revision"])
+
+
+def test_save_artifact_preserves_explicit_revision_without_generating_one(
+    tmp_path: Path, monkeypatch
+):
+    art = tmp_path / "g.pkl"
+    monkeypatch.setattr(
+        artifact_module,
+        "uuid4",
+        lambda: (_ for _ in ()).throw(AssertionError("uuid4 should not be called")),
+    )
+
+    save_artifact(_graph(), art, {"source": "overpass", "artifact_revision": "revision-1"})
+
+    _, meta = load_artifact(art)
+    assert meta["artifact_revision"] == "revision-1"
+
+
+def test_repeated_loads_return_same_persisted_revision(tmp_path: Path):
+    art = tmp_path / "g.pkl"
+    save_artifact(_graph(), art, {"source": "overpass"})
+
+    _, first = load_artifact(art)
+    _, second = load_artifact(art)
+
+    UUID(first["artifact_revision"])
+    assert second["artifact_revision"] == first["artifact_revision"]
+
+
+def test_load_artifact_accepts_legacy_metadata_without_revision(tmp_path: Path):
+    art = tmp_path / "legacy.pkl"
+    graph = _graph()
+    metadata = {"source": "overpass", "version": 1}
+    with open(art, "wb") as f:
+        pickle.dump({"graph": graph, "metadata": metadata}, f)
+
+    loaded_graph, loaded_metadata = load_artifact(art)
+
+    assert loaded_graph.number_of_edges() == graph.number_of_edges()
+    assert loaded_metadata == metadata
+    assert "artifact_revision" not in loaded_metadata

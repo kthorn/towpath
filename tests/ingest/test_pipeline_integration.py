@@ -26,6 +26,7 @@ def test_build_oxford_artifact_has_connected_graph_and_gazetteer(tmp_path, monke
     assert out.exists()
     g, meta = load_artifact(out)
 
+    assert meta["artifact_revision"]
     v = meta["validation"]
     assert v["derelict_edges"] == 0
     assert v["self_loops"] == 0

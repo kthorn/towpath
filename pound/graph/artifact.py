@@ -8,14 +8,21 @@ term portable format — revisit at the scale scope. No network.
 import pickle
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 
 def save_artifact(graph, path: Path, metadata: dict) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_revision = (
+        metadata["artifact_revision"]
+        if "artifact_revision" in metadata
+        else str(uuid4())
+    )
     meta = {
         **metadata,
         "built_at": metadata.get("built_at", datetime.now(UTC).isoformat()),
+        "artifact_revision": artifact_revision,
     }
     with open(path, "wb") as f:
         pickle.dump({"graph": graph, "metadata": meta}, f)
