@@ -51,6 +51,7 @@ export interface TripStore extends Readable<TripState> {
   selectCandidate(slot: EndpointSlot, uid: number): Promise<void>;
   confirmGeometricFallback(slot: EndpointSlot): void;
   planCanalRoute(constraints: CanalConstraints): Promise<CanalRouteResponse>;
+  setMapView(mapView: MapView | undefined): void;
 }
 
 const emptyEndpoint = (): EndpointState => ({
@@ -67,7 +68,8 @@ export function createTripStore(dependencies: {
   mapView?: MapView;
   transferMode: TransferMode;
 }): TripStore {
-  const { poundApi, transferRouter, mapView, transferMode } = dependencies;
+  const { poundApi, transferRouter, transferMode } = dependencies;
+  let mapView = dependencies.mapView;
   const initial: TripState = {
     origin: emptyEndpoint(), destination: emptyEndpoint(), canalRoute: null, routeError: null, routing: false,
   };
@@ -222,5 +224,20 @@ export function createTripStore(dependencies: {
     }
   }
 
-  return { subscribe: inner.subscribe, setEndpointCoordinate, selectCandidate, confirmGeometricFallback, planCanalRoute };
+  return {
+    subscribe: inner.subscribe, setEndpointCoordinate, selectCandidate, confirmGeometricFallback,
+    planCanalRoute, setMapView(value) {
+      mapView = value;
+      if (!mapView) return;
+      for (const slot of ['origin', 'destination'] as const) {
+        const endpoint = state[slot];
+        if (endpoint.place) mapCall(slot, () => mapView?.marker(slot, endpoint.place!.coordinate));
+        mapCall(slot, () => mapView?.candidates(
+          slot, endpoint.candidates.map(({ candidate }) => candidate), endpoint.selectedUid ?? undefined,
+        ));
+        if (endpoint.landRoute) mapCall(slot, () => mapView?.land(slot, endpoint.landRoute));
+      }
+      mapCall('origin', () => mapView?.canal(state.canalRoute?.geometry ?? null));
+    },
+  };
 }

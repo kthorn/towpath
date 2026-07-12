@@ -33,6 +33,33 @@ function setup(options: { matrices?: TransferResult[][]; routeError?: Error; map
 }
 
 describe('trip store', () => {
+  it('replays hydrated trip state when a map view attaches later', async () => {
+    const { store } = setup();
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    await store.planCanalRoute({});
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    store.setMapView(map);
+    expect(map.marker).toHaveBeenCalledWith('origin', { lat: 51, lon: -1 });
+    expect(map.marker).toHaveBeenCalledWith('destination', { lat: 53, lon: -1 });
+    expect(map.candidates).toHaveBeenCalledWith('origin', expect.any(Array), 2);
+    expect(map.candidates).toHaveBeenCalledWith('destination', expect.any(Array), 4);
+    expect(map.land).toHaveBeenCalledWith('origin', land);
+    expect(map.land).toHaveBeenCalledWith('destination', land);
+    expect(map.canal).toHaveBeenCalledWith(canal.geometry);
+    expect(() => store.setMapView(undefined)).not.toThrow();
+  });
+
+  it('continues replaying map state when one delayed draw fails', async () => {
+    const { store } = setup();
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    const canalDraw = vi.fn();
+    const map = { marker: vi.fn(() => { throw new Error('marker failed'); }), candidates: vi.fn(), land: vi.fn(), canal: canalDraw, onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    store.setMapView(map);
+    expect(map.candidates).toHaveBeenCalledTimes(2);
+    expect(canalDraw).toHaveBeenCalledWith(null);
+  });
   it('selects and draws the recommended reachable candidate for both symmetric endpoints', async () => {
     const marker = vi.fn(); const candidates = vi.fn(); const landDraw = vi.fn();
     const map = { marker, candidates, land: landDraw, canal: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
