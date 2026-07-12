@@ -169,6 +169,16 @@ def test_read_england_applies_prune_then_filter_chain(monkeypatch, tmp_path):
     assert {w.osm_id for w in out.ways} == {w.osm_id for w in fixture_features.ways}
 
 
+def test_wkt_geometry_runtime_error_is_reported_as_unusable():
+    from pound.ingest.osm import _create_wkt
+
+    class InvalidAreaFactory:
+        def create_multipolygon(self, _obj):
+            raise RuntimeError("invalid area")
+
+    assert _create_wkt(InvalidAreaFactory(), "create_multipolygon", object()) is None
+
+
 def test_read_pbf_aligns_node_ids_with_geometry_when_one_ref_lacks_location(tmp_path):
     """The noded build zips node_ids with geometry 1-to-1. If a way references
     a node whose location is invalid/unset, read_pbf must EXCLUDE that ref from

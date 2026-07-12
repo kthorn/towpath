@@ -53,6 +53,14 @@ nwr/barrier=gate,stile,kissing_gate,cycle_barrier
 """
 
 
+def _create_wkt(factory, method: str, obj) -> str | None:
+    """Return WKT, or None when pyosmium cannot construct the source geometry."""
+    try:
+        return getattr(factory, method)(obj)
+    except RuntimeError:
+        return None
+
+
 def run_tags_filter(in_pbf: Path, out_pbf: Path) -> None:
     """Shell out once to `osmium tags-filter`. Raises FileNotFoundError if
     osmium is not installed (it's a documented system prereq)."""
@@ -144,11 +152,12 @@ def read_pbf(pbf_path: Path) -> WaterwayFeatures:
                 skip(diagnostic.reason, f"way/{w.id}:{diagnostic.key}={diagnostic.value}")
             if classifications:
                 if tags.get("highway") in {"footway", "path", "pedestrian"}:
-                    try:
-                        emit(OsmElementType.WAY, w.id, tags, wkt_factory.create_linestring(w),
-                             "derived_path", classifications)
-                    except osmium.geom.GeometryError:
+                    geometry_wkt = _create_wkt(wkt_factory, "create_linestring", w)
+                    if geometry_wkt is None:
                         skip("invalid_geometry", f"way/{w.id}")
+                    else:
+                        emit(OsmElementType.WAY, w.id, tags, geometry_wkt,
+                             "derived_path", classifications)
                 else:
                     pending_areas[(OsmElementType.WAY, w.id)] = (tags, len(w.nodes))
         elif object_name == "Node":
@@ -177,12 +186,10 @@ def read_pbf(pbf_path: Path) -> WaterwayFeatures:
             key = (osm_type, osm_id)
             classifications = classify_poi(tags)
             if classifications and key not in emitted_areas:
-                try:
-                    emit(osm_type, osm_id, tags, wkt_factory.create_multipolygon(obj), "area",
-                         classifications)
+                geometry_wkt = _create_wkt(wkt_factory, "create_multipolygon", obj)
+                if geometry_wkt is not None:
+                    emit(osm_type, osm_id, tags, geometry_wkt, "area", classifications)
                     emitted_areas.add(key)
-                except osmium.geom.GeometryError:
-                    pass
 
     for (osm_type, osm_id), (_, node_count) in pending_areas.items():
         if (osm_type, osm_id) in emitted_areas:
