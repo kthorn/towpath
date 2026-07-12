@@ -65,18 +65,20 @@ must not rely on that fallback.
 
 - Set `defaultProvider` to `openai-codex`.
 - Set `defaultModel` to `gpt-5.6-luna`.
-- Set `defaultThinkingLevel` to `max`.
-- Override planning and complex advisory agents with Sol at the effort levels
-  in the role table.
-- Override normal execution agents with Luna Max.
-- Override `scout` with DeepSeek V4 Flash High.
+- Set `defaultThinkingLevel` to `high`.
+- Override `planner`, `researcher`, `context-builder`, `oracle`, and `reviewer`
+  with Sol at the effort levels in the role table.
+- Override `worker` and `delegate` with MiMo V2.5 Pro High.
+- Override `worker-integration` with Luna xhigh and `worker-architecture` with
+  Luna max.
+- Override `scout` with DeepSeek V4 Flash Max.
 - Preserve explicit provider-qualified model IDs.
 
 ### `~/.pi/agent/agents/*.md`
 
-- Re-pin `worker-integration` and `worker-architecture` to Luna Max because they
-  execute approved work even when the work is difficult.
-- Keep `worker-mechanical` on DeepSeek V4 Flash and explicitly set high effort.
+- Re-pin `worker-integration` to Luna xhigh and `worker-architecture` to Luna
+  Max because they execute approved work even when the work is difficult.
+- Keep `worker-mechanical` on DeepSeek V4 Flash and explicitly set max effort.
 - Keep `task-reviewer` on MiMo V2.5 Pro High only as its direct-invocation
   fallback; orchestration supplies the rotating model explicitly.
 - Update descriptions that name obsolete model assignments.

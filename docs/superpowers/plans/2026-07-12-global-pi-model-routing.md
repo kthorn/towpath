@@ -47,6 +47,11 @@
 
 - [ ] **Step 1: Run the pre-change assertions and confirm the current configuration does not satisfy the approved design**
 
+> **Pre-change precondition check.** The assertions below intentionally test the
+> old configuration values (e.g., `defaultThinkingLevel: "max"`), which predate
+> the Pareto-frontier policy. They verify the unchanged config before this task
+> transforms it and are NOT the target policy.
+
 Run:
 
 ```bash
@@ -72,7 +77,7 @@ Write exactly:
   "lastChangelogVersion": "0.80.6",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-luna",
-  "defaultThinkingLevel": "max",
+  "defaultThinkingLevel": "high",
   "hideThinkingBlock": true,
   "skills": [
     "~/.pi/agent/superpowers/skills"
@@ -88,16 +93,16 @@ Write exactly:
   "subagents": {
     "agentOverrides": {
       "worker": {
-        "model": "openai-codex/gpt-5.6-luna",
-        "thinking": "max"
+        "model": "opencode-go/mimo-v2.5-pro",
+        "thinking": "high"
       },
       "delegate": {
-        "model": "openai-codex/gpt-5.6-luna",
-        "thinking": "max"
+        "model": "opencode-go/mimo-v2.5-pro",
+        "thinking": "high"
       },
       "context-builder": {
         "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "medium"
+        "thinking": "low"
       },
       "oracle": {
         "model": "openai-codex/gpt-5.6-sol",
@@ -113,11 +118,11 @@ Write exactly:
       },
       "reviewer": {
         "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "high"
+        "thinking": "xhigh"
       },
       "scout": {
         "model": "opencode-go/deepseek-v4-flash",
-        "thinking": "high"
+        "thinking": "max"
       }
     }
   },
@@ -127,24 +132,24 @@ Write exactly:
 
 Do not duplicate custom worker overrides here; their user agent files are the single source of their pinned defaults.
 
-- [ ] **Step 3: Re-pin the integration worker to Luna Max**
+- [ ] **Step 3: Re-pin the integration worker to Luna xhigh**
 
 In `~/.pi/agent/agents/worker-integration.md`, change the frontmatter and opening role description to:
 
 ```markdown
 ---
 name: worker-integration
-description: Integration/judgment-tier TDD implementer (multi-file, prose spec) pinned to GPT-5.6 Luna Max via OpenAI Codex. Dispatch with a task brief file, a report file path, and scene-setting context. Follows TDD: failing test -> implement -> green -> commit -> self-review -> report.
+description: Integration/judgment-tier TDD implementer (multi-file, prose spec) pinned to GPT-5.6 Luna xhigh via OpenAI Codex. Dispatch with a task brief file, a report file path, and scene-setting context. Follows TDD: failing test -> implement -> green -> commit -> self-review -> report.
 tools: bash, read, edit, write
 model: openai-codex/gpt-5.6-luna
-thinking: max
+thinking: xhigh
 systemPromptMode: append
 inheritProjectContext: false
 inheritSkills: true
 defaultContext: fresh
 ---
 
-You are an integration/judgment-tier implementation agent for multi-file tasks with a prose (not verbatim-code) spec. GPT-5.6 Luna Max is the standard execution model for this work. A task that is pure transcription-plus-testing belongs on the mechanical tier; unresolved product or architecture decisions must return to the Sol-powered parent planning or oracle role before execution continues.
+You are an integration/judgment-tier implementation agent for multi-file tasks with a prose (not verbatim-code) spec. GPT-5.6 Luna xhigh is the standard execution model for this work. A task that is pure transcription-plus-testing belongs on the mechanical tier; unresolved product or architecture decisions must return to the Sol-powered parent planning or oracle role before execution continues.
 ```
 
 Leave the remainder of the agent contract unchanged.
@@ -176,7 +181,7 @@ Leave the remainder of the agent contract unchanged.
 In `~/.pi/agent/agents/worker-mechanical.md`, insert this directly after its existing `model:` line:
 
 ```yaml
-thinking: high
+thinking: max
 ```
 
 In `~/.pi/agent/agents/task-reviewer.md`, insert this directly after its existing `model:` line:
@@ -203,11 +208,11 @@ inheritance or silently substitute a fallback.
 | Planning and implementation plans | `planner` | `openai-codex/gpt-5.6-sol` | medium |
 | Context building and research | `context-builder`, `researcher` | `openai-codex/gpt-5.6-sol` | medium |
 | Architecture advice and decision consistency | `oracle` | `openai-codex/gpt-5.6-sol` | high |
-| Final whole-branch review | `reviewer` | `openai-codex/gpt-5.6-sol` | high |
-| Routine implementation | `worker`, `delegate` | `openai-codex/gpt-5.6-luna` | max |
-| Multi-file prose-spec implementation | `worker-integration` | `openai-codex/gpt-5.6-luna` | max |
+| Final whole-branch review | `reviewer` | `openai-codex/gpt-5.6-sol` | xhigh |
+| Routine implementation | `worker`, `delegate` | `opencode-go/mimo-v2.5-pro` | high |
+| Multi-file prose-spec implementation | `worker-integration` | `openai-codex/gpt-5.6-luna` | xhigh |
 | Broad-codebase execution of an approved design | `worker-architecture` | `openai-codex/gpt-5.6-luna` | max |
-| Mechanical transcription/testing and bounded scouting | `worker-mechanical`, `scout` | `opencode-go/deepseek-v4-flash` | high |
+| Mechanical transcription/testing and bounded scouting | `worker-mechanical`, `scout` | `opencode-go/deepseek-v4-flash` | max |
 
 The global interactive default is GPT-5.6 Luna Max. Routine organization and
 execution stay on Luna. Upgrade explicitly to Sol Medium for planning, design,
@@ -218,14 +223,15 @@ still runs on Luna after Sol resolves and approves the design.
 ### Per-task review rotation
 
 Use the shared `task-reviewer` contract, but pass the review model explicitly.
-For implementation task number `N`, select roster index `(N - 1) mod 4`:
+For implementation task number `N`, select roster index `(N - 1) mod 5`:
 
-1. `opencode-go/deepseek-v4-pro`
-2. `opencode-go/glm-5.2`
-3. `opencode-go/mimo-v2.5-pro`
-4. `opencode-go/kimi-k2.7-code`
+1. `opencode-go/deepseek-v4-pro` at `high`
+2. `opencode-go/glm-5.2` at `high`
+3. `opencode-go/mimo-v2.5-pro` at `high`
+4. `opencode-go/kimi-k2.7-code` at `high`
+5. `openai-codex/gpt-5.6-luna` at `xhigh`
 
-Run every task reviewer at `thinking: high`. A re-review after fixes uses the
+Run entries 1–4 at `thinking: high` and entry 5 (Luna) at `xhigh`. A re-review after fixes uses the
 same model as the task's initial review; only the next new task advances the
 cycle. `task-reviewer`'s MiMo frontmatter is a safe direct-invocation default,
 not permission for plan execution to omit the explicit rotating model.
