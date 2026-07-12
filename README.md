@@ -13,17 +13,156 @@ uv run pytest
 uv run ruff check .
 ```
 
+## Map prototype: local development
+
+Install Python dependencies. Map development uses a full England artifact; the
+network-dependent Oxford/Overpass path is only a legacy ingest scaffold and is
+not the recommended way to start the application.
+
+```bash
+uv sync --extra dev
+```
+
+Point the application at an existing England artifact with an absolute path,
+or build a current one from the England PBF as described under **Bulk ingest**.
+The artifact must have been built with a version of Pound that writes
+`artifact_revision`; the web application intentionally rejects older,
+revisionless artifacts. Rebuild a revisionless artifact once rather than
+patching its pickle metadata.
+
+Start FastAPI from the repository root. `pound.web.app:app` reads its settings
+when Uvicorn starts the application, so exporting or prefixing the environment
+variables works without an application factory flag:
+
+```bash
+POUND_ARTIFACT_PATH=/absolute/path/to/pound/artifacts/england.pkl \
+POUND_STATIC_DIR=web/dist \
+uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Confirm that the backend loaded the artifact and reports its revision:
+
+```bash
+curl http://127.0.0.1:8000/api/health
+```
+
+In another terminal, start Vite:
+
+```bash
+cd web
+npm ci
+VITE_GOOGLE_MAPS_API_KEY='restricted-browser-key' \
+VITE_GOOGLE_MAP_ID='project-map-id' \
+VITE_TRANSFER_MODE='WALK' \
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. Vite proxies `/api` to FastAPI on port 8000.
+`VITE_TRANSFER_MODE` accepts `WALK`, `DRIVE`, `TRANSIT`, or `BICYCLE`. All
+`VITE_*` values are embedded into the browser bundle at build time: they are
+public client configuration, not runtime secrets. Never use a server secret as
+the browser key.
+
+Use the England artifact for routine local UI work, including the Bletchley Park
+scenario below. Keep generated artifacts outside version control.
+
+### Runtime settings and artifact compatibility
+
+FastAPI supports these environment variables:
+
+- `POUND_ARTIFACT_PATH` (required): graph artifact loaded once at startup.
+- `POUND_STATIC_DIR` (default `web/dist`): production frontend files.
+- `POUND_CANDIDATE_POOL_SIZE` (default `20`): geometric candidates considered.
+- `POUND_GOOGLE_DESTINATION_LIMIT` (default `10`): candidates returned for the
+  browser's Google route matrix request.
+- `POUND_MINIMUM_CANDIDATE_SPACING_M` (default `250`): candidate separation.
+
+Candidate UIDs are valid only for their artifact revision. If the backend
+reports `artifact_revision_mismatch`, ensure the rebuilt artifact is deployed,
+then refresh or reselect both endpoints to load fresh candidates and re-plan.
+The frontend needs rebuilding only when its code or `VITE_*` configuration
+changes, not merely because the backend artifact revision changed. Rebuild an
+artifact whenever its source data or graph-building rules change; do not copy
+UIDs between artifacts.
+
+If Maps or Places is unavailable, each endpoint also accepts latitude and
+longitude. This non-map coordinate fallback still finds canal candidates and
+plans a canal route; Google land-transfer overlays may remain unavailable.
+
+### Google Maps safety and operations
+
+Enable Maps JavaScript API, Places API, and Routes API. Restrict the browser key
+by HTTP referrer to the exact local and production origins and restrict it to
+those APIs. Use a project map ID. Set conservative per-API quotas, billing
+budgets and alerts, and monitor request/error dashboards before sharing a
+deployment. Google requests are made by the browser and may be billable.
+
+Pound's canal geometry is derived from OpenStreetMap. Preserve visible
+“© OpenStreetMap contributors” attribution and comply with the ODbL when
+displaying or distributing derived data; Google basemap attribution does not
+replace it.
+
+### Production container
+
+Build-time Google values become public JavaScript configuration:
+
+```bash
+docker build -t pound-map \
+  --build-arg VITE_GOOGLE_MAPS_API_KEY='restricted-production-browser-key' \
+  --build-arg VITE_GOOGLE_MAP_ID='production-map-id' \
+  --build-arg VITE_TRANSFER_MODE='WALK' .
+```
+
+Run the single FastAPI/frontend image with the artifact mounted read-only:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e POUND_ARTIFACT_PATH=/data/england.pkl \
+  -v "$PWD/pound/artifacts/england.pkl:/data/england.pkl:ro" \
+  pound-map
+```
+
+Open `http://127.0.0.1:8000`. Runtime environment variables cannot replace the
+`VITE_*` values already built into the image; rebuild to change browser config.
+
+### Manual Bletchley acceptance check
+
+With a full England artifact, search the origin for **Bletchley Park** and the
+destination for **Black Prince Holidays, Stoke Hammond**. Confirm that ranked
+canal candidates appear at both ends, choose a non-recommended destination
+candidate, plan the route, and check that both land-transfer lines and the canal
+line appear. The summary must show transfer metrics and canal distance, locks,
+cruising time, warnings, and day divisions where applicable. Verify proposed
+access and navigation restrictions locally; a graph node is not a promise of a
+safe mooring, pedestrian entrance, or vehicle drop-off.
+
+### Frontend tests
+
+```bash
+cd web
+npm test -- --run
+npm run check
+npm run build
+npm run test:smoke -- --list
+```
+
+Unit tests are offline. The Google browser smoke test is separate, opt-in, and
+potentially billable; its exact prerequisites and command are in
+`web/tests/smoke/README.md`.
+
 ## Prerequisites
 
 - `osmium-tool` (system CLI) for `pound-ingest build england` — install via
   apt/brew/conda. The `pyosmium` Python package is separate and pulled by the
   `bulk` extra: `uv sync --extra bulk`. The base `uv sync` works without it.
 
-## Regional ingest (dev / scaffolding)
+## Legacy regional ingest scaffold (Oxford)
 
-The Overpass reader is **scaffolding** for early development on a small dataset
-(Oxford Canal). It is replaced by a pyosmium bulk reader over the Geofabrik GB
-PBF in design step 6.
+The Overpass reader is retained as **legacy scaffolding** for narrow ingest
+experiments and network tests on the Oxford Canal. Do not use it to prepare the
+map application's normal development artifact. The public Overpass endpoint may
+rate-limit or reject this request (including HTTP 406); use the bulk England
+build below for the application.
 
 Fetch the Oxford extract and print the summarize() report (network required):
 
@@ -33,14 +172,14 @@ uv run pound-ingest oxford
 uv run pound-ingest oxford --out pound/data/oxford_canal_waterways.json
 ```
 
-### Build the graph artifact
+### Build the legacy Oxford artifact
 
 ```bash
 uv run pound-ingest build oxford --out pound/artifacts/oxford.pkl
 ```
 
-Produces a pickled NetworkX graph with provenance metadata, ready for
-`plan_route` to load at request time.
+Produces a small pickled NetworkX graph for ingest testing only. It does not
+cover the England-wide product workflow.
 
 Network tests are skipped by default; run them explicitly:
 

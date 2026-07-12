@@ -4,6 +4,8 @@ Per design §6. Field names are the integration seam; do not rename without
 coordinating with labyrinth-core / labyrinth-agent.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -12,10 +14,10 @@ class CanalConstraints(BaseModel):
     end: str | None = None  # None => ring / round trip
     days: int | None = Field(gt=0, default=None)  # None => infer from hours_per_day (no cap)
     hours_per_day: float = Field(gt=0, default=6.0)
-    boat_length_m: float | None = None
-    boat_beam_m: float | None = None
-    boat_draft_m: float | None = None
-    boat_height_m: float | None = None
+    boat_length_m: float | None = Field(gt=0, default=None)
+    boat_beam_m: float | None = Field(gt=0, default=None)
+    boat_draft_m: float | None = Field(gt=0, default=None)
+    boat_height_m: float | None = Field(gt=0, default=None)
     amenity_prefs: list[str] = []  # ["pub", "water_point", "shop", ...]
     allow_derelict: bool = False
 
@@ -38,10 +40,10 @@ class ResolvedConstraints(BaseModel):
     end_uid: int
     days: int | None = Field(gt=0, default=None)  # None => infer from hours_per_day (no cap)
     hours_per_day: float = Field(gt=0, default=6.0)
-    boat_length_m: float | None = None
-    boat_beam_m: float | None = None
-    boat_draft_m: float | None = None
-    boat_height_m: float | None = None
+    boat_length_m: float | None = Field(gt=0, default=None)
+    boat_beam_m: float | None = Field(gt=0, default=None)
+    boat_draft_m: float | None = Field(gt=0, default=None)
+    boat_height_m: float | None = Field(gt=0, default=None)
     allow_derelict: bool = False
 
 
@@ -82,3 +84,31 @@ class RouteResult(BaseModel):
     amenities: list[Amenity]
     warnings: list[str] = []  # e.g. "draft unknown on 3 segments"
     graph_source_date: str  # provenance from the artifact
+
+
+class Coordinate(BaseModel):
+    lat: float
+    lon: float
+
+
+class CanalCandidate(BaseModel):
+    uid: int
+    artifact_revision: str
+    coordinate: Coordinate
+    straight_line_distance_m: float = Field(ge=0)
+    display_name: str
+
+
+class CanalCandidatesResponse(BaseModel):
+    artifact_revision: str
+    candidates: list[CanalCandidate]
+
+
+class GeoJSONLineString(BaseModel):
+    type: Literal["LineString"] = "LineString"
+    coordinates: list[tuple[float, float]]
+
+
+class CanalRouteResponse(BaseModel):
+    route: RouteResult
+    geometry: GeoJSONLineString

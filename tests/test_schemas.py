@@ -1,6 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
+from pound import schemas
 from pound.schemas import (
     Amenity,
     CanalConstraints,
@@ -99,3 +100,85 @@ def test_constraints_days_defaults_to_none_meaning_infer():
     c = CanalConstraints(start="Oxford", end="Banbury")
     assert c.days is None
     assert c.hours_per_day == 6.0  # default unchanged
+
+
+@pytest.mark.parametrize("model", [CanalConstraints, ResolvedConstraints])
+@pytest.mark.parametrize(
+    "field", ["boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"]
+)
+@pytest.mark.parametrize("value", [0, -0.1])
+def test_constraints_reject_nonpositive_boat_dimensions(model, field: str, value: float):
+    required = {"start": "Oxford"} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
+    with pytest.raises(ValidationError):
+        model(**required, **{field: value})
+
+
+@pytest.mark.parametrize("model", [CanalConstraints, ResolvedConstraints])
+def test_constraints_accept_positive_boat_dimensions(model):
+    required = {"start": "Oxford"} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
+    constraints = model(
+        **required,
+        boat_length_m=18,
+        boat_beam_m=2.1,
+        boat_draft_m=0.7,
+        boat_height_m=2.4,
+    )
+    assert constraints.boat_length_m == 18
+
+
+def test_coordinate_uses_named_lat_lon_fields():
+    coordinate = schemas.Coordinate(lat=51.752, lon=-1.258)
+
+    assert coordinate.model_dump() == {"lat": 51.752, "lon": -1.258}
+
+
+def test_canal_candidate_uses_integer_uid():
+    candidate = schemas.CanalCandidate(
+        uid=42,
+        artifact_revision="oxford-2026-07-11",
+        coordinate=schemas.Coordinate(lat=51.752, lon=-1.258),
+        straight_line_distance_m=12.5,
+        display_name="Oxford Canal",
+    )
+
+    assert candidate.uid == 42
+    assert isinstance(candidate.uid, int)
+
+
+def test_geojson_linestring_preserves_lon_lat_coordinate_order():
+    geometry = schemas.GeoJSONLineString(coordinates=[(-1.258, 51.752), (-1.25, 51.76)])
+
+    assert geometry.type == "LineString"
+    assert geometry.coordinates[0] == (-1.258, 51.752)
+
+
+def test_canal_candidates_response_accepts_empty_candidates():
+    response = schemas.CanalCandidatesResponse(
+        artifact_revision="oxford-2026-07-11",
+        candidates=[],
+    )
+
+    assert response.candidates == []
+
+
+def test_canal_route_response_accepts_route_with_empty_legs_and_days():
+    route = RouteResult(
+        start="Oxford",
+        end="Oxford",
+        is_ring=False,
+        legs=[],
+        days=[],
+        total_km=0.0,
+        total_locks=0,
+        total_minutes=0,
+        amenities=[],
+        graph_source_date="2026-07-11",
+    )
+
+    response = schemas.CanalRouteResponse(
+        route=route,
+        geometry=schemas.GeoJSONLineString(coordinates=[]),
+    )
+
+    assert response.route.legs == []
+    assert response.route.days == []

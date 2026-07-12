@@ -8,7 +8,7 @@ from pound.graph.gazetteer import attach_node_names, build_gazetteer
 from pound.graph.locks import attach_locks
 from pound.ingest.overpass import parse
 from pound.route.cost import CRUISE_KMH, LOCK_MINUTES, time_min
-from pound.route.plan import plan_route, plan_route_from_constraints
+from pound.route.plan import plan_canal_route, plan_route, plan_route_from_constraints
 from pound.schemas import CanalConstraints, ResolvedConstraints
 from tests.fixtures import oxford_fixture_path
 
@@ -247,3 +247,25 @@ def test_days_none_with_more_time_fits_in_fewer_days():
     )
     r = plan_route(rc, graph=g)
     assert len(r.days) == 1
+
+
+@pytest.mark.parametrize("planner", [plan_route, plan_canal_route])
+def test_same_handle_returns_an_empty_route_with_valid_labels(planner):
+    _, graph = _resolved()
+    uid = resolve_first("Oxford", graph)
+    constraints = ResolvedConstraints(start_uid=uid, end_uid=uid)
+
+    response = planner(constraints, graph=graph)
+    route = response.route if hasattr(response, "route") else response
+
+    assert route.start == "Oxford"
+    assert route.end == "Oxford"
+    assert route.total_km == 0
+    assert route.total_locks == 0
+    assert route.total_minutes == 0
+    assert route.legs == []
+    assert route.days == []
+    if hasattr(response, "geometry"):
+        node = graph.nodes[uid]
+        point = (node["lon"], node["lat"])
+        assert response.geometry.coordinates == [point, point]

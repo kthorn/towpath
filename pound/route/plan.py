@@ -11,21 +11,52 @@ tests inject an in-memory graph directly.
 bridge the CLI and Agent Core use.
 """
 
+from dataclasses import dataclass
+
 import networkx as nx
 
+from pound.graph.build import _node_key
 from pound.route.cost import is_eligible, time_min
 from pound.route.resolve import resolve_place
 from pound.schemas import (
     CanalConstraints,
+    CanalRouteResponse,
     DayPlan,
+    GeoJSONLineString,
     ResolvedConstraints,
     RouteLeg,
     RouteResult,
 )
 
 
+@dataclass(frozen=True)
+class _ComputedRoute:
+    route: RouteResult
+    path: tuple[int, ...]
+
+
+class RouteUnavailableError(ValueError):
+    """Raised when valid route inputs cannot produce an eligible graph path."""
+
+
 def plan_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> RouteResult:
     """Plan a point-to-point canal route over `graph`. Pure."""
+    return _compute_route(constraints, graph=graph).route
+
+
+def plan_canal_route(
+    constraints: ResolvedConstraints, *, graph: nx.Graph
+) -> CanalRouteResponse:
+    """Plan a route and retain its traversed geometry for web clients."""
+    computed = _compute_route(constraints, graph=graph)
+    return CanalRouteResponse(
+        route=computed.route,
+        geometry=_to_geojson(_path_geometry(computed.path, graph)),
+    )
+
+
+def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _ComputedRoute:
+    """Compute the public route result together with its selected graph path."""
     # ResolvedConstraints carries the graph's own node handles — no coord->uid
     # mapping, no name lookup, no graph mutation. Pure on the resolved uids.
     start, end = constraints.start_uid, constraints.end_uid
@@ -56,11 +87,11 @@ def plan_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> RouteRes
         path = nx.shortest_path(graph, start, end, weight=weight)
     except nx.NetworkXNoPath:
         if nx.has_path(graph, start, end):
-            raise ValueError(
+            raise RouteUnavailableError(
                 f"no path between '{start_name}' and '{_name_attr(end)}' "
                 f"meets the boat's dimensions"
             ) from None
-        raise ValueError(
+        raise RouteUnavailableError(
             f"no path between '{start_name}' and '{_name_attr(end)}' "
             f"(graph is not connected between these nodes)"
         ) from None
@@ -94,19 +125,51 @@ def plan_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> RouteRes
     if any(day.cruising_minutes > budget for day in days):
         warnings.append("one or more days exceed hours_per_day budget")
 
-    return RouteResult(
-        start=start_name,
-        end=_name_attr(end),
-        is_ring=False,
-        legs=legs,
-        days=days,
-        total_km=total_km,
-        total_locks=total_locks,
-        total_minutes=total_minutes,
-        amenities=[],
-        warnings=warnings,
-        graph_source_date=graph.graph.get("fetched_at", ""),
+    return _ComputedRoute(
+        route=RouteResult(
+            start=start_name,
+            end=_name_attr(end),
+            is_ring=False,
+            legs=legs,
+            days=days,
+            total_km=total_km,
+            total_locks=total_locks,
+            total_minutes=total_minutes,
+            amenities=[],
+            warnings=warnings,
+            graph_source_date=graph.graph.get("fetched_at", ""),
+        ),
+        path=tuple(path),
     )
+
+
+def _path_geometry(path: tuple[int, ...], graph: nx.Graph) -> list[tuple[float, float]]:
+    """Return edge geometry in path traversal order as internal (lat, lon) pairs."""
+    if len(path) == 1:
+        node = graph.nodes[path[0]]
+        point = (node["lat"], node["lon"])
+        return [point, point]
+
+    joined: list[tuple[float, float]] = []
+    for u, v in zip(path, path[1:], strict=False):
+        segment = [tuple(point) for point in graph.edges[u, v]["geometry"]]
+        u_key = _node_key(graph.nodes[u]["lat"], graph.nodes[u]["lon"])
+        if _node_key(*segment[0]) == u_key:
+            pass
+        elif _node_key(*segment[-1]) == u_key:
+            segment.reverse()
+        else:
+            raise ValueError(f"edge geometry for {u!r}-{v!r} does not meet node {u!r}")
+        if joined and joined[-1] == segment[0]:
+            joined.extend(segment[1:])
+        else:
+            joined.extend(segment)
+    return joined
+
+
+def _to_geojson(points: list[tuple[float, float]]) -> GeoJSONLineString:
+    """Convert internal (lat, lon) coordinates to GeoJSON (lon, lat)."""
+    return GeoJSONLineString(coordinates=[(lon, lat) for lat, lon in points])
 
 
 def plan_route_from_constraints(
