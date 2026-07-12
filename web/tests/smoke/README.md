@@ -11,9 +11,10 @@ Platform requests. The ordinary `npm test` suite never collects it, and
   JavaScript API**, **Places API**, and **Routes API**.
 - A browser API key restricted by HTTP referrer to `http://127.0.0.1:4173/*`
   (and only the APIs above), plus a map ID belonging to that project.
-- A full England Pound artifact. The Oxford development artifact cannot route
-  this scenario. Build one as described in the repository README and keep it
-  outside version control.
+- A current full England Pound artifact containing `artifact_revision`. The
+  legacy Oxford/Overpass scaffold cannot route this scenario. Build England as
+  described in the repository README and keep the artifact outside version
+  control.
 - Chromium for Playwright: `npx playwright install chromium`.
 
 From `web/`, run:

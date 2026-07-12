@@ -15,21 +15,35 @@ uv run ruff check .
 
 ## Map prototype: local development
 
-Install Python dependencies and build the small Oxford development artifact:
+Install Python dependencies. Map development uses a full England artifact; the
+network-dependent Oxford/Overpass path is only a legacy ingest scaffold and is
+not the recommended way to start the application.
 
 ```bash
 uv sync --extra dev
-uv run pound-ingest build oxford --out pound/artifacts/oxford.pkl
 ```
+
+Point the application at an existing England artifact with an absolute path,
+or build a current one from the England PBF as described under **Bulk ingest**.
+The artifact must have been built with a version of Pound that writes
+`artifact_revision`; the web application intentionally rejects older,
+revisionless artifacts. Rebuild a revisionless artifact once rather than
+patching its pickle metadata.
 
 Start FastAPI from the repository root. `pound.web.app:app` reads its settings
 when Uvicorn starts the application, so exporting or prefixing the environment
 variables works without an application factory flag:
 
 ```bash
-POUND_ARTIFACT_PATH=pound/artifacts/oxford.pkl \
+POUND_ARTIFACT_PATH=/absolute/path/to/pound/artifacts/england.pkl \
 POUND_STATIC_DIR=web/dist \
 uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Confirm that the backend loaded the artifact and reports its revision:
+
+```bash
+curl http://127.0.0.1:8000/api/health
 ```
 
 In another terminal, start Vite:
@@ -49,9 +63,8 @@ Open `http://127.0.0.1:5173`. Vite proxies `/api` to FastAPI on port 8000.
 public client configuration, not runtime secrets. Never use a server secret as
 the browser key.
 
-The Oxford artifact is suitable for UI development around Oxford only. It
-**cannot** route the Bletchley Park scenario below; use a current full England
-artifact for that manual or live-smoke test.
+Use the England artifact for routine local UI work, including the Bletchley Park
+scenario below. Keep generated artifacts outside version control.
 
 ### Runtime settings and artifact compatibility
 
@@ -143,11 +156,13 @@ potentially billable; its exact prerequisites and command are in
   apt/brew/conda. The `pyosmium` Python package is separate and pulled by the
   `bulk` extra: `uv sync --extra bulk`. The base `uv sync` works without it.
 
-## Regional ingest (dev / scaffolding)
+## Legacy regional ingest scaffold (Oxford)
 
-The Overpass reader is **scaffolding** for early development on a small dataset
-(Oxford Canal). It is replaced by a pyosmium bulk reader over the Geofabrik GB
-PBF in design step 6.
+The Overpass reader is retained as **legacy scaffolding** for narrow ingest
+experiments and network tests on the Oxford Canal. Do not use it to prepare the
+map application's normal development artifact. The public Overpass endpoint may
+rate-limit or reject this request (including HTTP 406); use the bulk England
+build below for the application.
 
 Fetch the Oxford extract and print the summarize() report (network required):
 
@@ -157,14 +172,14 @@ uv run pound-ingest oxford
 uv run pound-ingest oxford --out pound/data/oxford_canal_waterways.json
 ```
 
-### Build the graph artifact
+### Build the legacy Oxford artifact
 
 ```bash
 uv run pound-ingest build oxford --out pound/artifacts/oxford.pkl
 ```
 
-Produces a pickled NetworkX graph with provenance metadata, ready for
-`plan_route` to load at request time.
+Produces a small pickled NetworkX graph for ingest testing only. It does not
+cover the England-wide product workflow.
 
 Network tests are skipped by default; run them explicitly:
 
