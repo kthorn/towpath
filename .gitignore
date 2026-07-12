@@ -6,6 +6,7 @@ __pycache__/
 build/
 dist/
 node_modules/
+web/dist/
 
 # venvs
 .venv/
