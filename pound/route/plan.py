@@ -35,6 +35,10 @@ class _ComputedRoute:
     path: tuple[int, ...]
 
 
+class RouteUnavailableError(ValueError):
+    """Raised when valid route inputs cannot produce an eligible graph path."""
+
+
 def plan_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> RouteResult:
     """Plan a point-to-point canal route over `graph`. Pure."""
     return _compute_route(constraints, graph=graph).route
@@ -83,11 +87,11 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
         path = nx.shortest_path(graph, start, end, weight=weight)
     except nx.NetworkXNoPath:
         if nx.has_path(graph, start, end):
-            raise ValueError(
+            raise RouteUnavailableError(
                 f"no path between '{start_name}' and '{_name_attr(end)}' "
                 f"meets the boat's dimensions"
             ) from None
-        raise ValueError(
+        raise RouteUnavailableError(
             f"no path between '{start_name}' and '{_name_attr(end)}' "
             f"(graph is not connected between these nodes)"
         ) from None

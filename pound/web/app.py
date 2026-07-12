@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 
 from pound.graph.artifact import load_artifact
+from pound.web.api import router as api_router
 from pound.web.config import WebSettings
 
 
@@ -44,6 +45,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         yield
 
     application = FastAPI(lifespan=lifespan)
+    application.include_router(api_router)
 
     @application.get("/api/health")
     async def health(request: Request) -> dict[str, str]:
