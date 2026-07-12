@@ -79,6 +79,11 @@ class PoiCandidate(BaseModel):
     geometry_source: Literal["point", "area", "derived_path"]
 
 
+class PoiIngestReport(BaseModel):
+    skipped_counts: dict[str, int] = Field(default_factory=dict)
+    skipped_examples: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class PointOfInterest(BaseModel):
     osm_type: OsmElementType
     osm_id: int
@@ -96,8 +101,13 @@ class PointOfInterest(BaseModel):
     projected_lon: float
 ```
 
-`WaterwayFeatures` gains `poi_candidates: list[PoiCandidate]`. Candidate geometry is build-time IR;
-only `PointOfInterest` records enter the artifact. Identity is `(osm_type, osm_id, kind)`, allowing
+`WaterwayFeatures` gains `poi_candidates: list[PoiCandidate]` and `poi_ingest_report:
+PoiIngestReport`. Each reader records structured reasons such as `missing_area_geometry`,
+`incomplete_relation_geometry`, `invalid_geometry`, and `unknown_value`, with total counts and a
+small deterministic cap of source identities per reason. The report flows through prune/filter
+operations unchanged and is merged with corridor rejection/attachment diagnostics during graph
+build so the CLI and artifact metadata do not lose reader-stage failures. Candidate geometry is
+build-time IR; only `PointOfInterest` records enter the artifact. Identity is `(osm_type, osm_id, kind)`, allowing
 one OSM feature to expose two genuinely different services while deterministically removing reader
 or query duplicates.
 
@@ -119,7 +129,11 @@ OSM PBF / Overpass JSON
 ```
 
 Bulk ingest uses pyosmium area assembly for closed ways and multipolygon relations. Overpass parsing
-accepts node coordinates, way geometry, and relation-member geometry. Both paths construct Shapely
+accepts node coordinates, way geometry, and relation-member geometry. Every POI way/relation query
+must request geometry with `out geom` (or an equivalent recursion that returns complete member
+geometry). An area element whose geometry is absent or incomplete is skipped with a structured
+reason; it must never be converted from a label/center coordinate as though that were its full area.
+Both paths construct Shapely
 points, lines, or polygons and pass them through the same normalization function. Invalid geometry
 gets one `make_valid()` attempt; empty or still-unusable geometry is skipped and reported.
 
@@ -129,6 +143,12 @@ the closest point on the path to the navigable waterway. For every candidate, an
 nearby navigable edge `LineString`s; exact distance is calculated in British National Grid
 (EPSG:27700) through an always-XY pyproj transformer, not in longitude/latitude degrees. The winning edge
 is selected by `(distance, min_uid, max_uid)`. The nearest endpoint UID then uses `(distance, uid)`.
+
+Coordinate conversion is explicit at every Shapely boundary. Pound graph geometry is stored as
+`(lat, lon)`, whereas Shapely WGS84 geometry and pyproj `always_xy=True` require `(x, y) = (lon, lat)`.
+Graph node and edge tuples therefore pass through named conversion helpers before constructing
+`Point` or `LineString` objects. Converting results back to Pound or API coordinates reverses them
+exactly once. Tests use an asymmetric known edge to catch silent axis swaps.
 
 The stored projected coordinate is the closest point on the winning waterway edge. It is informative
 attachment data only; current route APIs continue to accept graph-node UIDs.
@@ -141,11 +161,30 @@ Introduce an immutable `GraphSpatialIndex` built once when an artifact is loaded
 - an STRtree of navigable edge lines for projected canal points and later access scoring;
 - deterministic mappings from returned geometries to graph UIDs/edge keys.
 
-`nearest_coord_candidates()` accepts the node index and uses it to obtain the requested nearest
-nodes. It preserves the current output contract, haversine distances, display-name behavior, and
-`(distance, uid)` ordering. Tests compare indexed results with exhaustive search over fixture and
-randomized graphs. `resolve_coord()` may reuse the same node-index primitive so the repository does
-not maintain two nearest-node implementations.
+The node STRtree stores WGS84 Shapely points in `(lon, lat)` order; the edge tree used for metric
+projection stores EPSG:27700 lines. `nearest_coord_candidates()` finds exact haversine top-k nodes
+with an expanding search:
+
+1. Query the node tree with a conservative longitude/latitude envelope containing the complete
+   spherical circle for radius `r` around the requested coordinate. Clamp latitude and handle
+   antimeridian intervals explicitly, even though current England data does not cross it.
+2. Compute current `_haversine_m()` distances for every returned UID and sort by `(distance, uid)`.
+3. If at least `k` nodes have been found and the kth exact distance is `<= r`, stop: every node
+   outside the spherical radius is farther away and cannot enter the result. Otherwise double `r`
+   and repeat, bounded by the whole-world envelope. Empty graphs return immediately.
+
+The initial radius is a positive named constant. Effective `k` is `min(requested_k, node_count)`, so
+requests larger than the graph terminate with every node. Pole-crossing envelopes cover every
+longitude; antimeridian-crossing envelopes are split into two STRtree boxes. If expansion reaches
+the maximum spherical distance, query the whole-world envelope once and terminate. Tests pin each
+case and prove the loop always makes progress.
+
+This preserves the current output contract, distances, display-name behavior, and deterministic
+ordering without assuming projected Euclidean k-nearest results equal haversine k-nearest results.
+Tests compare indexed results with exhaustive search over fixture, high-latitude, antimeridian,
+exact-tie, and seeded randomized graphs. A separate asymmetric node test proves graph `lat`/`lon`
+attributes become Shapely `(lon, lat)` points. `resolve_coord()` reuses the same primitive so the repository does not
+maintain two nearest-node implementations.
 
 Do not route from the closest point on an edge. Correct mid-edge routing requires request-scoped
 virtual nodes or edge splitting and a separate design.

@@ -22,14 +22,16 @@
 **Steps:**
 
 1. Add failing model tests for `PoiCategory`, `OsmElementType`, `PoiCandidate`, and
-   `PointOfInterest`, including coordinate bounds, nonnegative distances, valid attachment tuples,
-   and identity `(osm_type, osm_id, kind)`.
+   `PoiIngestReport`, and `PointOfInterest`, including coordinate bounds, nonnegative distances,
+   valid attachment tuples, capped deterministic diagnostic examples, and identity
+   `(osm_type, osm_id, kind)`.
 2. Run: `/home/kurtt/towpath/.venv/bin/pytest tests/ingest/test_ir.py -v`
    Expected: FAIL because the models do not exist.
 3. Add `shapely>=2.1,<3` and `pyproj>=3.7,<4` to core dependencies. Add the enums/models from the design, using a
    `WktGeometry` string field on candidate IR so Pydantic data stays serialization-friendly.
-4. Give `WaterwayFeatures.poi_candidates` a `default_factory=list` temporarily so existing reader
-   tests can migrate incrementally; strict artifact validation is added later.
+4. Give `WaterwayFeatures.poi_candidates` and `poi_ingest_report` default factories temporarily so
+   existing reader tests can migrate incrementally; prune/filter model copies must preserve both,
+   and strict artifact validation is added later.
 5. Run the focused tests and Ruff for the changed files; expect PASS.
 6. Commit: `feat(ingest): define OSM POI contracts`
 
@@ -69,13 +71,19 @@
 2. Write failing query assertions for explicit `nwr` POI clauses and pedestrian path/constraint
    clauses. Do not use an unrestricted `nwr[amenity]` or `nwr[shop]` query.
 3. Write failing parse tests asserting exact candidate identities, kinds, geometry sources, WKT
-   geometry types, selected tags, relation handling, and deterministic ordering.
+   geometry types, selected tags, relation handling, and deterministic ordering. Add area elements
+   with absent and incomplete member geometry and assert they are skipped with the corresponding
+   structured reason rather than treated as point POIs. Assert counts and capped source-identity
+   examples appear in `WaterwayFeatures.poi_ingest_report`.
 4. Run: `/home/kurtt/towpath/.venv/bin/pytest tests/ingest/test_overpass.py -v`
    Expected: FAIL on missing query clauses/candidates.
-5. Add query clauses from the allowlist. Factor node/way/relation geometry decoding into private
-   helpers; use Shapely only to construct WKT, not to perform corridor filtering in the reader.
+5. Add query clauses from the allowlist and require `out geom` (or equivalent complete member
+   geometry recursion) for POI ways and relations. Factor node/way/relation geometry decoding into
+   private helpers; use Shapely only to construct WKT, not to perform corridor filtering in the
+   reader.
 6. Pass every tagged feature through `classify_poi()`, emit one candidate per classification, and
-   sort by `(osm_type, osm_id, category, kind)`.
+   sort by `(osm_type, osm_id, category, kind)`. Accumulate reader-stage skips in
+   `PoiIngestReport`; do not log-and-discard them.
 7. Preserve existing waterway parsing and prune/filter ordering unchanged.
 8. Run focused tests and Ruff; expect PASS.
 9. Commit: `feat(ingest): parse Overpass POI geometry`
@@ -117,11 +125,14 @@
 1. Write failing tests for point and polygon distance, concave polygon representative points,
    `make_valid()` recovery, empty geometry skips, exact 250 m/1,000 m boundaries, deterministic
    edge/node tie-breaking, path-derived closest points, duplicate identities, and input immutability.
+   Include an asymmetric known graph edge and assert `(lat, lon)` graph tuples become `(lon, lat)`
+   Shapely coordinates before projection and round-trip without an axis swap.
 2. Run: `/home/kurtt/towpath/.venv/bin/pytest tests/graph/test_pois.py -v`
    Expected: FAIL because the module does not exist.
 3. Implement WGS84 to EPSG:27700 conversion using `pyproj.Transformer.from_crs(...,
    always_xy=True)` with `shapely.transform`. Never approximate metre distances in longitude/latitude
-   degrees.
+   degrees. Centralize named graph `(lat, lon)` to Shapely `(lon, lat)` helpers and their inverse;
+   do not construct Shapely graph geometry directly from stored tuples.
 4. Build an STRtree over navigable graph edge `LineString`s and stable edge-key mappings.
 5. Implement `attach_pois(graph, candidates) -> PoiBuildResult` returning normalized POIs plus a
    summary. Measure areas using full geometry, use `representative_point()` for displayed location,
@@ -215,12 +226,19 @@
 **Steps:**
 
 1. Add failing tests for immutable node/edge index construction, empty graphs, deterministic nearest
-   node ties, edge projection, and indexed-versus-exhaustive equality on fixture and seeded random
-   graphs.
+   node ties, edge projection, and indexed-versus-exhaustive equality on fixture, high-latitude,
+   antimeridian, exact-tie, and seeded random graphs. Add an asymmetric graph-node axis-order test.
+   Pin a positive initial radius, expansion through at least two radii, `limit > node_count`,
+   pole-crossing and split-antimeridian envelopes, and whole-world termination.
 2. Run the focused graph/route tests; expect FAIL because `GraphSpatialIndex` does not exist.
-3. Implement `GraphSpatialIndex` with Shapely node and navigable-edge STRtrees and stable integer
-   position-to-UID/edge mappings. Never rely on Python object identity for geometry mapping.
-4. Change `nearest_coord_candidates()` to accept the index. Retrieve enough tied results to preserve
+3. Implement `GraphSpatialIndex` with a WGS84 `(lon, lat)` node STRtree, an EPSG:27700 navigable-edge
+   STRtree, and stable integer position-to-UID/edge mappings. Never rely on Python object identity for
+   geometry mapping.
+4. Change `nearest_coord_candidates()` to accept the index. Expand a conservative spherical-radius
+   WGS84 envelope, exact-rank returned UIDs with `_haversine_m()`, and stop only when at least `k`
+   nodes are present and the kth exact distance is within the searched radius. Double the radius as
+   needed; define effective `k = min(limit, node_count)`; cover every longitude at a pole; split
+   antimeridian envelopes; and query the whole-world envelope once before terminating. Preserve
    exact `(haversine_distance, uid)` ordering and output distances.
 5. Route `resolve_coord()` through the same nearest-node primitive; keep existing tolerance and
    error semantics.
