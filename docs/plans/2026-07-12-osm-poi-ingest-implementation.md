@@ -21,14 +21,15 @@
 
 **Steps:**
 
-1. Add failing model tests for `PoiCategory`, `OsmElementType`, `PoiCandidate`, and
+1. Add failing model tests for `PoiCategory`, `OsmElementType`, `PoiCandidate`,
    `PoiIngestReport`, and `PointOfInterest`, including coordinate bounds, nonnegative distances,
    valid attachment tuples, capped deterministic diagnostic examples, and identity
    `(osm_type, osm_id, kind)`.
 2. Run: `/home/kurtt/towpath/.venv/bin/pytest tests/ingest/test_ir.py -v`
    Expected: FAIL because the models do not exist.
-3. Add `shapely>=2.1,<3` and `pyproj>=3.7,<4` to core dependencies. Add the enums/models from the design, using a
-   `WktGeometry` string field on candidate IR so Pydantic data stays serialization-friendly.
+3. Add `shapely>=2.1,<3` and `pyproj>=3.7,<4` to core dependencies. Add the enums/models from the
+   design, keeping `PoiCandidate.geometry_wkt: str` so candidate IR stays serialization-friendly;
+   do not introduce a separately named `WktGeometry` field or wrapper.
 4. Give `WaterwayFeatures.poi_candidates` and `poi_ingest_report` default factories temporarily so
    existing reader tests can migrate incrementally; prune/filter model copies must preserve both,
    and strict artifact validation is added later.
@@ -155,9 +156,9 @@
    over-threshold distances, non-finite coordinates, unexpected fields, and rebuild-oriented errors.
 2. Run: `/home/kurtt/towpath/.venv/bin/pytest tests/graph/test_artifact.py -v`
    Expected: FAIL because loading still returns a tuple and accepts legacy blobs.
-3. Add frozen `GraphArtifact` and `InvalidArtifactError`. Change `save_artifact(graph, pois, path,
-   metadata)` to serialize exactly `graph`, `pois`, `metadata`, generating one artifact revision when
-   absent.
+3. Add frozen `GraphArtifact` and `InvalidArtifactError`. Define the public writer as
+   `save_artifact(graph, pois, path, metadata)`: it constructs and validates `GraphArtifact`, then
+   serializes exactly `graph`, `pois`, `metadata`, generating one artifact revision when absent.
 4. Make `load_artifact(path) -> GraphArtifact` validate structure and semantic invariants. Do not
    add schema-version metadata or a fallback path.
 5. Keep pickle trust explicit in the module docstring: only locally produced artifacts are valid.
@@ -181,7 +182,10 @@
    failures, and an end-to-end artifact containing attached fixture POIs.
 2. Run the four focused test files; expect FAIL on missing POI build wiring.
 3. In `_build_from_features()`, build/annotate the graph first, call `attach_pois()`, merge POI
-   validation into the build report, and save the new artifact only after all fatal gates pass.
+   validation into the build report, and call the Task 6 signature exactly as
+   `save_artifact(graph, poi_result.pois, out, metadata)` only after all fatal gates pass. The writer
+   constructs and validates `GraphArtifact`; this call site must not create or pickle a payload
+   mapping directly.
 4. Add summary counts by category/kind, rejected-by-corridor, malformed geometry, incomplete
    relation, unknown tag/value, and representative examples capped to a small deterministic count.
 5. Remove metadata `version`; retain source/fetch/build timestamps, validation, `poi_summary`, and
@@ -233,7 +237,9 @@
 2. Run the focused graph/route tests; expect FAIL because `GraphSpatialIndex` does not exist.
 3. Implement `GraphSpatialIndex` with a WGS84 `(lon, lat)` node STRtree, an EPSG:27700 navigable-edge
    STRtree, and stable integer position-to-UID/edge mappings. Never rely on Python object identity for
-   geometry mapping.
+   geometry mapping. Convert incoming API/resolver `(lat, lon)` values with the same
+   `lat_lon_to_xy(lat, lon)` helper before building query points or envelopes; envelope helpers use
+   named `lon`/`lat` parameters or Shapely points, never ambiguous coordinate tuples.
 4. Change `nearest_coord_candidates()` to accept the index. Expand a conservative spherical-radius
    WGS84 envelope, exact-rank returned UIDs with `_haversine_m()`, and stop only when at least `k`
    nodes are present and the kth exact distance is within the searched radius. Double the radius as

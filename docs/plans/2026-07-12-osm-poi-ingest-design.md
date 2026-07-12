@@ -113,6 +113,9 @@ or query duplicates.
 
 `GraphArtifact` is a frozen dataclass with `graph: nx.Graph`, `pois: tuple[PointOfInterest, ...]`,
 and `metadata: dict[str, object]`. `load_artifact()` returns this container rather than a tuple.
+The build-time writer remains `save_artifact(graph, pois, path, metadata)`: it constructs and fully
+validates a `GraphArtifact` before serializing the exact top-level payload. Callers never construct
+or pickle the payload mapping directly.
 
 ## 5. Geometry and Data Flow
 
@@ -178,6 +181,11 @@ requests larger than the graph terminate with every node. Pole-crossing envelope
 longitude; antimeridian-crossing envelopes are split into two STRtree boxes. If expansion reaches
 the maximum spherical distance, query the whole-world envelope once and terminate. Tests pin each
 case and prove the loop always makes progress.
+
+API and resolver inputs remain named `(lat, lon)` values. Before constructing an envelope, query
+point, or STRtree predicate, `nearest_coord_candidates()` and `resolve_coord()` call the same named
+`lat_lon_to_xy(lat, lon) -> (lon, lat)` helper used for graph nodes. Envelope helpers accept only
+named `lon`/`lat` arguments or Shapely points; they never accept an ambiguous two-item tuple.
 
 This preserves the current output contract, distances, display-name behavior, and deterministic
 ordering without assuming projected Euclidean k-nearest results equal haversine k-nearest results.
