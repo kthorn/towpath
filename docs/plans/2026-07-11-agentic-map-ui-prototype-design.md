@@ -19,7 +19,7 @@ The prototype validates the complete geography-first workflow without requiring 
 - Keep deployment portable. AWS versus GCP is explicitly deferred.
 - Treat both endpoints, including the rental base, as ordinary Google Place searches.
 
-This supersedes the request-time geocoder proposed for the UI path in `docs/plans/2026-07-03-geocode-and-poi-routing-step.md`. Google-specific place discovery remains in the frontend; Pound consumes coordinates.
+Google-specific place discovery remains in the frontend; Pound consumes coordinates.
 
 ## 3. Architecture
 
