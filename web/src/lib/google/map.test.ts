@@ -66,7 +66,7 @@ describe('Google map adapter', () => {
     view.marker('origin', { lat: 51, lon: -1 });
     view.land('origin', { path: [{ lat: 51, lon: -1 }], durationSeconds: 3, distanceMeters: 4 });
     view.canal({ type: 'LineString', coordinates: [[-1.5, 52.5], [-1.6, 52.6]] });
-    view.clearLand();
+    view.clearLand('origin');
 
     expect(polylines[0].setMap).toHaveBeenCalledWith(null);
     expect(polylines[1].setMap).not.toHaveBeenCalled();

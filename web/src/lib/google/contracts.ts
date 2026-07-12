@@ -43,6 +43,6 @@ export interface MapView {
   land(slot: EndpointSlot, route: LandRoute | null): void;
   canal(geometry: GeoJSONLineString | null): void;
   onMapClick(callback: (coordinate: LatLon) => void): () => void;
-  clearLand(): void;
+  clearLand(slot: EndpointSlot): void;
   destroy(): void;
 }

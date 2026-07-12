@@ -112,9 +112,8 @@ export function createGoogleMapView(
         if (index >= 0) clickListeners.splice(index, 1);
       };
     },
-    clearLand() {
-      clearLandSlot('origin');
-      clearLandSlot('destination');
+    clearLand(slot) {
+      clearLandSlot(slot);
     },
     destroy() {
       for (const listener of clickListeners.splice(0)) listener.remove();
