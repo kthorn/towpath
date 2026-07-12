@@ -14,6 +14,7 @@ function transferMode(value: string | undefined): TransferMode {
 
 export const config = {
   googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? '',
+  googleMapId: import.meta.env.VITE_GOOGLE_MAP_ID?.trim() || 'DEMO_MAP_ID',
   transferMode: transferMode(import.meta.env.VITE_TRANSFER_MODE),
 };
 
