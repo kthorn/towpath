@@ -1,12 +1,11 @@
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { get, writable } from 'svelte/store';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from '../App.svelte';
 import type { AppDependencies } from '../lib/app';
 import type { EndpointSlot, MapView, SelectedPlace } from '../lib/google/contracts';
 import type { TripState, TripStore } from '../lib/stores/trip';
-import { createTripStore } from '../lib/stores/trip';
 
 const endpoint = (name: string, uid: number, unavailable = false) => ({
   place: { name, address: `${name} address`, coordinate: { lat: 51, lon: -1 } },
@@ -46,6 +45,95 @@ function setup(overrides: { unavailable?: boolean; mapReject?: boolean; sameNode
 }
 
 describe('trip planning interface', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('navigates to settings and persists valid boat dimensions', async () => {
+    render(App, { props: { dependencies: setup().dependencies } });
+
+    await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
+    expect(screen.getByRole('heading', { name: /boat settings/i })).toBeVisible();
+    await fireEvent.input(screen.getByLabelText(/boat length/i), { target: { value: '18.3' } });
+    await fireEvent.input(screen.getByLabelText(/boat beam/i), { target: { value: '2.1' } });
+    await fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+
+    expect(JSON.parse(localStorage.getItem('pound.boat-settings')!)).toEqual({
+      boat_length_m: 18.3,
+      boat_beam_m: 2.1,
+      boat_draft_m: null,
+      boat_height_m: null,
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(/settings saved/i);
+
+    await fireEvent.click(screen.getByRole('button', { name: /plan trip/i }));
+    expect(screen.getByRole('button', { name: /plan canal route/i })).toBeVisible();
+  });
+
+  it('preserves schedule inputs while visiting settings and marks the active page', async () => {
+    render(App, { props: { dependencies: setup().dependencies } });
+    const planTrip = screen.getByRole('button', { name: /plan trip/i });
+    const settings = screen.getByRole('button', { name: /settings/i });
+    expect(planTrip).toHaveAttribute('aria-current', 'page');
+    await fireEvent.input(screen.getByLabelText(/^days/i), { target: { value: '4' } });
+    await fireEvent.input(screen.getByLabelText(/hours per day/i), { target: { value: '7' } });
+    await fireEvent.click(screen.getByLabelText(/allow derelict/i));
+
+    await fireEvent.click(settings);
+    expect(settings).toHaveAttribute('aria-current', 'page');
+    await fireEvent.click(planTrip);
+
+    expect(screen.getByLabelText(/^days/i)).toHaveValue(4);
+    expect(screen.getByLabelText(/hours per day/i)).toHaveValue(7);
+    expect(screen.getByLabelText(/allow derelict/i)).toBeChecked();
+  });
+
+  it('restores saved dimensions and includes them in route planning', async () => {
+    localStorage.setItem('pound.boat-settings', JSON.stringify({
+      boat_length_m: 17.5,
+      boat_beam_m: 2.05,
+      boat_draft_m: 0.8,
+      boat_height_m: 2.4,
+    }));
+    const { dependencies, store } = setup();
+    render(App, { props: { dependencies } });
+
+    await fireEvent.click(screen.getByRole('button', { name: /plan canal route/i }));
+
+    expect(store.planCanalRoute).toHaveBeenCalledWith(expect.objectContaining({
+      boat_length_m: 17.5,
+      boat_beam_m: 2.05,
+      boat_draft_m: 0.8,
+      boat_height_m: 2.4,
+    }));
+  });
+
+  it('rejects invalid boat settings without replacing saved values', async () => {
+    localStorage.setItem('pound.boat-settings', JSON.stringify({
+      boat_length_m: 18,
+      boat_beam_m: null,
+      boat_draft_m: null,
+      boat_height_m: null,
+    }));
+    render(App, { props: { dependencies: setup().dependencies } });
+    await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
+    await fireEvent.input(screen.getByLabelText(/boat beam/i), { target: { value: '-1' } });
+    await fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/boat beam.*greater than 0/i);
+    expect(JSON.parse(localStorage.getItem('pound.boat-settings')!)).toEqual({
+      boat_length_m: 18,
+      boat_beam_m: null,
+      boat_draft_m: null,
+      boat_height_m: null,
+    });
+  });
+
+  it('does not offer manual latitude or longitude entry', () => {
+    render(App, { props: { dependencies: setup().dependencies } });
+    expect(screen.queryByLabelText(/latitude/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/longitude/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /use coordinates/i })).not.toBeInTheDocument();
+  });
+
   it('shows linked OpenStreetMap attribution', () => {
     render(App, { props: { dependencies: setup().dependencies } });
     const attribution = screen.getByRole('link', { name: '© OpenStreetMap contributors' });
@@ -91,16 +179,14 @@ describe('trip planning interface', () => {
     expect(store.selectCandidate).toHaveBeenCalledWith('origin', 101);
   });
 
-  it('submits exact controlled boat constraints', async () => {
+  it('submits exact controlled schedule with empty boat settings', async () => {
     const { dependencies, store } = setup();
     render(App, { props: { dependencies } });
     await fireEvent.input(screen.getByLabelText(/^days/i), { target: { value: '4' } });
     await fireEvent.input(screen.getByLabelText(/hours per day/i), { target: { value: '7' } });
-    await fireEvent.input(screen.getByLabelText(/boat length/i), { target: { value: '18.3' } });
-    await fireEvent.input(screen.getByLabelText(/boat beam/i), { target: { value: '2.1' } });
     await fireEvent.click(screen.getByLabelText(/allow derelict/i));
     await fireEvent.click(screen.getByRole('button', { name: /plan canal route/i }));
-    expect(store.planCanalRoute).toHaveBeenCalledWith({ days: 4, hours_per_day: 7, boat_length_m: 18.3, boat_beam_m: 2.1, boat_draft_m: null, boat_height_m: null, allow_derelict: true });
+    expect(store.planCanalRoute).toHaveBeenCalledWith({ days: 4, hours_per_day: 7, boat_length_m: null, boat_beam_m: null, boat_draft_m: null, boat_height_m: null, allow_derelict: true });
   });
 
   it.each(['', '0', '-2'])('blocks invalid hours per day %j', async (value) => {
@@ -110,15 +196,6 @@ describe('trip planning interface', () => {
     await fireEvent.click(screen.getByRole('button', { name: /plan canal route/i }));
     expect(store.planCanalRoute).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(/hours per day.*greater than 0/i);
-  });
-
-  it('blocks invalid optional numeric constraints', async () => {
-    const { dependencies, store } = setup();
-    render(App, { props: { dependencies } });
-    await fireEvent.input(screen.getByLabelText(/boat beam/i), { target: { value: '-1' } });
-    await fireEvent.click(screen.getByRole('button', { name: /plan canal route/i }));
-    expect(store.planCanalRoute).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert')).toHaveTextContent(/boat beam.*greater than 0/i);
   });
 
   it('renders route metrics, transfers, warnings and days', () => {
@@ -153,49 +230,6 @@ describe('trip planning interface', () => {
     expect(screen.getByText('Bletchley Park Wharf')).toBeVisible();
     await fireEvent.click(screen.getByRole('button', { name: /plan canal route/i }));
     expect(store.planCanalRoute).toHaveBeenCalled();
-  });
-
-  it('plans from empty state using manual coordinates when the shared SDK rejects', async () => {
-    const candidate = (uid: number) => ({ uid, artifact_revision: 'r1', coordinate: { lat: 52, lon: -1 }, straight_line_distance_m: 100, display_name: `Canal node ${uid}` });
-    const poundApi = {
-      canalCandidates: vi.fn(async ({ lat }: { lat: number }) => ({ artifact_revision: 'r1', candidates: [candidate(lat < 52 ? 10 : 20)] })),
-      canalRoute: vi.fn(async () => route),
-    };
-    const transferRouter = { matrix: vi.fn(async () => { throw new Error('SDK blocked'); }), route: vi.fn(async () => { throw new Error('SDK blocked'); }) };
-    const store = createTripStore({ poundApi, transferRouter, transferMode: 'WALK' });
-    const unavailable = vi.fn();
-    const dependencies: AppDependencies = {
-      store,
-      placeSearch: { attach: vi.fn((_input, _select, onUnavailable) => { onUnavailable?.(new Error('SDK blocked')); return vi.fn(); }) },
-      loadMapView: vi.fn(async () => { throw new Error('SDK blocked'); }),
-    };
-    render(App, { props: { dependencies } });
-    expect(await screen.findAllByText(/place search unavailable.*sdk blocked/i)).toHaveLength(2);
-    const origin = screen.getByRole('region', { name: /^origin$/i });
-    await fireEvent.input(within(origin).getByLabelText(/origin latitude/i), { target: { value: '51.5' } });
-    await fireEvent.input(within(origin).getByLabelText(/origin longitude/i), { target: { value: '-1.2' } });
-    await fireEvent.click(within(origin).getByRole('button', { name: /use coordinates/i }));
-    const destination = screen.getByRole('region', { name: /^destination$/i });
-    await fireEvent.input(within(destination).getByLabelText(/destination latitude/i), { target: { value: '53' } });
-    await fireEvent.input(within(destination).getByLabelText(/destination longitude/i), { target: { value: '-2' } });
-    await fireEvent.click(within(destination).getByRole('button', { name: /use coordinates/i }));
-    expect(await screen.findByText('Canal node 10')).toBeVisible();
-    expect(await screen.findByText('Canal node 20')).toBeVisible();
-    expect(await within(origin).findByText(/land route unavailable.*sdk blocked/i)).toBeVisible();
-    expect(within(origin).getByText('Canal node 10')).toBeVisible();
-    await fireEvent.click(within(origin).getByRole('button', { name: /confirm geometric/i }));
-    await fireEvent.click(within(destination).getByRole('button', { name: /confirm geometric/i }));
-    await fireEvent.click(screen.getByRole('button', { name: /plan canal route/i }));
-    expect(poundApi.canalRoute).toHaveBeenCalledWith(expect.objectContaining({ start_uid: 10, end_uid: 20 }));
-  });
-
-  it('validates manual coordinate ranges', async () => {
-    render(App, { props: { dependencies: setup().dependencies } });
-    const origin = screen.getByRole('region', { name: /^origin$/i });
-    await fireEvent.input(within(origin).getByLabelText(/origin latitude/i), { target: { value: '91' } });
-    await fireEvent.input(within(origin).getByLabelText(/origin longitude/i), { target: { value: '-1' } });
-    await fireEvent.click(within(origin).getByRole('button', { name: /use coordinates/i }));
-    expect(within(origin).getByRole('alert')).toHaveTextContent(/latitude.*-90.*90/i);
   });
 
   it('cleans up both searches and the map on unmount', async () => {
