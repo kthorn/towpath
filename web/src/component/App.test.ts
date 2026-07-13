@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { get, writable } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -50,25 +50,15 @@ describe('trip planning interface', () => {
     history.replaceState(null, '', '/');
   });
 
-  it('navigates to settings and persists valid boat dimensions', async () => {
+  it('returns to the planner and reports a persistent save there', async () => {
     render(App, { props: { dependencies: setup().dependencies } });
-
-    await fireEvent.click(screen.getByRole('link', { name: /settings/i }));
-    expect(screen.getByRole('heading', { name: /boat settings/i })).toBeVisible();
+    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
     await fireEvent.input(screen.getByLabelText(/boat length/i), { target: { value: '18.3' } });
-    await fireEvent.input(screen.getByLabelText(/boat beam/i), { target: { value: '2.1' } });
-    await fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
-    expect(JSON.parse(localStorage.getItem('pound.boat-settings')!)).toEqual({
-      boat_length_m: 18.3,
-      boat_beam_m: 2.1,
-      boat_draft_m: null,
-      boat_height_m: null,
-    });
-    expect(screen.getByRole('status')).toHaveTextContent(/settings saved/i);
-
-    await fireEvent.click(screen.getByRole('link', { name: /plan trip/i }));
-    expect(screen.getByRole('button', { name: /plan canal route/i })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Plan your canal journey' })).toBeVisible();
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Boat settings saved.'));
+    expect(screen.queryByText('Settings saved.')).not.toBeInTheDocument();
   });
 
   it('preserves schedule inputs while visiting settings and marks the active page', async () => {
@@ -317,5 +307,48 @@ describe('trip planning interface', () => {
   it('exposes the map canvas as a named region', () => {
     render(App, { props: { dependencies: setup().dependencies } });
     expect(screen.getByRole('region', { name: /journey map/i })).toBeVisible();
+  });
+
+  it('cancels without changing saved settings and discards the draft', async () => {
+    localStorage.setItem('pound.boat-settings', JSON.stringify({
+      boat_length_m: 18, boat_beam_m: null, boat_draft_m: null, boat_height_m: null,
+    }));
+    render(App, { props: { dependencies: setup().dependencies } });
+    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    await fireEvent.input(screen.getByLabelText(/boat length/i), { target: { value: '22' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+
+    expect(screen.getByLabelText(/boat length/i)).toHaveValue(18);
+    expect(JSON.parse(localStorage.getItem('pound.boat-settings')!)).toMatchObject({ boat_length_m: 18 });
+  });
+
+  it('keeps invalid drafts, marks the field, and focuses the first invalid input', async () => {
+    render(App, { props: { dependencies: setup().dependencies } });
+    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    const beam = screen.getByLabelText(/boat beam/i);
+    await fireEvent.input(beam, { target: { value: '-1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    expect(beam).toHaveAttribute('aria-invalid', 'true');
+    expect(beam).toHaveAttribute('aria-describedby', 'boat-beam-error');
+    expect(screen.getByRole('alert')).toBeVisible();
+    expect(beam).toHaveFocus();
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('reports session-only persistence in planner feedback', async () => {
+    const blocked = { getItem() { return null; }, setItem() { throw new DOMException('Blocked', 'SecurityError'); } };
+    const original = globalThis.localStorage;
+    vi.stubGlobal('localStorage', blocked);
+    try {
+      render(App, { props: { dependencies: setup().dependencies } });
+      await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+      await fireEvent.input(screen.getByLabelText(/boat length/i), { target: { value: '18' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+      expect(screen.getByRole('status')).toHaveTextContent(/saved for this session/i);
+    } finally {
+      vi.stubGlobal('localStorage', original);
+    }
   });
 });

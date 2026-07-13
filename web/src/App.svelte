@@ -9,7 +9,7 @@
   import type { AppDependencies } from './lib/app';
   import type { EndpointSlot } from './lib/google/contracts';
   import { createNavigation, type AppRoute } from './lib/navigation';
-  import { createBoatSettingsStore } from './lib/stores/boat-settings';
+  import { createBoatSettingsStore, type SettingsSaveResult } from './lib/stores/boat-settings';
 
   let { dependencies }: { dependencies: AppDependencies } = $props();
   const store = $derived(dependencies.store);
@@ -18,6 +18,7 @@
   let plannerSession = $state({ days: '' as string | number, hours: '6' as string | number, derelict: false });
 
   const navigation = createNavigation();
+  let saveFeedback = $state<SettingsSaveResult | null>(null);
   let plannerHeading: HTMLHeadingElement;
   let settingsHeading: HTMLHeadingElement;
 
@@ -33,6 +34,16 @@
     return () => { unsubscribe(); navigation.destroy(); };
   });
 
+  function openSettings() {
+    saveFeedback = null;
+    navigation.navigate('settings');
+  }
+
+  function finishSettingsSave(result: SettingsSaveResult) {
+    saveFeedback = result;
+    navigation.navigate('planner');
+  }
+
   function handleNavClick(event: MouseEvent, route: AppRoute, ordinaryAction: () => void = () => navigation.navigate(route)) {
     if (!(event.currentTarget instanceof HTMLAnchorElement)) return;
     if (event.button !== 0) return;
@@ -46,10 +57,17 @@
   }
 </script>
 
-<header><div><span class="wordmark">Pound</span><p>Canal journey planner</p><nav aria-label="Primary"><a href="/" aria-current={$navigation === 'planner' ? 'page' : undefined} onclick={(event) => handleNavClick(event, 'planner')}>Plan trip</a><a href="/settings" aria-current={$navigation === 'settings' ? 'page' : undefined} onclick={(event) => handleNavClick(event, 'settings')}>Settings</a></nav></div></header>
+<header><div><span class="wordmark">Pound</span><p>Canal journey planner</p><nav aria-label="Primary"><a href="/" aria-current={$navigation === 'planner' ? 'page' : undefined} onclick={(event) => handleNavClick(event, 'planner')}>Plan trip</a><a href="/settings" aria-current={$navigation === 'settings' ? 'page' : undefined} onclick={(event) => handleNavClick(event, 'settings', openSettings)}>Settings</a></nav></div></header>
 {#if $navigation === 'planner'}
   <main class="planner-page">
     <h1 bind:this={plannerHeading} tabindex="-1">Plan your canal journey</h1>
+    {#if saveFeedback}
+      <p class="save-status" role="status">
+        {saveFeedback === 'persistent'
+          ? 'Boat settings saved.'
+          : 'Boat settings saved for this session; browser storage is unavailable.'}
+      </p>
+    {/if}
     <div class="map-column">
       <fieldset class="map-target"><legend>Map click sets</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set destination from map</label></fieldset>
       <MapCanvas load={dependencies.loadMapView} onclick={(coordinate) => dependencies.store.setEndpointCoordinate(active, coordinate)} onready={(view) => dependencies.store.setMapView(view)} />
@@ -64,7 +82,7 @@
 {:else}
   <main class="settings-page">
     <h1 bind:this={settingsHeading} tabindex="-1">Boat settings</h1>
-    <BoatSettings store={boatSettings} />
+    <BoatSettings store={boatSettings} onSave={finishSettingsSave} onCancel={() => navigation.navigate('planner')} />
   </main>
 {/if}
 <footer>
