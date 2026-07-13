@@ -115,21 +115,27 @@ def _parse_pois(raw_pois: Any) -> tuple[PointOfInterest, ...]:
     parsed = []
     expected_fields = set(PointOfInterest.model_fields)
     for index, raw_poi in enumerate(raw_pois):
-        values = raw_poi.model_dump() if isinstance(raw_poi, PointOfInterest) else raw_poi
-        if not isinstance(values, dict):
-            raise _invalid(f"pois[{index}]", values, "expected a PointOfInterest mapping")
-        unexpected = values.keys() - expected_fields
-        if unexpected:
-            raise _invalid(
-                f"pois[{index}] unexpected fields", sorted(unexpected), "fields are not permitted"
-            )
-        try:
-            poi = PointOfInterest.model_validate(values)
-        except ValidationError as exc:
-            errors = exc.errors(include_url=False)
-            location = ".".join(str(part) for part in errors[0]["loc"])
-            value = values.get(location)
-            raise _invalid(f"pois[{index}].{location}", value, errors[0]["msg"]) from exc
+        if type(raw_poi) is PointOfInterest:
+            poi = PointOfInterest.model_validate(raw_poi)
+            values = None
+        else:
+            values = raw_poi.model_dump() if isinstance(raw_poi, PointOfInterest) else raw_poi
+            if not isinstance(values, dict):
+                raise _invalid(f"pois[{index}]", values, "expected a PointOfInterest mapping")
+            unexpected = values.keys() - expected_fields
+            if unexpected:
+                raise _invalid(
+                    f"pois[{index}] unexpected fields",
+                    sorted(unexpected),
+                    "fields are not permitted",
+                )
+            try:
+                poi = PointOfInterest.model_validate(values)
+            except ValidationError as exc:
+                errors = exc.errors(include_url=False)
+                location = ".".join(str(part) for part in errors[0]["loc"])
+                value = values.get(location)
+                raise _invalid(f"pois[{index}].{location}", value, errors[0]["msg"]) from exc
         for field, lower, upper in (
             ("lat", -90, 90),
             ("lon", -180, 180),
@@ -218,12 +224,16 @@ class GraphArtifact:
         object.__setattr__(self, "metadata", metadata)
 
 
-def save_artifact(graph: nx.Graph, pois, path: Path, metadata: dict) -> None:
-    """Validate and save exactly one graph, POI collection, and metadata mapping."""
+def prepare_artifact(graph: nx.Graph, pois, metadata: dict) -> GraphArtifact:
+    """Validate graph build values and return their strict artifact representation."""
     complete_metadata = dict(metadata)
     if "artifact_revision" not in complete_metadata:
         complete_metadata["artifact_revision"] = str(uuid4())
-    artifact = GraphArtifact(graph=graph, pois=tuple(pois), metadata=complete_metadata)
+    return GraphArtifact(graph=graph, pois=tuple(pois), metadata=complete_metadata)
+
+
+def write_artifact(artifact: GraphArtifact, path: Path) -> None:
+    """Serialize an already prepared artifact to a trusted local pickle."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as stream:
@@ -231,6 +241,11 @@ def save_artifact(graph: nx.Graph, pois, path: Path, metadata: dict) -> None:
             {"graph": artifact.graph, "pois": list(artifact.pois), "metadata": artifact.metadata},
             stream,
         )
+
+
+def save_artifact(graph: nx.Graph, pois, path: Path, metadata: dict) -> None:
+    """Validate and save exactly one graph, POI collection, and metadata mapping."""
+    write_artifact(prepare_artifact(graph, pois, metadata), path)
 
 
 def load_artifact(path: Path) -> GraphArtifact:

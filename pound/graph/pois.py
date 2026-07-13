@@ -67,9 +67,24 @@ def _edge_line_wgs84(graph: nx.Graph, u: int, v: int, data: dict[str, Any]) -> L
     return LineString([_pound_to_xy(coordinate) for coordinate in coordinates])
 
 
-def _candidate_sort_key(candidate: PoiCandidate) -> tuple[str, int, str, str]:
-    # The serialized candidate provides a stable winner when duplicate readers disagree.
-    return (*candidate.identity, candidate.model_dump_json())
+def _deduplicate_candidates(
+    candidates: Iterable[PoiCandidate],
+) -> tuple[list[PoiCandidate], int]:
+    winners: dict[tuple, PoiCandidate] = {}
+    duplicate_count = 0
+    for candidate in candidates:
+        incumbent = winners.get(candidate.identity)
+        if incumbent is None:
+            winners[candidate.identity] = candidate
+            continue
+        duplicate_count += 1
+        if candidate.model_dump_json() < incumbent.model_dump_json():
+            winners[candidate.identity] = candidate
+    ordered = sorted(
+        winners.values(),
+        key=lambda candidate: (candidate.osm_type.value, candidate.osm_id, candidate.kind),
+    )
+    return ordered, duplicate_count
 
 
 def _normalized_geometry(candidate: PoiCandidate):
@@ -109,22 +124,19 @@ def attach_pois(graph: nx.Graph, candidates: Iterable[PoiCandidate]) -> PoiBuild
         key = (min(u, v), max(u, v))
         edge_records.append((key, _to_bng(_edge_line_wgs84(graph, u, v, data))))
     edge_records.sort(key=lambda record: record[0])
-    edge_lines = [record[1] for record in edge_records]
-    tree = STRtree(edge_lines) if edge_lines else None
+    edge_keys = [record[0] for record in edge_records]
+    tree = STRtree([record[1] for record in edge_records]) if edge_records else None
+    del edge_records
 
+    ordered_candidates, duplicate_count = _deduplicate_candidates(candidates)
     summary = {
-        "duplicate_identities": 0,
+        "duplicate_identities": duplicate_count,
         "empty_geometry": 0,
         "invalid_geometry": 0,
         "rejected_by_corridor": 0,
     }
     pois: list[PointOfInterest] = []
-    seen = set()
-    for candidate in sorted(candidates, key=_candidate_sort_key):
-        if candidate.identity in seen:
-            summary["duplicate_identities"] += 1
-            continue
-        seen.add(candidate.identity)
+    for candidate in ordered_candidates:
         geometry_wgs84, skip_reason = _normalized_geometry(candidate)
         if skip_reason is not None:
             summary[skip_reason] += 1
@@ -138,7 +150,7 @@ def attach_pois(graph: nx.Graph, candidates: Iterable[PoiCandidate]) -> PoiBuild
             geometry_bng, all_matches=True, return_distance=True
         )
         ranked = sorted(
-            (float(distance), edge_records[int(index)][0], int(index))
+            (float(distance), edge_keys[int(index)], int(index))
             for index, distance in zip(indexes, distances, strict=True)
         )
         distance_m, edge_key, edge_index = ranked[0]
@@ -147,7 +159,7 @@ def attach_pois(graph: nx.Graph, candidates: Iterable[PoiCandidate]) -> PoiBuild
             continue
 
         candidate_nearest_bng, projected_bng = nearest_points(
-            geometry_bng, edge_lines[edge_index]
+            geometry_bng, tree.geometries[edge_index]
         )
         if candidate.geometry_source == "derived_path":
             display_wgs84 = _to_wgs84(candidate_nearest_bng)
@@ -175,7 +187,7 @@ def attach_pois(graph: nx.Graph, candidates: Iterable[PoiCandidate]) -> PoiBuild
                 name=candidate.name,
                 lat=lat,
                 lon=lon,
-                source_tags=dict(candidate.tags),
+                source_tags=candidate.tags,
                 geometry_source=candidate.geometry_source,
                 nearest_waterway_distance_m=distance_m,
                 nearest_edge=edge_key,

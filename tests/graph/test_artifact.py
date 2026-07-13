@@ -6,7 +6,14 @@ import networkx as nx
 import pytest
 
 import pound.graph.artifact as artifact_module
-from pound.graph.artifact import GraphArtifact, InvalidArtifactError, load_artifact, save_artifact
+from pound.graph.artifact import (
+    GraphArtifact,
+    InvalidArtifactError,
+    load_artifact,
+    prepare_artifact,
+    save_artifact,
+    write_artifact,
+)
 from pound.ingest.ir import PointOfInterest
 
 
@@ -109,6 +116,32 @@ def test_save_serializes_exact_top_level_keys_and_generates_one_revision(
     assert set(payload) == {"graph", "pois", "metadata"}
     assert payload["metadata"]["artifact_revision"] == "generated-revision"
     assert payload["pois"] == [PointOfInterest.model_validate(_poi())]
+
+
+def test_validated_poi_instance_is_not_dumped_or_reparsed(monkeypatch):
+    poi = PointOfInterest.model_validate(_poi())
+    monkeypatch.setattr(
+        PointOfInterest,
+        "model_dump",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("dumped POI")),
+    )
+
+    artifact = GraphArtifact(graph=_graph(), pois=(poi,), metadata=_metadata())
+
+    assert artifact.pois[0] is poi
+
+
+def test_prepare_and_write_artifact_split_validation_from_serialization(tmp_path: Path):
+    path = tmp_path / "graph.pkl"
+
+    artifact = prepare_artifact(_graph(), [_poi()], _metadata())
+    write_artifact(artifact, path)
+
+    assert isinstance(artifact, GraphArtifact)
+    loaded = load_artifact(path)
+    assert nx.utils.graphs_equal(loaded.graph, artifact.graph)
+    assert loaded.pois == artifact.pois
+    assert loaded.metadata == artifact.metadata
 
 
 @pytest.mark.parametrize("keys", [{"graph", "metadata"}, {"graph", "pois", "metadata", "x"}])

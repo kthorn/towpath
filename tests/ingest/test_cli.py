@@ -117,7 +117,8 @@ def test_build_profile_emits_completed_phases_as_json_lines(
         "graph_annotation",
         "lock_attachment",
         "poi_attachment",
-        "artifact_save",
+        "artifact_validation",
+        "artifact_serialization",
     ]
     assert all(record["status"] == "completed" for record in records)
     assert all(record["elapsed_s"] >= 0 for record in records)
@@ -212,26 +213,33 @@ def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_pa
     )
     monkeypatch.setattr(
         cli,
-        "save_artifact",
-        lambda actual_graph, pois, out, metadata: events.append(
-            ("save", actual_graph, pois, out, metadata)
-        ),
+        "prepare_artifact",
+        lambda actual_graph, pois, metadata: events.append(
+            ("prepare", actual_graph, pois, metadata)
+        )
+        or "prepared-artifact",
+    )
+    monkeypatch.setattr(
+        cli,
+        "write_artifact",
+        lambda artifact, out: events.append(("write", artifact, out)),
     )
 
     rc = cli._build_from_features(features, type("Args", (), {"out": tmp_path / "x.pkl"})())
 
     assert rc == 0
     assert lock_calls == [(graph, True)]
-    assert [event[0] for event in events] == ["pois", "validate", "save"]
+    assert [event[0] for event in events] == ["pois", "validate", "prepare", "write"]
     assert events[0][1:] == (graph, features.poi_candidates)
-    assert events[2][1:4] == (graph, (), tmp_path / "x.pkl")
-    assert set(events[2][4]) == {
+    assert events[2][1:3] == (graph, ())
+    assert set(events[2][3]) == {
         "source",
         "fetched_at",
         "built_at",
         "validation",
         "poi_summary",
     }
+    assert events[3][1:] == ("prepared-artifact", tmp_path / "x.pkl")
 
 
 def test_build_does_not_save_when_poi_identity_validation_is_fatal(tmp_path, monkeypatch):
@@ -251,7 +259,7 @@ def test_build_does_not_save_when_poi_identity_validation_is_fatal(tmp_path, mon
     )()
     monkeypatch.setattr(cli, "attach_pois", lambda *_args: result)
     saved = []
-    monkeypatch.setattr(cli, "save_artifact", lambda *_args: saved.append(True))
+    monkeypatch.setattr(cli, "prepare_artifact", lambda *_args: saved.append(True))
 
     rc = cli._build_from_features(features, type("Args", (), {"out": tmp_path / "x.pkl"})())
 

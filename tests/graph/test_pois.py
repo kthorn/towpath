@@ -211,3 +211,30 @@ def test_duplicate_identity_is_deduplicated_deterministically():
     assert len(result.pois) == 1
     assert result.pois[0].name == "A name"
     assert result.summary["duplicate_identities"] == 1
+
+
+def test_duplicate_identity_winner_matches_legacy_json_order():
+    graph = _graph()
+    first = _candidate(_offset_from_edge(graph, 20)).model_copy(
+        update={
+            "name": "Zulu",
+            "tags": {"amenity": "fuel", "operator": "Zulu"},
+        }
+    )
+    second = _candidate(_offset_from_edge(graph, 30)).model_copy(
+        update={
+            "name": "Alpha",
+            "tags": {"amenity": "fuel", "operator": "Alpha"},
+        }
+    )
+    expected = min((first, second), key=lambda candidate: candidate.model_dump_json())
+
+    forward = attach_pois(graph, [first, second])
+    reverse = attach_pois(graph, [second, first])
+
+    assert forward.pois == reverse.pois
+    assert len(forward.pois) == 1
+    assert (forward.pois[0].name, forward.pois[0].source_tags) == (
+        expected.name,
+        expected.tags,
+    )
