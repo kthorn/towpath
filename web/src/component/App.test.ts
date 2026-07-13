@@ -45,12 +45,15 @@ function setup(overrides: { unavailable?: boolean; mapReject?: boolean; sameNode
 }
 
 describe('trip planning interface', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    history.replaceState(null, '', '/');
+  });
 
   it('navigates to settings and persists valid boat dimensions', async () => {
     render(App, { props: { dependencies: setup().dependencies } });
 
-    await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
+    await fireEvent.click(screen.getByRole('link', { name: /settings/i }));
     expect(screen.getByRole('heading', { name: /boat settings/i })).toBeVisible();
     await fireEvent.input(screen.getByLabelText(/boat length/i), { target: { value: '18.3' } });
     await fireEvent.input(screen.getByLabelText(/boat beam/i), { target: { value: '2.1' } });
@@ -64,14 +67,14 @@ describe('trip planning interface', () => {
     });
     expect(screen.getByRole('status')).toHaveTextContent(/settings saved/i);
 
-    await fireEvent.click(screen.getByRole('button', { name: /plan trip/i }));
+    await fireEvent.click(screen.getByRole('link', { name: /plan trip/i }));
     expect(screen.getByRole('button', { name: /plan canal route/i })).toBeVisible();
   });
 
   it('preserves schedule inputs while visiting settings and marks the active page', async () => {
     render(App, { props: { dependencies: setup().dependencies } });
-    const planTrip = screen.getByRole('button', { name: /plan trip/i });
-    const settings = screen.getByRole('button', { name: /settings/i });
+    const planTrip = screen.getByRole('link', { name: /plan trip/i });
+    const settings = screen.getByRole('link', { name: /settings/i });
     expect(planTrip).toHaveAttribute('aria-current', 'page');
     await fireEvent.input(screen.getByLabelText(/^days/i), { target: { value: '4' } });
     await fireEvent.input(screen.getByLabelText(/hours per day/i), { target: { value: '7' } });
@@ -114,7 +117,7 @@ describe('trip planning interface', () => {
       boat_height_m: null,
     }));
     render(App, { props: { dependencies: setup().dependencies } });
-    await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
+    await fireEvent.click(screen.getByRole('link', { name: /settings/i }));
     await fireEvent.input(screen.getByLabelText(/boat beam/i), { target: { value: '-1' } });
     await fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
 
@@ -230,6 +233,59 @@ describe('trip planning interface', () => {
     expect(screen.getByText('Bletchley Park Wharf')).toBeVisible();
     await fireEvent.click(screen.getByRole('button', { name: /plan canal route/i }));
     expect(store.planCanalRoute).toHaveBeenCalled();
+  });
+
+  it('uses real route links and preserves App-owned schedule values', async () => {
+    render(App, { props: { dependencies: setup().dependencies } });
+    const settings = screen.getByRole('link', { name: 'Settings' });
+    const planner = screen.getByRole('link', { name: 'Plan trip' });
+
+    expect(planner).toHaveAttribute('href', '/');
+    expect(settings).toHaveAttribute('href', '/settings');
+    expect(planner).toHaveAttribute('aria-current', 'page');
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+
+    await fireEvent.input(screen.getByLabelText(/^days/i), { target: { value: '4' } });
+    await fireEvent.input(screen.getByLabelText(/hours per day/i), { target: { value: '7' } });
+    await fireEvent.click(screen.getByLabelText(/allow derelict/i));
+    await fireEvent.click(settings);
+    expect(screen.getByRole('heading', { name: /boat settings/i })).toBeVisible();
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+
+    await fireEvent.click(planner);
+    expect(screen.getByLabelText(/^days/i)).toHaveValue(4);
+    expect(screen.getByLabelText(/hours per day/i)).toHaveValue(7);
+    expect(screen.getByLabelText(/allow derelict/i)).toBeChecked();
+  });
+
+  it('preserves planner state across settings visit', async () => {
+    const { dependencies, store, selects, mapClick, calls } = setup();
+    render(App, { props: { dependencies } });
+    await vi.waitFor(() => expect(selects).toHaveLength(2));
+    selects[0]({ name: 'Museum', address: '', coordinate: { lat: 1, lon: 2 } });
+    await fireEvent.click(screen.getByRole('link', { name: /settings/i }));
+    await fireEvent.click(screen.getByRole('link', { name: /plan trip/i }));
+    expect(store.setEndpointCoordinate).toHaveBeenCalledWith('origin', expect.objectContaining({ name: 'Museum' }));
+  });
+
+  it('tears down and recreates the map across settings round trip', async () => {
+    const firstMap: MapView = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()) };
+    const secondMap: MapView = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()) };
+    let loadCount = 0;
+    const loadMapView = vi.fn(async () => {
+      loadCount++;
+      return loadCount === 1 ? firstMap : secondMap;
+    });
+    const { dependencies, store } = setup();
+    dependencies.loadMapView = loadMapView;
+    render(App, { props: { dependencies } });
+    await vi.waitFor(() => expect(store.setMapView).toHaveBeenCalled());
+    expect(store.setMapView).toHaveBeenCalledWith(firstMap);
+
+    await fireEvent.click(screen.getByRole('link', { name: /settings/i }));
+    await fireEvent.click(screen.getByRole('link', { name: /plan trip/i }));
+    await vi.waitFor(() => expect(store.setMapView).toHaveBeenCalledWith(secondMap));
+    expect(firstMap.destroy).toHaveBeenCalledTimes(1);
   });
 
   it('cleans up both searches and the map on unmount', async () => {

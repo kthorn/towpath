@@ -23,7 +23,6 @@
 </script>
 
 <form class="settings-card" novalidate onsubmit={(event) => { event.preventDefault(); submit(); }}>
-  <h1>Boat settings</h1>
   <p>These optional dimensions are saved in this browser and applied to every route.</p>
   <div class="constraint-grid">
     <label>Boat length (m)<input type="number" min="0.1" step="0.1" bind:value={length} /></label>
