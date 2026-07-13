@@ -172,9 +172,9 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
 
 def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_path, monkeypatch):
     events = []
+    lock_calls = []
     features = _sample_features()
     graph = nx.Graph()
-    attached_graph = nx.Graph()
     poi_result = type(
         "Result",
         (),
@@ -191,7 +191,11 @@ def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_pa
     monkeypatch.setattr(cli, "build_graph", lambda _features: graph)
     monkeypatch.setattr(cli, "attach_node_names", lambda *_args: None)
     monkeypatch.setattr(cli, "build_gazetteer", lambda _features: {})
-    monkeypatch.setattr(cli, "attach_locks", lambda _graph, _features: (attached_graph, {}))
+    def fake_attach_locks(actual_graph, _features, *, in_place=False):
+        lock_calls.append((actual_graph, in_place))
+        return actual_graph, {}
+
+    monkeypatch.setattr(cli, "attach_locks", fake_attach_locks)
     monkeypatch.setattr(
         cli,
         "attach_pois",
@@ -217,9 +221,10 @@ def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_pa
     rc = cli._build_from_features(features, type("Args", (), {"out": tmp_path / "x.pkl"})())
 
     assert rc == 0
+    assert lock_calls == [(graph, True)]
     assert [event[0] for event in events] == ["pois", "validate", "save"]
-    assert events[0][1:] == (attached_graph, features.poi_candidates)
-    assert events[2][1:4] == (attached_graph, (), tmp_path / "x.pkl")
+    assert events[0][1:] == (graph, features.poi_candidates)
+    assert events[2][1:4] == (graph, (), tmp_path / "x.pkl")
     assert set(events[2][4]) == {
         "source",
         "fetched_at",

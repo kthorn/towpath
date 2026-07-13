@@ -60,7 +60,7 @@ def _build_from_features(features, args, profiler: BuildProfiler | None = None) 
 
     lock_counts = {}
     with profiler.phase("lock_attachment", counts=lambda: lock_counts):
-        graph, lock_report = attach_locks(graph, features)
+        graph, lock_report = attach_locks(graph, features, in_place=True)
         lock_counts.update(graph_nodes=graph.number_of_nodes(), graph_edges=graph.number_of_edges())
 
     poi_counts = {"candidates": len(features.poi_candidates)}
