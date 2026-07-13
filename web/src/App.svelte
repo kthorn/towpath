@@ -19,8 +19,8 @@
 
   const navigation = createNavigation();
   let saveFeedback = $state<SettingsSaveResult | null>(null);
-  let plannerHeading: HTMLHeadingElement;
-  let settingsHeading: HTMLHeadingElement;
+  let plannerHeading: HTMLHeadingElement | undefined = $state();
+  let settingsHeading: HTMLHeadingElement | undefined = $state();
 
   onMount(() => {
     let firstPublication = true;
