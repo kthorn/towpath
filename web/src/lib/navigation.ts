@@ -23,10 +23,6 @@ function routePath(route: AppRoute): string {
   return route === 'settings' ? '/settings' : '/';
 }
 
-function isCanonical(pathname: string): boolean {
-  return pathname === '/' || pathname === '/settings';
-}
-
 export function createNavigation(environment?: NavigationEnvironment): Navigation {
   const env: NavigationEnvironment = environment ?? {
     location: globalThis.location,
@@ -74,7 +70,7 @@ export function createNavigation(environment?: NavigationEnvironment): Navigatio
   return {
     subscribe: inner.subscribe,
     navigate(route: AppRoute) {
-      if (route === currentRoute) return;
+      if (destroyed || route === currentRoute) return;
       const path = routePath(route);
       env.history.pushState(null, '', path);
       inner.set(route);

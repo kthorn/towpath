@@ -121,4 +121,19 @@ describe('createNavigation', () => {
     navigation.destroy();
     expect(browser.removeEventListener).toHaveBeenCalledTimes(1);
   });
+
+  it('navigate after destroy does not push or publish', () => {
+    const browser = fakeBrowser('/');
+    const navigation = createNavigation(browser);
+    const values: AppRoute[] = [];
+    const unsubscribe = navigation.subscribe((route) => values.push(route));
+
+    navigation.destroy();
+    browser.history.pushState.mockClear();
+
+    navigation.navigate('settings');
+    expect(browser.history.pushState).not.toHaveBeenCalled();
+    expect(values.at(-1)).toBe('planner');
+    unsubscribe();
+  });
 });
