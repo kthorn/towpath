@@ -351,4 +351,32 @@ describe('trip planning interface', () => {
       vi.stubGlobal('localStorage', original);
     }
   });
+
+  it('updates title and focuses the destination heading after navigation', async () => {
+    render(App, { props: { dependencies: setup().dependencies } });
+    expect(document.title).toBe('Pound canal journey planner');
+    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    expect(document.title).toBe('Boat settings — Pound');
+    expect(screen.getByRole('heading', { name: 'Boat settings' })).toHaveFocus();
+    await fireEvent.click(screen.getByRole('link', { name: 'Plan trip' }));
+    expect(document.title).toBe('Pound canal journey planner');
+    expect(screen.getByRole('heading', { name: 'Plan your canal journey' })).toHaveFocus();
+  });
+
+  it('leaves modified navigation clicks to the browser', () => {
+    render(App, { props: { dependencies: setup().dependencies } });
+    const settings = screen.getByRole('link', { name: 'Settings' });
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ctrlKey: true });
+    settings.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('settings page at narrow viewport has no planner controls in active DOM', async () => {
+    render(App, { props: { dependencies: setup().dependencies } });
+    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    expect(screen.queryByRole('button', { name: /plan canal route/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^days/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/hours per day/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/allow derelict/i)).not.toBeInTheDocument();
+  });
 });
