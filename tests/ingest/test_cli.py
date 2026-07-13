@@ -1,4 +1,5 @@
 import json
+import weakref
 from pathlib import Path
 
 import networkx as nx
@@ -265,3 +266,49 @@ def test_build_does_not_save_when_poi_identity_validation_is_fatal(tmp_path, mon
 
     assert rc == 1
     assert saved == []
+
+
+def test_build_releases_feature_ir_before_poi_attachment(tmp_path, monkeypatch):
+    released = []
+    graph = nx.Graph()
+    poi_result = type(
+        "Result",
+        (),
+        {
+            "pois": (),
+            "summary": {
+                "duplicate_identities": 0,
+                "empty_geometry": 0,
+                "invalid_geometry": 0,
+                "rejected_by_corridor": 0,
+            },
+        },
+    )()
+
+    def fetch_features():
+        features = _sample_features()
+        weakref.finalize(features, released.append, "released")
+        return features
+
+    def attach_poi_phase(actual_graph, candidates, _profiler):
+        assert released == ["released"]
+        assert actual_graph is graph
+        assert candidates == []
+        return poi_result
+
+    monkeypatch.setattr(cli, "fetch_oxford", fetch_features)
+    monkeypatch.setattr(
+        cli, "_build_graph_phases", lambda _features, _profiler: (graph, {})
+    )
+    monkeypatch.setattr(cli, "_attach_poi_phase", attach_poi_phase)
+    monkeypatch.setattr(
+        cli,
+        "validate_graph",
+        lambda *_args: {"derelict_edges": 0, "self_loops": 0, "poi_duplicate_identities": 0},
+    )
+    monkeypatch.setattr(cli, "prepare_artifact", lambda *_args: "artifact")
+    monkeypatch.setattr(cli, "write_artifact", lambda *_args: None)
+
+    rc = cli.main(["build", "oxford", "--out", str(tmp_path / "graph.pkl")])
+
+    assert rc == 0

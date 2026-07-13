@@ -41,8 +41,7 @@ def _cmd_oxford(args):
     return 0
 
 
-def _build_from_features(features, args, profiler: BuildProfiler | None = None) -> int:
-    profiler = profiler or BuildProfiler()
+def _build_graph_phases(features, profiler: BuildProfiler):
     graph_counts = {"input_nodes": len(features.nodes), "input_ways": len(features.ways)}
     with profiler.phase("graph_build", counts=lambda: graph_counts):
         graph = build_graph(features)
@@ -62,19 +61,36 @@ def _build_from_features(features, args, profiler: BuildProfiler | None = None) 
     with profiler.phase("lock_attachment", counts=lambda: lock_counts):
         graph, lock_report = attach_locks(graph, features, in_place=True)
         lock_counts.update(graph_nodes=graph.number_of_nodes(), graph_edges=graph.number_of_edges())
+    return graph, lock_report
 
-    poi_counts = {"candidates": len(features.poi_candidates)}
+
+def _attach_poi_phase(graph, poi_candidates, profiler: BuildProfiler):
+    poi_counts = {"candidates": len(poi_candidates)}
     with profiler.phase("poi_attachment", counts=lambda: poi_counts):
-        poi_result = attach_pois(graph, features.poi_candidates)
+        poi_result = attach_pois(graph, poi_candidates)
         poi_counts["accepted"] = len(poi_result.pois)
+    return poi_result
+
+
+def _build_from_features(features, args, profiler: BuildProfiler | None = None) -> int:
+    profiler = profiler or BuildProfiler()
+    graph, lock_report = _build_graph_phases(features, profiler)
+
+    poi_candidates = features.poi_candidates
+    poi_ingest_report = features.poi_ingest_report
+    source = features.source
+    fetched_at = features.fetched_at
+    del features
+
+    poi_result = _attach_poi_phase(graph, poi_candidates, profiler)
+    del poi_candidates
     validation = validate_graph(graph, lock_report, poi_result.summary)
-    poi_summary = summarize_pois(
-        poi_result.pois, features.poi_ingest_report, poi_result.summary
-    )
+    poi_summary = summarize_pois(poi_result.pois, poi_ingest_report, poi_result.summary)
+    del poi_ingest_report
 
     metadata = {
-        "source": features.source,
-        "fetched_at": features.fetched_at,
+        "source": source,
+        "fetched_at": fetched_at,
         "built_at": datetime.now(UTC).isoformat(),
         "validation": validation,
         "poi_summary": poi_summary,
@@ -115,8 +131,7 @@ def _resolve_pbf(args) -> Path:
 def _cmd_build(args) -> int:
     profiler = BuildProfiler(enabled=args.profile)
     if args.region == "oxford":
-        features = fetch_oxford()
-        return _build_from_features(features, args, profiler)
+        return _build_from_features(fetch_oxford(), args, profiler)
 
     pbf = _resolve_pbf(args)
     if not pbf.exists():
@@ -127,8 +142,7 @@ def _cmd_build(args) -> int:
             f"Set POUND_PBF_PATH or pass --pbf PATH."
         )
         raise SystemExit(2)
-    features = read_england(pbf, profiler=profiler)
-    return _build_from_features(features, args, profiler)
+    return _build_from_features(read_england(pbf, profiler=profiler), args, profiler)
 
 
 def _register_oxford(sub):
