@@ -6,7 +6,7 @@ from pound.ingest.ir import (
     WaterwayWay,
     WayDimensions,
 )
-from pound.ingest.prune import prune_non_navigable_infra
+from pound.ingest.prune import _infra_incident_states, prune_non_navigable_infra
 
 
 def _way(osm_id, kind, tags, geom, node_ids):
@@ -224,3 +224,31 @@ def test_prune_preserves_ways():
     out = prune_non_navigable_infra(features)
     assert [w.osm_id for w in out.ways] == [1, 2]  # both ways survive prune
     assert [n.osm_id for n in out.nodes] == []  # but the lock_gate on boat=no drops
+
+
+def test_prune_bookkeeping_contains_only_classified_infrastructure_ids():
+    unrelated_refs = list(range(10_000, 20_000))
+    ways = [
+        _way(
+            1,
+            WaterwayKind.CANAL,
+            {"waterway": "canal", "boat": "no"},
+            [(51.0, -1.0), (51.001, -1.0)],
+            [100, *unrelated_refs, 200, 300],
+        )
+    ]
+    nodes = [
+        _node(100, NodeKind.LOCK_GATE),
+        _node(200, NodeKind.MOORING),
+        WaterwayNode(
+            osm_id=300,
+            lat=51.0,
+            lon=-1.0,
+            tags={"place": "town", "name": "Reading"},
+            kind=NodeKind.PLACE,
+        ),
+    ]
+
+    states = _infra_incident_states(_features(ways, nodes))
+
+    assert set(states) == {100, 200}

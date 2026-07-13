@@ -14,6 +14,33 @@ data, so no node is incident to any way and the function runs without dropping
 from pound.ingest.filters import classify_node, is_navigable
 from pound.ingest.ir import NodeKind, WaterwayFeatures
 
+_INCIDENT = 1
+_NAVIGABLE = 2
+
+
+def _infra_incident_states(features: WaterwayFeatures) -> dict[int, int]:
+    target_ids = set()
+    for node in features.nodes:
+        kind = classify_node(node.tags) if node.kind is None else node.kind
+        if kind is not None and kind != NodeKind.PLACE:
+            target_ids.add(node.osm_id)
+
+    states: dict[int, int] = {}
+    for way in features.ways:
+        way_state = _INCIDENT | (_NAVIGABLE if is_navigable(way.tags) else 0)
+        for node_id in way.node_ids:
+            if node_id in target_ids:
+                states[node_id] = states.get(node_id, 0) | way_state
+    return states
+
+
+def _non_navigable_infra_ids(features: WaterwayFeatures) -> set[int]:
+    return {
+        node_id
+        for node_id, state in _infra_incident_states(features).items()
+        if state == _INCIDENT
+    }
+
 
 def prune_non_navigable_infra(features: WaterwayFeatures) -> WaterwayFeatures:
     """Return a new WaterwayFeatures with infra nodes sitting entirely on
@@ -25,33 +52,6 @@ def prune_non_navigable_infra(features: WaterwayFeatures) -> WaterwayFeatures:
     is kept (the post-filter cannot determine navigability by join — that is the
     Overpass no-op case).
     """
-    # osm node id (str) -> set of incident way osm_ids
-    incidents: dict[str, set[int]] = {}
-    for w in features.ways:
-        if not w.node_ids:
-            continue
-        for nid in w.node_ids:
-            incidents.setdefault(str(nid), set()).add(w.osm_id)
-    ways_by_id = {w.osm_id: w for w in features.ways}
-
-    def _should_drop(node) -> bool:
-        kind = classify_node(node.tags) if node.kind is None else node.kind
-        # Defensive: handle any future NodeKind.OTHER (or new kinds) the same as
-        # infra -- only PLACE is unconditionally kept. classify_node never emits
-        # OTHER today, so this branch is forward-compat, not exercised yet.
-        if kind is None or kind == NodeKind.PLACE:
-            return False
-        inc = incidents.get(str(node.osm_id))
-        if not inc:
-            return False  # no incidents -> kept (Overpass no-op case)
-        # all incidents must be non-navigable; if any is navigable/untagged -> keep
-        navigable_seen = False
-        for wid in inc:
-            w = ways_by_id.get(wid)
-            if w is not None and is_navigable(w.tags):
-                navigable_seen = True
-                break
-        return not navigable_seen
-
-    kept_nodes = [n for n in features.nodes if not _should_drop(n)]
+    dropped_ids = _non_navigable_infra_ids(features)
+    kept_nodes = [node for node in features.nodes if node.osm_id not in dropped_ids]
     return features.model_copy(update={"nodes": kept_nodes})
