@@ -91,6 +91,39 @@ def test_build_subcommand_writes_artifact(tmp_path: Path, monkeypatch):
     assert "version" not in artifact.metadata
 
 
+def test_build_profile_is_silent_by_default(tmp_path: Path, monkeypatch, capsys):
+    raw = json.loads(Path(oxford_fixture_path()).read_text())
+    monkeypatch.setattr(cli, "fetch_oxford", lambda: parse(raw["elements"], None))
+
+    assert cli.main(["build", "oxford", "--out", str(tmp_path / "oxford.pkl")]) == 0
+
+    assert "build_profile" not in capsys.readouterr().err
+
+
+def test_build_profile_emits_completed_phases_as_json_lines(
+    tmp_path: Path, monkeypatch, capsys
+):
+    raw = json.loads(Path(oxford_fixture_path()).read_text())
+    monkeypatch.setattr(cli, "fetch_oxford", lambda: parse(raw["elements"], None))
+
+    rc = cli.main(
+        ["build", "oxford", "--out", str(tmp_path / "oxford.pkl"), "--profile"]
+    )
+
+    records = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert rc == 0
+    assert [record["phase"] for record in records] == [
+        "graph_build",
+        "graph_annotation",
+        "lock_attachment",
+        "poi_attachment",
+        "artifact_save",
+    ]
+    assert all(record["status"] == "completed" for record in records)
+    assert all(record["elapsed_s"] >= 0 for record in records)
+    assert all(record["peak_rss_bytes"] > 0 for record in records)
+
+
 def test_build_england_missing_pbf_prints_url_and_exits(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("POUND_PBF_PATH", str(tmp_path / "missing.osm.pbf"))
     try:
@@ -117,7 +150,9 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
 
     monkeypatch.setenv("POUND_PBF_PATH", str(tmp_path / "england.osm.pbf"))
     Path(tmp_path / "england.osm.pbf").write_bytes(b"")  # dummy so the guard passes
-    monkeypatch.setattr(cli, "read_england", lambda pbf_path=None: fake_feats)
+    monkeypatch.setattr(
+        cli, "read_england", lambda pbf_path=None, *, profiler=None: fake_feats
+    )
     out = tmp_path / "england.pkl"
     rc = cli.main(
         [

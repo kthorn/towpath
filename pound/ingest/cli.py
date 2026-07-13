@@ -20,6 +20,7 @@ from pound.graph.locks import attach_locks
 from pound.graph.pois import attach_pois
 from pound.ingest.osm import read_england
 from pound.ingest.overpass import fetch_oxford
+from pound.ingest.profile import BuildProfiler
 from pound.ingest.summarize import summarize, summarize_pois
 from pound.validate.connectivity import validate_graph
 
@@ -40,13 +41,32 @@ def _cmd_oxford(args):
     return 0
 
 
-def _build_from_features(features, args) -> int:
-    graph = build_graph(features)
-    attach_node_names(graph, features)
-    graph.graph["gazetteer"] = build_gazetteer(features)
-    graph.graph["place_nodes_seen"] = sum(1 for n in features.nodes if "place" in n.tags)
-    graph, lock_report = attach_locks(graph, features)
-    poi_result = attach_pois(graph, features.poi_candidates)
+def _build_from_features(features, args, profiler: BuildProfiler | None = None) -> int:
+    profiler = profiler or BuildProfiler()
+    graph_counts = {"input_nodes": len(features.nodes), "input_ways": len(features.ways)}
+    with profiler.phase("graph_build", counts=lambda: graph_counts):
+        graph = build_graph(features)
+        graph_counts.update(nodes=graph.number_of_nodes(), edges=graph.number_of_edges())
+
+    annotation_counts = {}
+    with profiler.phase("graph_annotation", counts=lambda: annotation_counts):
+        attach_node_names(graph, features)
+        graph.graph["gazetteer"] = build_gazetteer(features)
+        graph.graph["place_nodes_seen"] = sum(1 for n in features.nodes if "place" in n.tags)
+        annotation_counts.update(
+            gazetteer_entries=len(graph.graph["gazetteer"]),
+            place_nodes_seen=graph.graph["place_nodes_seen"],
+        )
+
+    lock_counts = {}
+    with profiler.phase("lock_attachment", counts=lambda: lock_counts):
+        graph, lock_report = attach_locks(graph, features)
+        lock_counts.update(graph_nodes=graph.number_of_nodes(), graph_edges=graph.number_of_edges())
+
+    poi_counts = {"candidates": len(features.poi_candidates)}
+    with profiler.phase("poi_attachment", counts=lambda: poi_counts):
+        poi_result = attach_pois(graph, features.poi_candidates)
+        poi_counts["accepted"] = len(poi_result.pois)
     validation = validate_graph(graph, lock_report, poi_result.summary)
     poi_summary = summarize_pois(
         poi_result.pois, features.poi_ingest_report, poi_result.summary
@@ -74,7 +94,11 @@ def _build_from_features(features, args) -> int:
         return 1
 
     out = Path(args.out)
-    save_artifact(graph, poi_result.pois, out, metadata)
+    artifact_counts = {}
+    with profiler.phase("artifact_save", counts=lambda: artifact_counts):
+        save_artifact(graph, poi_result.pois, out, metadata)
+        if profiler.enabled:
+            artifact_counts["output_bytes"] = out.stat().st_size
     return 0
 
 
@@ -85,9 +109,10 @@ def _resolve_pbf(args) -> Path:
 
 
 def _cmd_build(args) -> int:
+    profiler = BuildProfiler(enabled=args.profile)
     if args.region == "oxford":
         features = fetch_oxford()
-        return _build_from_features(features, args)
+        return _build_from_features(features, args, profiler)
 
     pbf = _resolve_pbf(args)
     if not pbf.exists():
@@ -98,8 +123,8 @@ def _cmd_build(args) -> int:
             f"Set POUND_PBF_PATH or pass --pbf PATH."
         )
         raise SystemExit(2)
-    features = read_england(pbf)
-    return _build_from_features(features, args)
+    features = read_england(pbf, profiler=profiler)
+    return _build_from_features(features, args, profiler)
 
 
 def _register_oxford(sub):
@@ -113,6 +138,7 @@ def _register_build(sub):
     b.add_argument("region", choices=["oxford", "england"])
     b.add_argument("--out", required=True)
     b.add_argument("--pbf", default=None, help="England PBF path (else POUND_PBF_PATH)")
+    b.add_argument("--profile", action="store_true", help="emit build phase JSON Lines to stderr")
     b.set_defaults(func=_cmd_build)
 
 

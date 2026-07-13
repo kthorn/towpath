@@ -29,6 +29,7 @@ from pound.ingest.ir import (
     WaterwayWay,
 )
 from pound.ingest.pois import classify_poi, normalize_source_tags
+from pound.ingest.profile import BuildProfiler
 from pound.ingest.prune import prune_non_navigable_infra
 
 # Pinned OSM-filter expression (design §3.1, Scope D OQ-D1).
@@ -76,7 +77,7 @@ def run_tags_filter(in_pbf: Path, out_pbf: Path) -> None:
     )
 
 
-def read_pbf(pbf_path: Path) -> WaterwayFeatures:
+def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayFeatures:
     """Stream-parse a filtered PBF (or OSM XML) via pyosmium into WaterwayFeatures.
 
     Fills node_ids. source='geofabrik', fetched_at=PBF mtime, bbox=None
@@ -211,6 +212,14 @@ def read_pbf(pbf_path: Path) -> WaterwayFeatures:
             candidate.category.value, candidate.kind,
         ),
     )
+    if profile_counts is not None:
+        profile_counts.update(
+            ways=len(ways),
+            nodes=len(nodes),
+            candidates=len(ordered_candidates),
+            pending_areas=len(pending_areas),
+            skipped_reasons=dict(skipped_counts),
+        )
     return WaterwayFeatures(
         ways=ways,
         nodes=nodes,
@@ -224,7 +233,9 @@ def read_pbf(pbf_path: Path) -> WaterwayFeatures:
     )
 
 
-def read_england(pbf_path: Path | None = None) -> WaterwayFeatures:
+def read_england(
+    pbf_path: Path | None = None, *, profiler: BuildProfiler | None = None
+) -> WaterwayFeatures:
     """Tags-filter then read, then prune infra nodes on non-navigable ways
     and filter navigable ways. pbf_path defaults to POUND_PBF_PATH env or
     pound/data/england.osm.pbf. Filtered output lands beside it as
@@ -236,11 +247,31 @@ def read_england(pbf_path: Path | None = None) -> WaterwayFeatures:
     if pbf_path is None:
         pbf_path = Path(os.environ.get("POUND_PBF_PATH", "pound/data/england.osm.pbf"))
     pbf_path = Path(pbf_path)
+    profiler = profiler or BuildProfiler()
     base = pbf_path.name.split(".")[0]
     filtered = pbf_path.parent / (base + "_waterways.osm.pbf")
-    run_tags_filter(pbf_path, filtered)
-    features = read_pbf(filtered)
+    filter_counts = {}
+    with profiler.phase("tags_filter", counts=lambda: filter_counts):
+        if profiler.enabled:
+            filter_counts["input_bytes"] = pbf_path.stat().st_size
+        run_tags_filter(pbf_path, filtered)
+        if profiler.enabled:
+            filter_counts["output_bytes"] = filtered.stat().st_size
+
+    processing_counts = {}
+    with profiler.phase("pbf_processing", counts=lambda: processing_counts):
+        if profiler.enabled:
+            features = read_pbf(filtered, profile_counts=processing_counts)
+        else:
+            features = read_pbf(filtered)
     # prune BEFORE filter: see spec's load-bearing ordering note.
-    features = prune_non_navigable_infra(features)
-    features = filter_navigable_ways(features)
+    prune_counts = {"input_nodes": len(features.nodes), "input_ways": len(features.ways)}
+    with profiler.phase("prune", counts=lambda: prune_counts):
+        features = prune_non_navigable_infra(features)
+        prune_counts.update(output_nodes=len(features.nodes), output_ways=len(features.ways))
+
+    navigable_counts = {"input_nodes": len(features.nodes), "input_ways": len(features.ways)}
+    with profiler.phase("navigable_filter", counts=lambda: navigable_counts):
+        features = filter_navigable_ways(features)
+        navigable_counts.update(output_nodes=len(features.nodes), output_ways=len(features.ways))
     return features
