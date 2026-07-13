@@ -109,15 +109,16 @@ def _validate_graph(graph: Any) -> nx.Graph:
     return graph
 
 
-def _parse_pois(raw_pois: Any) -> tuple[PointOfInterest, ...]:
+def _parse_pois(
+    raw_pois: Any, *, trust_validated_instances: bool = False
+) -> tuple[PointOfInterest, ...]:
     if not isinstance(raw_pois, (list, tuple)):
         raise _invalid("pois", raw_pois, "expected a list or tuple")
     parsed = []
     expected_fields = set(PointOfInterest.model_fields)
     for index, raw_poi in enumerate(raw_pois):
-        if type(raw_poi) is PointOfInterest:
-            poi = PointOfInterest.model_validate(raw_poi)
-            values = None
+        if trust_validated_instances and type(raw_poi) is PointOfInterest:
+            poi = raw_poi
         else:
             values = raw_poi.model_dump() if isinstance(raw_poi, PointOfInterest) else raw_poi
             if not isinstance(values, dict):
@@ -230,6 +231,18 @@ def prepare_artifact(graph: nx.Graph, pois, metadata: dict) -> GraphArtifact:
     if "artifact_revision" not in complete_metadata:
         complete_metadata["artifact_revision"] = str(uuid4())
     return GraphArtifact(graph=graph, pois=tuple(pois), metadata=complete_metadata)
+
+
+def _prepare_build_artifact(graph: nx.Graph, pois, metadata: dict) -> GraphArtifact:
+    """Prepare CLI-owned, freshly built POIs without serializing them for revalidation."""
+    complete_metadata = dict(metadata)
+    if "artifact_revision" not in complete_metadata:
+        complete_metadata["artifact_revision"] = str(uuid4())
+    artifact = GraphArtifact(graph=graph, pois=(), metadata=complete_metadata)
+    parsed_pois = _parse_pois(tuple(pois), trust_validated_instances=True)
+    _validate_attachments(artifact.graph, parsed_pois)
+    object.__setattr__(artifact, "pois", parsed_pois)
+    return artifact
 
 
 def write_artifact(artifact: GraphArtifact, path: Path) -> None:

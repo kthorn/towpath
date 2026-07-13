@@ -9,6 +9,7 @@ import pound.graph.artifact as artifact_module
 from pound.graph.artifact import (
     GraphArtifact,
     InvalidArtifactError,
+    _prepare_build_artifact,
     load_artifact,
     prepare_artifact,
     save_artifact,
@@ -118,7 +119,7 @@ def test_save_serializes_exact_top_level_keys_and_generates_one_revision(
     assert payload["pois"] == [PointOfInterest.model_validate(_poi())]
 
 
-def test_validated_poi_instance_is_not_dumped_or_reparsed(monkeypatch):
+def test_trusted_build_poi_instance_is_not_dumped_or_reparsed(monkeypatch):
     poi = PointOfInterest.model_validate(_poi())
     monkeypatch.setattr(
         PointOfInterest,
@@ -126,9 +127,17 @@ def test_validated_poi_instance_is_not_dumped_or_reparsed(monkeypatch):
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("dumped POI")),
     )
 
-    artifact = GraphArtifact(graph=_graph(), pois=(poi,), metadata=_metadata())
+    artifact = _prepare_build_artifact(_graph(), (poi,), _metadata())
 
     assert artifact.pois[0] is poi
+
+
+def test_graph_artifact_revalidates_a_mutated_poi_instance():
+    poi = PointOfInterest.model_validate(_poi())
+    poi.osm_id = -1
+
+    with pytest.raises(InvalidArtifactError, match="osm_id"):
+        GraphArtifact(graph=_graph(), pois=(poi,), metadata=_metadata())
 
 
 def test_prepare_and_write_artifact_split_validation_from_serialization(tmp_path: Path):

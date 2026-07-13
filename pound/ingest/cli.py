@@ -13,7 +13,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pound.graph.artifact import prepare_artifact, write_artifact
+from pound.graph.artifact import _prepare_build_artifact, write_artifact
 from pound.graph.build import build_graph
 from pound.graph.gazetteer import attach_node_names, build_gazetteer
 from pound.graph.locks import attach_locks
@@ -112,7 +112,7 @@ def _build_from_features(features, args, profiler: BuildProfiler | None = None) 
     out = Path(args.out)
     validation_counts = {"pois": len(poi_result.pois)}
     with profiler.phase("artifact_validation", counts=lambda: validation_counts):
-        artifact = prepare_artifact(graph, poi_result.pois, metadata)
+        artifact = _prepare_build_artifact(graph, poi_result.pois, metadata)
 
     serialization_counts = {}
     with profiler.phase("artifact_serialization", counts=lambda: serialization_counts):

@@ -202,6 +202,11 @@ def test_pending_areas_store_minimal_metadata_and_release_emitted_entries():
     pending.mark_emitted(way_key)
     assert list(pending.unresolved()) == [(relation_key, None)]
 
+    pending.release()
+
+    assert pending._pending == {}
+    assert pending._emitted == set()
+
 
 def test_non_area_geometry_wkt_is_not_parsed(monkeypatch):
     from pound.ingest import osm as osm_module

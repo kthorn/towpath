@@ -214,7 +214,7 @@ def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_pa
     )
     monkeypatch.setattr(
         cli,
-        "prepare_artifact",
+        "_prepare_build_artifact",
         lambda actual_graph, pois, metadata: events.append(
             ("prepare", actual_graph, pois, metadata)
         )
@@ -260,7 +260,7 @@ def test_build_does_not_save_when_poi_identity_validation_is_fatal(tmp_path, mon
     )()
     monkeypatch.setattr(cli, "attach_pois", lambda *_args: result)
     saved = []
-    monkeypatch.setattr(cli, "prepare_artifact", lambda *_args: saved.append(True))
+    monkeypatch.setattr(cli, "_prepare_build_artifact", lambda *_args: saved.append(True))
 
     rc = cli._build_from_features(features, type("Args", (), {"out": tmp_path / "x.pkl"})())
 
@@ -306,7 +306,7 @@ def test_build_releases_feature_ir_before_poi_attachment(tmp_path, monkeypatch):
         "validate_graph",
         lambda *_args: {"derelict_edges": 0, "self_loops": 0, "poi_duplicate_identities": 0},
     )
-    monkeypatch.setattr(cli, "prepare_artifact", lambda *_args: "artifact")
+    monkeypatch.setattr(cli, "_prepare_build_artifact", lambda *_args: "artifact")
     monkeypatch.setattr(cli, "write_artifact", lambda *_args: None)
 
     rc = cli.main(["build", "oxford", "--out", str(tmp_path / "graph.pkl")])

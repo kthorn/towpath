@@ -84,6 +84,10 @@ class _PendingAreas:
     def unresolved(self):
         return self._pending.items()
 
+    def release(self) -> None:
+        self._pending.clear()
+        self._emitted.clear()
+
     def __len__(self) -> int:
         return len(self._pending)
 
@@ -254,6 +258,8 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
             pending_areas=len(pending_areas),
             skipped_reasons=dict(poi_ingest_report.skipped_counts),
         )
+    pending_areas.release()
+    del diagnostics
     return WaterwayFeatures(
         ways=ways,
         nodes=nodes,
