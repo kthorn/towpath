@@ -379,4 +379,18 @@ describe('trip planning interface', () => {
     expect(screen.queryByLabelText(/hours per day/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/allow derelict/i)).not.toBeInTheDocument();
   });
+
+  it('clears stale save feedback on every navigation to settings', async () => {
+    render(App, { props: { dependencies: setup().dependencies } });
+    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    await fireEvent.input(screen.getByLabelText(/boat length/i), { target: { value: '18.3' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Boat settings saved.'));
+
+    await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    expect(screen.getByRole('heading', { name: 'Boat settings' })).toBeVisible();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
 });

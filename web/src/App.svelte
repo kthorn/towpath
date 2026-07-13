@@ -29,15 +29,11 @@
         firstPublication = false;
         return;
       }
+      if (route === 'settings') saveFeedback = null;
       void tick().then(() => (route === 'planner' ? plannerHeading : settingsHeading)?.focus());
     });
     return () => { unsubscribe(); navigation.destroy(); };
   });
-
-  function openSettings() {
-    saveFeedback = null;
-    navigation.navigate('settings');
-  }
 
   function finishSettingsSave(result: SettingsSaveResult) {
     saveFeedback = result;
@@ -58,7 +54,7 @@
 </script>
 
 <svelte:head><title>{$navigation === 'planner' ? 'Pound canal journey planner' : 'Boat settings — Pound'}</title></svelte:head>
-<header><div><span class="wordmark">Pound</span><p>Canal journey planner</p><nav aria-label="Primary"><a href="/" aria-current={$navigation === 'planner' ? 'page' : undefined} onclick={(event) => handleNavClick(event, 'planner')}>Plan trip</a><a href="/settings" aria-current={$navigation === 'settings' ? 'page' : undefined} onclick={(event) => handleNavClick(event, 'settings', openSettings)}>Settings</a></nav></div></header>
+<header><div><span class="wordmark">Pound</span><p>Canal journey planner</p><nav aria-label="Primary"><a href="/" aria-current={$navigation === 'planner' ? 'page' : undefined} onclick={(event) => handleNavClick(event, 'planner')}>Plan trip</a><a href="/settings" aria-current={$navigation === 'settings' ? 'page' : undefined} onclick={(event) => handleNavClick(event, 'settings')}>Settings</a></nav></div></header>
 {#if $navigation === 'planner'}
   <main class="planner-page">
     <h1 bind:this={plannerHeading} tabindex="-1">Plan your canal journey</h1>
