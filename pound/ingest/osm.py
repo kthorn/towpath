@@ -62,6 +62,41 @@ def _create_wkt(factory, method: str, obj) -> str | None:
         return None
 
 
+AreaKey = tuple[OsmElementType, int]
+
+
+class _PendingAreas:
+    def __init__(self) -> None:
+        self._pending: dict[AreaKey, int | None] = {}
+        self._emitted: set[AreaKey] = set()
+
+    def add(self, key: AreaKey, *, node_count: int | None) -> None:
+        if key not in self._emitted:
+            self._pending[key] = node_count
+
+    def should_emit(self, key: AreaKey) -> bool:
+        return key not in self._emitted
+
+    def mark_emitted(self, key: AreaKey) -> None:
+        self._emitted.add(key)
+        self._pending.pop(key, None)
+
+    def unresolved(self):
+        return self._pending.items()
+
+    def __len__(self) -> int:
+        return len(self._pending)
+
+
+def _normalized_geometry_wkt(geometry_wkt: str, geometry_source: str) -> str:
+    if geometry_source != "area":
+        return geometry_wkt
+    geometry = shapely_wkt.loads(geometry_wkt)
+    if geometry.geom_type == "MultiPolygon" and len(geometry.geoms) == 1:
+        return geometry.geoms[0].wkt
+    return geometry_wkt
+
+
 def run_tags_filter(in_pbf: Path, out_pbf: Path) -> None:
     """Shell out once to `osmium tags-filter`. Raises FileNotFoundError if
     osmium is not installed (it's a documented system prereq)."""
@@ -89,14 +124,11 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
     nodes: list[WaterwayNode] = []
     candidates: dict[tuple[OsmElementType, int, str], PoiCandidate] = {}
     diagnostics = PoiDiagnostics()
-    pending_areas: dict[tuple[OsmElementType, int], tuple[dict[str, str], int | None]] = {}
-    emitted_areas: set[tuple[OsmElementType, int]] = set()
+    pending_areas = _PendingAreas()
     pbf_path = Path(pbf_path)
 
     def emit(osm_type, osm_id, tags, geometry_wkt, geometry_source, classifications) -> None:
-        geometry = shapely_wkt.loads(geometry_wkt)
-        if geometry.geom_type == "MultiPolygon" and len(geometry.geoms) == 1:
-            geometry_wkt = geometry.geoms[0].wkt
+        geometry_wkt = _normalized_geometry_wkt(geometry_wkt, geometry_source)
         for classification in classifications:
             candidate = PoiCandidate(
                 osm_type=osm_type,
@@ -157,7 +189,7 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
                         emit(OsmElementType.WAY, w.id, tags, geometry_wkt,
                              "derived_path", classifications)
                 else:
-                    pending_areas[(OsmElementType.WAY, w.id)] = (tags, len(w.nodes))
+                    pending_areas.add((OsmElementType.WAY, w.id), node_count=len(w.nodes))
         elif object_name == "Node":
             n = obj
             classifications = classify_poi(tags)
@@ -182,21 +214,19 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
                     f"relation/{obj.id}:{diagnostic.key}={diagnostic.value}",
                 )
             if classifications:
-                pending_areas[(OsmElementType.RELATION, obj.id)] = (tags, None)
+                pending_areas.add((OsmElementType.RELATION, obj.id), node_count=None)
         elif object_name == "Area":
             osm_type = OsmElementType.WAY if obj.from_way() else OsmElementType.RELATION
             osm_id = obj.orig_id()
             key = (osm_type, osm_id)
             classifications = classify_poi(tags)
-            if classifications and key not in emitted_areas:
+            if classifications and pending_areas.should_emit(key):
                 geometry_wkt = _create_wkt(wkt_factory, "create_multipolygon", obj)
                 if geometry_wkt is not None:
                     emit(osm_type, osm_id, tags, geometry_wkt, "area", classifications)
-                    emitted_areas.add(key)
+                    pending_areas.mark_emitted(key)
 
-    for (osm_type, osm_id), (_, node_count) in pending_areas.items():
-        if (osm_type, osm_id) in emitted_areas:
-            continue
+    for (osm_type, osm_id), node_count in pending_areas.unresolved():
         if osm_type == OsmElementType.RELATION:
             reason = "incomplete_relation_geometry"
         else:
@@ -214,6 +244,7 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
             candidate.category.value, candidate.kind,
         ),
     )
+    candidates.clear()
     poi_ingest_report = diagnostics.build_report()
     if profile_counts is not None:
         profile_counts.update(

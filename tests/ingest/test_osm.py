@@ -4,8 +4,13 @@ from pathlib import Path
 import pytest
 from shapely import wkt
 
-from pound.ingest.ir import NodeKind
-from pound.ingest.osm import TAGS_FILTER_EXPR, read_pbf
+from pound.ingest.ir import NodeKind, OsmElementType
+from pound.ingest.osm import (
+    TAGS_FILTER_EXPR,
+    _normalized_geometry_wkt,
+    _PendingAreas,
+    read_pbf,
+)
 from tests.fixtures import oxford_fixture_path
 
 pytestmark = pytest.mark.bulk
@@ -177,6 +182,47 @@ def test_wkt_geometry_runtime_error_is_reported_as_unusable():
             raise RuntimeError("invalid area")
 
     assert _create_wkt(InvalidAreaFactory(), "create_multipolygon", object()) is None
+
+
+def test_pending_areas_store_minimal_metadata_and_release_emitted_entries():
+    pending = _PendingAreas()
+    way_key = (OsmElementType.WAY, 10)
+    relation_key = (OsmElementType.RELATION, 20)
+
+    pending.add(way_key, node_count=4)
+    pending.add(relation_key, node_count=None)
+
+    assert pending._pending == {way_key: 4, relation_key: None}
+    assert pending.should_emit(way_key)
+
+    pending.mark_emitted(way_key)
+
+    assert way_key not in pending._pending
+    assert not pending.should_emit(way_key)
+    pending.mark_emitted(way_key)
+    assert list(pending.unresolved()) == [(relation_key, None)]
+
+
+def test_non_area_geometry_wkt_is_not_parsed(monkeypatch):
+    from pound.ingest import osm as osm_module
+
+    monkeypatch.setattr(
+        osm_module.shapely_wkt,
+        "loads",
+        lambda _value: (_ for _ in ()).throw(AssertionError("parsed non-area WKT")),
+    )
+
+    assert _normalized_geometry_wkt("POINT (-1 51)", "point") == "POINT (-1 51)"
+    assert (
+        _normalized_geometry_wkt("LINESTRING (-1 51, -1.1 51.1)", "derived_path")
+        == "LINESTRING (-1 51, -1.1 51.1)"
+    )
+
+
+def test_single_multipolygon_area_is_collapsed_to_polygon():
+    geometry = "MULTIPOLYGON (((0 0, 0 1, 1 1, 0 0)))"
+
+    assert _normalized_geometry_wkt(geometry, "area").startswith("POLYGON")
 
 
 def test_read_pbf_aligns_node_ids_with_geometry_when_one_ref_lacks_location(tmp_path):
