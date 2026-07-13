@@ -18,11 +18,11 @@ from pathlib import Path
 from shapely import wkt as shapely_wkt
 
 from pound.ingest import filters
+from pound.ingest.diagnostics import PoiDiagnostics
 from pound.ingest.filters import filter_navigable_ways
 from pound.ingest.ir import (
     OsmElementType,
     PoiCandidate,
-    PoiIngestReport,
     WaterwayFeatures,
     WaterwayKind,
     WaterwayNode,
@@ -88,15 +88,10 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
     ways: list[WaterwayWay] = []
     nodes: list[WaterwayNode] = []
     candidates: dict[tuple[OsmElementType, int, str], PoiCandidate] = {}
-    skipped_counts: dict[str, int] = {}
-    skipped_examples: dict[str, list[str]] = {}
+    diagnostics = PoiDiagnostics()
     pending_areas: dict[tuple[OsmElementType, int], tuple[dict[str, str], int | None]] = {}
     emitted_areas: set[tuple[OsmElementType, int]] = set()
     pbf_path = Path(pbf_path)
-
-    def skip(reason: str, example: str) -> None:
-        skipped_counts[reason] = skipped_counts.get(reason, 0) + 1
-        skipped_examples.setdefault(reason, []).append(example)
 
     def emit(osm_type, osm_id, tags, geometry_wkt, geometry_source, classifications) -> None:
         geometry = shapely_wkt.loads(geometry_wkt)
@@ -150,12 +145,14 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
                     )
             classifications = classify_poi(tags)
             for diagnostic in classifications.skips:
-                skip(diagnostic.reason, f"way/{w.id}:{diagnostic.key}={diagnostic.value}")
+                diagnostics.record(
+                    diagnostic.reason, f"way/{w.id}:{diagnostic.key}={diagnostic.value}"
+                )
             if classifications:
                 if tags.get("highway") in {"footway", "path", "pedestrian"}:
                     geometry_wkt = _create_wkt(wkt_factory, "create_linestring", w)
                     if geometry_wkt is None:
-                        skip("invalid_geometry", f"way/{w.id}")
+                        diagnostics.record("invalid_geometry", f"way/{w.id}")
                     else:
                         emit(OsmElementType.WAY, w.id, tags, geometry_wkt,
                              "derived_path", classifications)
@@ -165,7 +162,9 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
             n = obj
             classifications = classify_poi(tags)
             for diagnostic in classifications.skips:
-                skip(diagnostic.reason, f"node/{n.id}:{diagnostic.key}={diagnostic.value}")
+                diagnostics.record(
+                    diagnostic.reason, f"node/{n.id}:{diagnostic.key}={diagnostic.value}"
+                )
             if classifications and n.location.valid:
                 emit(OsmElementType.NODE, n.id, tags, wkt_factory.create_point(n), "point",
                      classifications)
@@ -178,7 +177,10 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
         elif object_name == "Relation":
             classifications = classify_poi(tags)
             for diagnostic in classifications.skips:
-                skip(diagnostic.reason, f"relation/{obj.id}:{diagnostic.key}={diagnostic.value}")
+                diagnostics.record(
+                    diagnostic.reason,
+                    f"relation/{obj.id}:{diagnostic.key}={diagnostic.value}",
+                )
             if classifications:
                 pending_areas[(OsmElementType.RELATION, obj.id)] = (tags, None)
         elif object_name == "Area":
@@ -199,7 +201,7 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
             reason = "incomplete_relation_geometry"
         else:
             reason = "missing_area_geometry" if (node_count or 0) < 2 else "invalid_geometry"
-        skip(reason, f"{osm_type.value}/{osm_id}")
+        diagnostics.record(reason, f"{osm_type.value}/{osm_id}")
 
     routable = {WaterwayKind.CANAL, WaterwayKind.RIVER, WaterwayKind.FAIRWAY}
     ways.sort(key=lambda w: (0 if w.kind in routable else 1, w.osm_id))
@@ -212,13 +214,14 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
             candidate.category.value, candidate.kind,
         ),
     )
+    poi_ingest_report = diagnostics.build_report()
     if profile_counts is not None:
         profile_counts.update(
             ways=len(ways),
             nodes=len(nodes),
             candidates=len(ordered_candidates),
             pending_areas=len(pending_areas),
-            skipped_reasons=dict(skipped_counts),
+            skipped_reasons=dict(poi_ingest_report.skipped_counts),
         )
     return WaterwayFeatures(
         ways=ways,
@@ -227,9 +230,7 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
         fetched_at=fetched_at,
         bbox=None,
         poi_candidates=ordered_candidates,
-        poi_ingest_report=PoiIngestReport(
-            skipped_counts=skipped_counts, skipped_examples=skipped_examples
-        ),
+        poi_ingest_report=poi_ingest_report,
     )
 
 

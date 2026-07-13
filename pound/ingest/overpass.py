@@ -16,6 +16,7 @@ from shapely.geometry import LineString, MultiPolygon, Point, Polygon
 from shapely.ops import polygonize_full
 
 from pound.ingest import filters
+from pound.ingest.diagnostics import PoiDiagnostics
 from pound.ingest.filters import filter_navigable_ways
 from pound.ingest.ir import (
     OsmElementType,
@@ -231,12 +232,7 @@ def _parse_pois(elements: list[dict]) -> tuple[list[PoiCandidate], PoiIngestRepo
         if element.get("type") in {"node", "way", "relation"} and "id" in element
     }
     candidates: dict[tuple[OsmElementType, int, str], PoiCandidate] = {}
-    skipped_counts: dict[str, int] = {}
-    skipped_examples: dict[str, list[str]] = {}
-
-    def skip(reason: str, example: str) -> None:
-        skipped_counts[reason] = skipped_counts.get(reason, 0) + 1
-        skipped_examples.setdefault(reason, []).append(example)
+    diagnostics = PoiDiagnostics()
 
     seen_elements: set[tuple[str, int]] = set()
     decoded_elements: set[tuple[str, int]] = set()
@@ -251,14 +247,17 @@ def _parse_pois(elements: list[dict]) -> tuple[list[PoiCandidate], PoiIngestRepo
         key = (element_type, element_id)
         if key not in seen_elements:
             for diagnostic in getattr(classifications, "skips", ()):
-                skip(diagnostic.reason, f"{source_identity}:{diagnostic.key}={diagnostic.value}")
+                diagnostics.record(
+                    diagnostic.reason,
+                    f"{source_identity}:{diagnostic.key}={diagnostic.value}",
+                )
             seen_elements.add(key)
         if not classifications:
             continue
         geometry, reason, geometry_source = _poi_geometry(element, elements_by_key)
         if geometry is None:
             if key not in decoded_elements:
-                skip(reason or "invalid_geometry", source_identity)
+                diagnostics.record(reason or "invalid_geometry", source_identity)
                 decoded_elements.add(key)
             continue
         decoded_elements.add(key)
@@ -283,9 +282,7 @@ def _parse_pois(elements: list[dict]) -> tuple[list[PoiCandidate], PoiIngestRepo
             candidate.kind,
         ),
     )
-    return ordered, PoiIngestReport(
-        skipped_counts=skipped_counts, skipped_examples=skipped_examples
-    )
+    return ordered, diagnostics.build_report()
 
 
 def fetch_raw(
