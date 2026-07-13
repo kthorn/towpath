@@ -1,5 +1,0 @@
-HIGH | §4 Data Contracts | `PointOfInterest` omits `name`; `PoiCandidate` carries it but it is dropped before artifact persistence, making route-amenity and UI use impossible. | Add `name: str | None` to `PointOfInterest` and carry it through candidate→POI conversion.
-
-HIGH | §4 Data Contracts | `nearest_edge: tuple[int, int]` element semantics are undefined; coupled with `nearest_node_uid` (explicit UID), the edge reference scheme is ambiguous and may be unstable across rebuilds if these are internal indices. | Specify whether edge endpoints are graph UIDs or indices; if UIDs, rename to `nearest_edge_uids: tuple[int, int]` for consistency with `nearest_node_uid`.
-
-MEDIUM | §4 Data Contracts | CRS for `projected_lat`/`projected_lon` is unspecified; field names suggest WGS84, but "projected" implies British National Grid (Easting/Northing), making the artifact contract ambiguous. | Rename to explicit CRS fields (e.g., `bng_easting`/`bng_northing`) or document the CRS inline and ensure lat/lon naming is reserved for WGS84.
