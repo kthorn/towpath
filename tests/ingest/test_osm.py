@@ -12,6 +12,7 @@ from pound.ingest.osm import (
     _PendingAreas,
     read_pbf,
     read_waterway_features,
+    stream_area_pois,
     stream_linear_pois,
 )
 from tests.fixtures import oxford_fixture_path
@@ -118,6 +119,36 @@ def test_stream_linear_pois_emits_only_nodes_and_paths_in_legacy_order():
     assert all(candidate.geometry_source != "area" for candidate in candidates)
     assert counts["emitted"] == len(candidates)
     assert counts["scanned"] > len(candidates)
+
+
+def test_stream_area_pois_matches_legacy_areas_and_incomplete_diagnostics():
+    legacy = read_pbf(_tiny_pbf_path())
+    candidates = []
+    diagnostics = PoiDiagnostics()
+    counts = {}
+
+    stream_area_pois(_tiny_pbf_path(), candidates.append, diagnostics, counts)
+
+    expected = [
+        candidate for candidate in legacy.poi_candidates if candidate.geometry_source == "area"
+    ]
+    def order(candidate):
+        return candidate.osm_type.value, candidate.osm_id, candidate.kind
+
+    assert sorted(candidates, key=order) == sorted(expected, key=order)
+    assert diagnostics.build_report().skipped_examples["incomplete_relation_geometry"] == [
+        "relation/2302"
+    ]
+    assert counts["emitted"] == len(candidates)
+    area_report = diagnostics.build_report()
+    assert counts["pending_areas"] == sum(
+        area_report.skipped_counts.get(reason, 0)
+        for reason in (
+            "missing_area_geometry",
+            "invalid_geometry",
+            "incomplete_relation_geometry",
+        )
+    )
 
 
 def test_tags_filter_round_trip_matches_overpass_shape(monkeypatch, tmp_path):

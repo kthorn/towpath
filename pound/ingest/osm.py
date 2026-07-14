@@ -255,6 +255,98 @@ def stream_linear_pois(
         profile_counts.update(scanned=scanned, classified=classified, emitted=emitted)
 
 
+def stream_area_pois(
+    pbf_path: Path,
+    consume: Callable[[PoiCandidate], None],
+    diagnostics: PoiDiagnostics,
+    profile_counts: dict | None = None,
+) -> None:
+    """Attach-ready stream of polygon POIs with pass-local area bookkeeping."""
+    import osmium
+
+    pbf_path = Path(pbf_path)
+    wkt_factory = osmium.geom.WKTFactory()
+    pending_areas = _PendingAreas()
+    scanned = 0
+    classified = 0
+    emitted = 0
+
+    for obj in osmium.FileProcessor(str(pbf_path)).with_locations().with_areas():
+        scanned += 1
+        object_name = type(obj).__name__
+        tags = {tag.k: tag.v for tag in obj.tags}
+        if object_name == "Way":
+            if tags.get("highway") in {"footway", "path", "pedestrian"}:
+                continue
+            osm_type = OsmElementType.WAY
+            classifications = classify_poi(tags)
+            for diagnostic in classifications.skips:
+                diagnostics.record(
+                    diagnostic.reason,
+                    f"way/{obj.id}:{diagnostic.key}={diagnostic.value}",
+                )
+            classified += len(classifications)
+            if classifications:
+                pending_areas.add((osm_type, obj.id), node_count=len(obj.nodes))
+            continue
+        if object_name == "Relation":
+            osm_type = OsmElementType.RELATION
+            classifications = classify_poi(tags)
+            for diagnostic in classifications.skips:
+                diagnostics.record(
+                    diagnostic.reason,
+                    f"relation/{obj.id}:{diagnostic.key}={diagnostic.value}",
+                )
+            classified += len(classifications)
+            if classifications:
+                pending_areas.add((osm_type, obj.id), node_count=None)
+            continue
+        if object_name != "Area":
+            continue
+
+        osm_type = OsmElementType.WAY if obj.from_way() else OsmElementType.RELATION
+        osm_id = obj.orig_id()
+        key = (osm_type, osm_id)
+        classifications = classify_poi(tags)
+        if not classifications or not pending_areas.should_emit(key):
+            continue
+        geometry_wkt = _create_wkt(wkt_factory, "create_multipolygon", obj)
+        if geometry_wkt is None:
+            continue
+        geometry_wkt = _normalized_geometry_wkt(geometry_wkt, "area")
+        for classification in classifications:
+            consume(
+                PoiCandidate(
+                    osm_type=osm_type,
+                    osm_id=osm_id,
+                    category=classification.category,
+                    kind=classification.kind,
+                    name=tags.get("name"),
+                    tags=normalize_source_tags(tags, classification),
+                    geometry_wkt=geometry_wkt,
+                    geometry_source="area",
+                )
+            )
+            emitted += 1
+        pending_areas.mark_emitted(key)
+
+    pending_count = len(pending_areas)
+    for (osm_type, osm_id), node_count in pending_areas.unresolved():
+        if osm_type == OsmElementType.RELATION:
+            reason = "incomplete_relation_geometry"
+        else:
+            reason = "missing_area_geometry" if (node_count or 0) < 2 else "invalid_geometry"
+        diagnostics.record(reason, f"{osm_type.value}/{osm_id}")
+    if profile_counts is not None:
+        profile_counts.update(
+            scanned=scanned,
+            classified=classified,
+            emitted=emitted,
+            pending_areas=pending_count,
+        )
+    pending_areas.release()
+
+
 def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayFeatures:
     """Stream-parse a filtered PBF (or OSM XML) via pyosmium into WaterwayFeatures.
 
