@@ -4,6 +4,8 @@ from pathlib import Path
 import pytest
 from shapely import wkt
 
+from pound.graph.build import build_graph
+from pound.graph.pois import PoiAttachmentIndex, PoiBuildAccumulator, attach_pois
 from pound.ingest.diagnostics import PoiDiagnostics
 from pound.ingest.ir import NodeKind, OsmElementType
 from pound.ingest.osm import (
@@ -149,6 +151,23 @@ def test_stream_area_pois_matches_legacy_areas_and_incomplete_diagnostics():
             "incomplete_relation_geometry",
         )
     )
+
+
+def test_streaming_passes_match_legacy_attached_pois_and_ingest_diagnostics():
+    legacy = read_pbf(_tiny_pbf_path())
+    graph = build_graph(read_waterway_features(_tiny_pbf_path()))
+    accumulator = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+    linear_diagnostics = PoiDiagnostics()
+    area_diagnostics = PoiDiagnostics()
+
+    stream_linear_pois(_tiny_pbf_path(), accumulator.add, linear_diagnostics)
+    stream_area_pois(_tiny_pbf_path(), accumulator.add, area_diagnostics)
+    diagnostics = PoiDiagnostics()
+    diagnostics.merge(linear_diagnostics.build_report())
+    diagnostics.merge(area_diagnostics.build_report())
+
+    assert accumulator.build_result() == attach_pois(graph, legacy.poi_candidates)
+    assert diagnostics.build_report() == legacy.poi_ingest_report
 
 
 def test_tags_filter_round_trip_matches_overpass_shape(monkeypatch, tmp_path):

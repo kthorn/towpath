@@ -276,6 +276,8 @@ def stream_area_pois(
         object_name = type(obj).__name__
         tags = {tag.k: tag.v for tag in obj.tags}
         if object_name == "Way":
+            if filters.is_derelict(tags):
+                continue
             if tags.get("highway") in {"footway", "path", "pedestrian"}:
                 continue
             osm_type = OsmElementType.WAY
