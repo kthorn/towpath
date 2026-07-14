@@ -210,6 +210,8 @@ def stream_linear_pois(
         object_name = type(obj).__name__
         if object_name == "Way":
             tags = {tag.k: tag.v for tag in obj.tags}
+            if filters.is_derelict(tags):
+                continue
             if tags.get("highway") not in {"footway", "path", "pedestrian"}:
                 continue
             osm_type = OsmElementType.WAY
@@ -304,6 +306,8 @@ def stream_area_pois(
                 pending_areas.add((osm_type, obj.id), node_count=None)
             continue
         if object_name != "Area":
+            continue
+        if obj.from_way() and tags.get("highway") in {"footway", "path", "pedestrian"}:
             continue
 
         osm_type = OsmElementType.WAY if obj.from_way() else OsmElementType.RELATION

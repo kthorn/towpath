@@ -170,6 +170,105 @@ def test_streaming_passes_match_legacy_attached_pois_and_ingest_diagnostics():
     assert diagnostics.build_report() == legacy.poi_ingest_report
 
 
+def test_area_stream_does_not_reemit_closed_path_registered_for_linear_pass(tmp_path):
+    osm = tmp_path / "closed_path.osm"
+    osm.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6">
+  <node id="1" lat="51.7500" lon="-1.2600"/>
+  <node id="2" lat="51.7500" lon="-1.2590"/>
+  <node id="3" lat="51.7510" lon="-1.2590"/>
+  <way id="10">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="1"/>
+    <tag k="highway" v="footway"/><tag k="area" v="yes"/>
+  </way>
+</osm>
+"""
+    )
+    linear = []
+    areas = []
+
+    stream_linear_pois(osm, linear.append, PoiDiagnostics())
+    stream_area_pois(osm, areas.append, PoiDiagnostics())
+
+    assert [(candidate.osm_id, candidate.geometry_source) for candidate in linear] == [
+        (10, "derived_path")
+    ]
+    assert areas == []
+
+
+def test_area_stream_preserves_legacy_active_poi_on_disused_tagged_way(tmp_path):
+    osm = tmp_path / "disused_shop_area.osm"
+    osm.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6">
+  <node id="1" lat="51.7500" lon="-1.2600"/>
+  <node id="2" lat="51.7500" lon="-1.2590"/>
+  <node id="3" lat="51.7510" lon="-1.2590"/>
+  <way id="11">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="1"/>
+    <tag k="shop" v="deli"/><tag k="disused:shop" v="newsagent"/>
+  </way>
+</osm>
+"""
+    )
+    areas = []
+
+    stream_area_pois(osm, areas.append, PoiDiagnostics())
+
+    assert [
+        (candidate.osm_id, candidate.kind, candidate.geometry_source) for candidate in areas
+    ] == [(11, "deli", "area")]
+
+
+def test_area_stream_keeps_path_classification_on_multipolygon_relation(tmp_path):
+    osm = tmp_path / "path_relation.osm"
+    osm.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6">
+  <node id="1" lat="51.7500" lon="-1.2600"/>
+  <node id="2" lat="51.7500" lon="-1.2590"/>
+  <node id="3" lat="51.7510" lon="-1.2590"/>
+  <way id="12">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="1"/>
+  </way>
+  <relation id="20">
+    <member type="way" ref="12" role="outer"/>
+    <tag k="type" v="multipolygon"/><tag k="highway" v="footway"/>
+  </relation>
+</osm>
+"""
+    )
+    areas = []
+
+    stream_area_pois(osm, areas.append, PoiDiagnostics())
+
+    assert [(candidate.osm_type, candidate.osm_id, candidate.kind) for candidate in areas] == [
+        (OsmElementType.RELATION, 20, "path_connection")
+    ]
+
+
+def test_linear_stream_skips_abandoned_path_like_legacy_reader(tmp_path):
+    osm = tmp_path / "abandoned_path.osm"
+    osm.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6">
+  <node id="1" lat="51.7500" lon="-1.2600"/>
+  <node id="2" lat="51.7510" lon="-1.2590"/>
+  <way id="13">
+    <nd ref="1"/><nd ref="2"/>
+    <tag k="highway" v="path"/><tag k="abandoned:highway" v="service"/>
+  </way>
+</osm>
+"""
+    )
+    candidates = []
+
+    stream_linear_pois(osm, candidates.append, PoiDiagnostics())
+
+    assert candidates == []
+
+
 def test_tags_filter_round_trip_matches_overpass_shape(monkeypatch, tmp_path):
     """OQ-D1 divergence-fails-loudly: the filtered PBF reproduces the OVERPASS
     reader's WaterwayFeatures shape for the Oxford-equivalent fixture. Needs
