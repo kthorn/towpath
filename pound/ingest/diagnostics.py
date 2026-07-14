@@ -14,6 +14,16 @@ class PoiDiagnostics:
 
     def record(self, reason: str, example: str) -> None:
         self._counts[reason] = self._counts.get(reason, 0) + 1
+        self._add_example(reason, example)
+
+    def merge(self, report: PoiIngestReport) -> None:
+        for reason, count in report.skipped_counts.items():
+            self._counts[reason] = self._counts.get(reason, 0) + count
+        for reason, examples in report.skipped_examples.items():
+            for example in examples:
+                self._add_example(reason, example)
+
+    def _add_example(self, reason: str, example: str) -> None:
         examples = self._examples.setdefault(reason, set())
         examples.add(example)
         if len(examples) > MAX_EXAMPLES_PER_REASON:
