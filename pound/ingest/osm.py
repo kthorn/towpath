@@ -12,6 +12,7 @@ gated by the `bulk` pytest marker. `osmium-tool` is a system CLI prereq.
 
 import os
 import subprocess
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -187,6 +188,71 @@ def read_waterway_features(
         fetched_at=datetime.fromtimestamp(pbf_path.stat().st_mtime, tz=UTC).isoformat(),
         bbox=None,
     )
+
+
+def stream_linear_pois(
+    pbf_path: Path,
+    consume: Callable[[PoiCandidate], None],
+    diagnostics: PoiDiagnostics,
+    profile_counts: dict | None = None,
+) -> None:
+    """Attach-ready stream of node and path-derived POIs without area assembly."""
+    import osmium
+
+    pbf_path = Path(pbf_path)
+    wkt_factory = osmium.geom.WKTFactory()
+    scanned = 0
+    classified = 0
+    emitted = 0
+
+    for obj in osmium.FileProcessor(str(pbf_path)).with_locations():
+        scanned += 1
+        object_name = type(obj).__name__
+        if object_name == "Way":
+            tags = {tag.k: tag.v for tag in obj.tags}
+            if tags.get("highway") not in {"footway", "path", "pedestrian"}:
+                continue
+            osm_type = OsmElementType.WAY
+            geometry_source = "derived_path"
+            geometry_wkt = _create_wkt(wkt_factory, "create_linestring", obj)
+        elif object_name == "Node":
+            tags = {tag.k: tag.v for tag in obj.tags}
+            osm_type = OsmElementType.NODE
+            geometry_source = "point"
+            geometry_wkt = wkt_factory.create_point(obj) if obj.location.valid else None
+        else:
+            continue
+
+        classifications = classify_poi(tags)
+        for diagnostic in classifications.skips:
+            diagnostics.record(
+                diagnostic.reason,
+                f"{osm_type.value}/{obj.id}:{diagnostic.key}={diagnostic.value}",
+            )
+        classified += len(classifications)
+        if not classifications:
+            continue
+        if geometry_wkt is None:
+            if osm_type == OsmElementType.WAY:
+                diagnostics.record("invalid_geometry", f"way/{obj.id}")
+            continue
+        for classification in classifications:
+            consume(
+                PoiCandidate(
+                    osm_type=osm_type,
+                    osm_id=obj.id,
+                    category=classification.category,
+                    kind=classification.kind,
+                    name=tags.get("name"),
+                    tags=normalize_source_tags(tags, classification),
+                    geometry_wkt=geometry_wkt,
+                    geometry_source=geometry_source,
+                )
+            )
+            emitted += 1
+
+    if profile_counts is not None:
+        profile_counts.update(scanned=scanned, classified=classified, emitted=emitted)
 
 
 def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayFeatures:

@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from shapely import wkt
 
+from pound.ingest.diagnostics import PoiDiagnostics
 from pound.ingest.ir import NodeKind, OsmElementType
 from pound.ingest.osm import (
     TAGS_FILTER_EXPR,
@@ -11,6 +12,7 @@ from pound.ingest.osm import (
     _PendingAreas,
     read_pbf,
     read_waterway_features,
+    stream_linear_pois,
 )
 from tests.fixtures import oxford_fixture_path
 
@@ -97,6 +99,25 @@ def test_read_pbf_emits_bulk_pois_with_area_assembly_and_deduplication():
         "relation/2302"
     ]
     assert not any(p.osm_id == 2302 for p in feats.poi_candidates)
+
+
+def test_stream_linear_pois_emits_only_nodes_and_paths_in_legacy_order():
+    legacy = read_pbf(_tiny_pbf_path())
+    candidates = []
+    diagnostics = PoiDiagnostics()
+    counts = {}
+
+    stream_linear_pois(_tiny_pbf_path(), candidates.append, diagnostics, counts)
+
+    expected = [
+        candidate
+        for candidate in legacy.poi_candidates
+        if candidate.geometry_source in {"point", "derived_path"}
+    ]
+    assert candidates == expected
+    assert all(candidate.geometry_source != "area" for candidate in candidates)
+    assert counts["emitted"] == len(candidates)
+    assert counts["scanned"] > len(candidates)
 
 
 def test_tags_filter_round_trip_matches_overpass_shape(monkeypatch, tmp_path):
