@@ -5,7 +5,7 @@ import pytest
 from pyproj import Transformer
 from shapely.geometry import LineString, Point, Polygon
 
-from pound.graph.pois import attach_pois
+from pound.graph.pois import PoiAttachmentIndex, PoiBuildAccumulator, attach_pois
 from pound.ingest.ir import OsmElementType, PoiCandidate, PoiCategory
 
 TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
@@ -238,3 +238,44 @@ def test_duplicate_identity_winner_matches_legacy_json_order():
         expected.name,
         expected.tags,
     )
+
+
+def test_streaming_accumulator_reuses_index_and_matches_unique_batch_attachment():
+    graph = _graph()
+    candidates = [
+        _candidate(_offset_from_edge(graph, 20), osm_id=2),
+        _candidate(_offset_from_edge(graph, 30), osm_id=1),
+        _candidate(_offset_from_edge(graph, 2000), osm_id=3),
+    ]
+    index = PoiAttachmentIndex(graph)
+    tree = index.tree
+    accumulator = PoiBuildAccumulator(index)
+
+    for candidate in candidates:
+        accumulator.add(candidate)
+
+    result = accumulator.build_result()
+    assert index.tree is tree
+    assert result == attach_pois(graph, candidates)
+    assert [poi.osm_id for poi in result.pois] == [1, 2]
+
+
+def test_streaming_accumulator_chooses_legacy_winner_for_accepted_duplicates():
+    graph = _graph()
+    zulu = _candidate(_offset_from_edge(graph, 20)).model_copy(
+        update={"name": "Zulu", "tags": {"amenity": "fuel", "operator": "Zulu"}}
+    )
+    alpha = _candidate(_offset_from_edge(graph, 30)).model_copy(
+        update={"name": "Alpha", "tags": {"amenity": "fuel", "operator": "Alpha"}}
+    )
+    expected = attach_pois(graph, [zulu, alpha])
+
+    forward = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+    reverse = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+    for candidate in (zulu, alpha):
+        forward.add(candidate)
+    for candidate in (alpha, zulu):
+        reverse.add(candidate)
+
+    assert forward.build_result() == expected
+    assert reverse.build_result() == expected

@@ -111,55 +111,42 @@ def _normalized_geometry(candidate: PoiCandidate):
     return geometry, None
 
 
-def attach_pois(graph: nx.Graph, candidates: Iterable[PoiCandidate]) -> PoiBuildResult:
-    """Return deterministically normalized POIs attached to eligible graph edges.
+class PoiAttachmentIndex:
+    """Reusable navigable-edge spatial index for single-candidate attachment."""
 
-    Distances and nearest-point operations are performed in British National Grid.
-    Neither the graph nor any input candidate is modified.
-    """
-    edge_records: list[tuple[tuple[int, int], LineString]] = []
-    for u, v, data in graph.edges(data=True):
-        if not _routing_eligible(data):
-            continue
-        key = (min(u, v), max(u, v))
-        edge_records.append((key, _to_bng(_edge_line_wgs84(graph, u, v, data))))
-    edge_records.sort(key=lambda record: record[0])
-    edge_keys = [record[0] for record in edge_records]
-    tree = STRtree([record[1] for record in edge_records]) if edge_records else None
-    del edge_records
+    def __init__(self, graph: nx.Graph) -> None:
+        self.graph = graph
+        edge_records: list[tuple[tuple[int, int], LineString]] = []
+        for u, v, data in graph.edges(data=True):
+            if not _routing_eligible(data):
+                continue
+            key = (min(u, v), max(u, v))
+            edge_records.append((key, _to_bng(_edge_line_wgs84(graph, u, v, data))))
+        edge_records.sort(key=lambda record: record[0])
+        self.edge_keys = [record[0] for record in edge_records]
+        self.tree = STRtree([record[1] for record in edge_records]) if edge_records else None
 
-    ordered_candidates, duplicate_count = _deduplicate_candidates(candidates)
-    summary = {
-        "duplicate_identities": duplicate_count,
-        "empty_geometry": 0,
-        "invalid_geometry": 0,
-        "rejected_by_corridor": 0,
-    }
-    pois: list[PointOfInterest] = []
-    for candidate in ordered_candidates:
+    def attach(self, candidate: PoiCandidate) -> tuple[PointOfInterest | None, str | None]:
         geometry_wgs84, skip_reason = _normalized_geometry(candidate)
         if skip_reason is not None:
-            summary[skip_reason] += 1
-            continue
-        if tree is None:
-            summary["rejected_by_corridor"] += 1
-            continue
+            return None, skip_reason
+        if self.tree is None:
+            return None, "rejected_by_corridor"
 
         geometry_bng = _to_bng(geometry_wgs84)
-        indexes, distances = tree.query_nearest(
+        indexes, distances = self.tree.query_nearest(
             geometry_bng, all_matches=True, return_distance=True
         )
         ranked = sorted(
-            (float(distance), edge_keys[int(index)], int(index))
+            (float(distance), self.edge_keys[int(index)], int(index))
             for index, distance in zip(indexes, distances, strict=True)
         )
         distance_m, edge_key, edge_index = ranked[0]
         if distance_m > _CORRIDOR_M[candidate.category]:
-            summary["rejected_by_corridor"] += 1
-            continue
+            return None, "rejected_by_corridor"
 
         candidate_nearest_bng, projected_bng = nearest_points(
-            geometry_bng, tree.geometries[edge_index]
+            geometry_bng, self.tree.geometries[edge_index]
         )
         if candidate.geometry_source == "derived_path":
             display_wgs84 = _to_wgs84(candidate_nearest_bng)
@@ -173,12 +160,12 @@ def attach_pois(graph: nx.Graph, candidates: Iterable[PoiCandidate]) -> PoiBuild
 
         endpoint_choices = []
         for uid in edge_key:
-            node = graph.nodes[uid]
+            node = self.graph.nodes[uid]
             endpoint = Point(*_TO_BNG.transform(node["lon"], node["lat"]))
             endpoint_choices.append((geometry_bng.distance(endpoint), uid))
         nearest_node_uid = min(endpoint_choices)[1]
 
-        pois.append(
+        return (
             PointOfInterest(
                 osm_type=candidate.osm_type,
                 osm_id=candidate.osm_id,
@@ -194,7 +181,56 @@ def attach_pois(graph: nx.Graph, candidates: Iterable[PoiCandidate]) -> PoiBuild
                 nearest_node_uid=nearest_node_uid,
                 projected_lat=projected_lat,
                 projected_lon=projected_lon,
-            )
+            ),
+            None,
         )
 
-    return PoiBuildResult(pois=tuple(pois), summary=summary)
+
+class PoiBuildAccumulator:
+    """Attach candidates immediately while retaining accepted identity winners only."""
+
+    def __init__(self, index: PoiAttachmentIndex) -> None:
+        self.index = index
+        self._winners: dict[tuple, tuple[str, PointOfInterest]] = {}
+        self._summary = {
+            "duplicate_identities": 0,
+            "empty_geometry": 0,
+            "invalid_geometry": 0,
+            "rejected_by_corridor": 0,
+        }
+
+    def add(self, candidate: PoiCandidate) -> None:
+        poi, skip_reason = self.index.attach(candidate)
+        if skip_reason is not None:
+            self._summary[skip_reason] += 1
+            return
+        assert poi is not None
+        candidate_key = candidate.model_dump_json()
+        incumbent = self._winners.get(candidate.identity)
+        if incumbent is not None:
+            self._summary["duplicate_identities"] += 1
+            if candidate_key >= incumbent[0]:
+                return
+        self._winners[candidate.identity] = (candidate_key, poi)
+
+    def build_result(self) -> PoiBuildResult:
+        pois = sorted(
+            (winner[1] for winner in self._winners.values()),
+            key=lambda poi: (poi.osm_type.value, poi.osm_id, poi.kind),
+        )
+        return PoiBuildResult(pois=tuple(pois), summary=dict(self._summary))
+
+
+def attach_pois(graph: nx.Graph, candidates: Iterable[PoiCandidate]) -> PoiBuildResult:
+    """Return deterministically normalized POIs attached to eligible graph edges.
+
+    Distances and nearest-point operations are performed in British National Grid.
+    Neither the graph nor any input candidate is modified.
+    """
+    ordered_candidates, duplicate_count = _deduplicate_candidates(candidates)
+    accumulator = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+    for candidate in ordered_candidates:
+        accumulator.add(candidate)
+    result = accumulator.build_result()
+    result.summary["duplicate_identities"] += duplicate_count
+    return result
