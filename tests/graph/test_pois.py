@@ -256,6 +256,7 @@ def test_streaming_accumulator_reuses_index_and_matches_unique_batch_attachment(
 
     result = accumulator.build_result()
     assert index.tree is tree
+    assert accumulator.accepted_count == 2
     assert result == attach_pois(graph, candidates)
     assert [poi.osm_id for poi in result.pois] == [1, 2]
 

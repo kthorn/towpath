@@ -3,6 +3,7 @@ import weakref
 from pathlib import Path
 
 import networkx as nx
+import pytest
 
 from pound.graph.artifact import load_artifact
 from pound.ingest import cli
@@ -141,8 +142,7 @@ def test_build_england_missing_pbf_prints_url_and_exits(capsys, monkeypatch, tmp
 
 
 def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
-    # Fake the osmium+pyosmium path: read_england returns the Oxford fixture
-    # parsed via the Overpass reader (shape-equivalent), so gates evaluate.
+    # Fake the three pyosmium passes with an Oxford-shaped fixture.
     try:
         raw = json.loads(Path(oxford_fixture_path()).read_text())
         fake_feats = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
@@ -152,9 +152,32 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
 
     monkeypatch.setenv("POUND_PBF_PATH", str(tmp_path / "england.osm.pbf"))
     Path(tmp_path / "england.osm.pbf").write_bytes(b"")  # dummy so the guard passes
+    candidates = list(fake_feats.poi_candidates)
+    graph_features = fake_feats.model_copy(update={"poi_candidates": []})
+    filtered = tmp_path / "england_waterways.osm.pbf"
+    filtered.write_bytes(b"filtered")
+    seen_paths = []
+    monkeypatch.setattr(cli, "prepare_england_pbf", lambda _pbf, _profiler: filtered)
     monkeypatch.setattr(
-        cli, "read_england", lambda pbf_path=None, *, profiler=None: fake_feats
+        cli,
+        "read_england_waterways",
+        lambda path, _profiler: seen_paths.append(path) or graph_features,
     )
+
+    def stream_linear(path, consume, _diagnostics, _counts):
+        seen_paths.append(path)
+        for candidate in candidates:
+            if candidate.geometry_source != "area":
+                consume(candidate)
+
+    def stream_area(path, consume, _diagnostics, _counts):
+        seen_paths.append(path)
+        for candidate in candidates:
+            if candidate.geometry_source == "area":
+                consume(candidate)
+
+    monkeypatch.setattr(cli, "stream_linear_pois", stream_linear)
+    monkeypatch.setattr(cli, "stream_area_pois", stream_area)
     out = tmp_path / "england.pkl"
     rc = cli.main(
         [
@@ -170,6 +193,76 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
     assert "validation" in artifact.metadata
     assert "gazetteer" in artifact.graph.graph
     assert "Oxford" in artifact.graph.graph["gazetteer"]
+    assert seen_paths == [filtered, filtered, filtered]
+
+
+def test_build_england_profile_reports_multi_pass_phase_order(monkeypatch, tmp_path, capsys):
+    features = _sample_features().model_copy(update={"source": "geofabrik", "bbox": None})
+    source = tmp_path / "england.osm.pbf"
+    source.write_bytes(b"source")
+    filtered = tmp_path / "england_waterways.osm.pbf"
+    filtered.write_bytes(b"filtered")
+    def prepare(_pbf, profiler):
+        with profiler.phase("tags_filter"):
+            return filtered
+
+    def read_waterways(_path, profiler):
+        with profiler.phase("waterway_processing"):
+            return features
+
+    monkeypatch.setattr(cli, "prepare_england_pbf", prepare)
+    monkeypatch.setattr(cli, "read_england_waterways", read_waterways)
+    monkeypatch.setattr(cli, "stream_linear_pois", lambda *_args: None)
+    monkeypatch.setattr(cli, "stream_area_pois", lambda *_args: None)
+
+    rc = cli.main(
+        ["build", "england", "--pbf", str(source), "--out", str(tmp_path / "out.pkl"),
+         "--profile"]
+    )
+
+    records = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert rc == 0
+    assert [record["phase"] for record in records] == [
+        "tags_filter",
+        "waterway_processing",
+        "graph_build",
+        "graph_annotation",
+        "lock_attachment",
+        "linear_poi_processing",
+        "area_poi_processing",
+        "artifact_validation",
+        "artifact_serialization",
+    ]
+
+
+def test_build_england_stream_failure_reports_failed_phase_and_does_not_write(
+    monkeypatch, tmp_path, capsys
+):
+    features = _sample_features().model_copy(update={"source": "geofabrik", "bbox": None})
+    source = tmp_path / "england.osm.pbf"
+    source.write_bytes(b"source")
+    filtered = tmp_path / "england_waterways.osm.pbf"
+    filtered.write_bytes(b"filtered")
+    monkeypatch.setattr(cli, "prepare_england_pbf", lambda _pbf, _profiler: filtered)
+    monkeypatch.setattr(cli, "read_england_waterways", lambda _path, _profiler: features)
+    monkeypatch.setattr(
+        cli,
+        "stream_linear_pois",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("broken PBF")),
+    )
+    writes = []
+    monkeypatch.setattr(cli, "write_artifact", lambda *_args: writes.append(True))
+
+    with pytest.raises(RuntimeError, match="broken PBF"):
+        cli.main(
+            ["build", "england", "--pbf", str(source),
+             "--out", str(tmp_path / "out.pkl"), "--profile"]
+        )
+
+    records = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert records[-1]["phase"] == "linear_poi_processing"
+    assert records[-1]["status"] == "failed"
+    assert writes == []
 
 
 def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_path, monkeypatch):

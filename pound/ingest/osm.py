@@ -502,6 +502,33 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
     )
 
 
+def prepare_england_pbf(pbf_path: Path, profiler: BuildProfiler) -> Path:
+    """Create the one immutable filtered PBF consumed by all England passes."""
+    pbf_path = Path(pbf_path)
+    base = pbf_path.name.split(".")[0]
+    filtered = pbf_path.parent / (base + "_waterways.osm.pbf")
+    counts = {}
+    with profiler.phase("tags_filter", counts=lambda: counts):
+        if profiler.enabled:
+            counts["input_bytes"] = pbf_path.stat().st_size
+        run_tags_filter(pbf_path, filtered)
+        if profiler.enabled:
+            counts["output_bytes"] = filtered.stat().st_size
+    return filtered
+
+
+def read_england_waterways(filtered_pbf: Path, profiler: BuildProfiler) -> WaterwayFeatures:
+    """Read, prune, and navigability-filter England graph inputs in one profiled phase."""
+    counts = {}
+    with profiler.phase("waterway_processing", counts=lambda: counts):
+        features = read_waterway_features(filtered_pbf, profile_counts=counts)
+        counts.update(input_nodes=len(features.nodes), input_ways=len(features.ways))
+        features = prune_non_navigable_infra(features)
+        features = filter_navigable_ways(features)
+        counts.update(output_nodes=len(features.nodes), output_ways=len(features.ways))
+    return features
+
+
 def read_england(
     pbf_path: Path | None = None, *, profiler: BuildProfiler | None = None
 ) -> WaterwayFeatures:

@@ -17,8 +17,14 @@ from pound.graph.artifact import _prepare_build_artifact, write_artifact
 from pound.graph.build import build_graph
 from pound.graph.gazetteer import attach_node_names, build_gazetteer
 from pound.graph.locks import attach_locks
-from pound.graph.pois import attach_pois
-from pound.ingest.osm import read_england
+from pound.graph.pois import PoiAttachmentIndex, PoiBuildAccumulator, attach_pois
+from pound.ingest.diagnostics import PoiDiagnostics
+from pound.ingest.osm import (
+    prepare_england_pbf,
+    read_england_waterways,
+    stream_area_pois,
+    stream_linear_pois,
+)
 from pound.ingest.overpass import fetch_oxford
 from pound.ingest.profile import BuildProfiler
 from pound.ingest.summarize import summarize, summarize_pois
@@ -84,6 +90,28 @@ def _build_from_features(features, args, profiler: BuildProfiler | None = None) 
 
     poi_result = _attach_poi_phase(graph, poi_candidates, profiler)
     del poi_candidates
+    return _complete_build(
+        graph,
+        lock_report,
+        poi_result,
+        poi_ingest_report,
+        source,
+        fetched_at,
+        args,
+        profiler,
+    )
+
+
+def _complete_build(
+    graph,
+    lock_report,
+    poi_result,
+    poi_ingest_report,
+    source,
+    fetched_at,
+    args,
+    profiler: BuildProfiler,
+) -> int:
     validation = validate_graph(graph, lock_report, poi_result.summary)
     poi_summary = summarize_pois(poi_result.pois, poi_ingest_report, poi_result.summary)
     del poi_ingest_report
@@ -122,6 +150,46 @@ def _build_from_features(features, args, profiler: BuildProfiler | None = None) 
     return 0
 
 
+def _build_england_multipass(
+    pbf_path: Path, args, profiler: BuildProfiler | None = None
+) -> int:
+    profiler = profiler or BuildProfiler()
+    filtered = prepare_england_pbf(pbf_path, profiler)
+    features = read_england_waterways(filtered, profiler)
+    graph, lock_report = _build_graph_phases(features, profiler)
+    source = features.source
+    fetched_at = features.fetched_at
+    del features
+
+    accumulator = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+    linear_diagnostics = PoiDiagnostics()
+    linear_counts = {}
+    with profiler.phase("linear_poi_processing", counts=lambda: linear_counts):
+        stream_linear_pois(filtered, accumulator.add, linear_diagnostics, linear_counts)
+        linear_counts["accepted"] = accumulator.accepted_count
+
+    area_diagnostics = PoiDiagnostics()
+    area_counts = {}
+    with profiler.phase("area_poi_processing", counts=lambda: area_counts):
+        stream_area_pois(filtered, accumulator.add, area_diagnostics, area_counts)
+        area_counts["accepted"] = accumulator.accepted_count
+
+    poi_result = accumulator.build_result()
+    diagnostics = PoiDiagnostics()
+    diagnostics.merge(linear_diagnostics.build_report())
+    diagnostics.merge(area_diagnostics.build_report())
+    return _complete_build(
+        graph,
+        lock_report,
+        poi_result,
+        diagnostics.build_report(),
+        source,
+        fetched_at,
+        args,
+        profiler,
+    )
+
+
 def _resolve_pbf(args) -> Path:
     if args.pbf:
         return Path(args.pbf)
@@ -142,7 +210,7 @@ def _cmd_build(args) -> int:
             f"Set POUND_PBF_PATH or pass --pbf PATH."
         )
         raise SystemExit(2)
-    return _build_from_features(read_england(pbf, profiler=profiler), args, profiler)
+    return _build_england_multipass(pbf, args, profiler)
 
 
 def _register_oxford(sub):

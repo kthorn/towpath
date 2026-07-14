@@ -213,6 +213,10 @@ class PoiBuildAccumulator:
                 return
         self._winners[candidate.identity] = (candidate_key, poi)
 
+    @property
+    def accepted_count(self) -> int:
+        return len(self._winners)
+
     def build_result(self) -> PoiBuildResult:
         pois = sorted(
             (winner[1] for winner in self._winners.values()),
