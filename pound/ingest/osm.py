@@ -116,6 +116,79 @@ def run_tags_filter(in_pbf: Path, out_pbf: Path) -> None:
     )
 
 
+def read_waterway_features(
+    pbf_path: Path, *, profile_counts: dict | None = None
+) -> WaterwayFeatures:
+    """Read only graph-building waterways and infrastructure from a filtered PBF."""
+    import osmium
+
+    ways: list[WaterwayWay] = []
+    nodes: list[WaterwayNode] = []
+    pbf_path = Path(pbf_path)
+    scanned = 0
+
+    for obj in osmium.FileProcessor(str(pbf_path)).with_locations():
+        scanned += 1
+        tags = {tag.k: tag.v for tag in obj.tags}
+        object_name = type(obj).__name__
+        if object_name == "Way":
+            if filters.is_derelict(tags):
+                continue
+            kind = filters.classify_way(tags)
+            if kind is None:
+                continue
+            node_ids: list[int] = []
+            geometry: list[tuple[float, float]] = []
+            for node_ref in obj.nodes:
+                try:
+                    lat = node_ref.location.lat
+                    lon = node_ref.location.lon
+                except osmium.InvalidLocationError:
+                    continue
+                node_ids.append(node_ref.ref)
+                geometry.append((lat, lon))
+            if len(geometry) >= 2:
+                ways.append(
+                    WaterwayWay(
+                        osm_id=obj.id,
+                        kind=kind,
+                        name=tags.get("name"),
+                        tags=tags,
+                        node_ids=node_ids,
+                        geometry=geometry,
+                        dimensions=filters.extract_dimensions(tags),
+                        has_tunnel=tags.get("tunnel") == "yes",
+                        has_movable_bridge=(
+                            "bridge:movable" in tags or tags.get("bridge") == "movable"
+                        ),
+                    )
+                )
+        elif object_name == "Node":
+            kind = filters.classify_node(tags)
+            if kind is not None and obj.location.valid:
+                nodes.append(
+                    WaterwayNode(
+                        osm_id=obj.id,
+                        lat=obj.location.lat,
+                        lon=obj.location.lon,
+                        tags=tags,
+                        kind=kind,
+                    )
+                )
+
+    routable = {WaterwayKind.CANAL, WaterwayKind.RIVER, WaterwayKind.FAIRWAY}
+    ways.sort(key=lambda way: (0 if way.kind in routable else 1, way.osm_id))
+    if profile_counts is not None:
+        profile_counts.update(scanned=scanned, ways=len(ways), nodes=len(nodes))
+    return WaterwayFeatures(
+        ways=ways,
+        nodes=nodes,
+        source="geofabrik",
+        fetched_at=datetime.fromtimestamp(pbf_path.stat().st_mtime, tz=UTC).isoformat(),
+        bbox=None,
+    )
+
+
 def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayFeatures:
     """Stream-parse a filtered PBF (or OSM XML) via pyosmium into WaterwayFeatures.
 

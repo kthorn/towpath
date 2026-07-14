@@ -10,6 +10,7 @@ from pound.ingest.osm import (
     _normalized_geometry_wkt,
     _PendingAreas,
     read_pbf,
+    read_waterway_features,
 )
 from tests.fixtures import oxford_fixture_path
 
@@ -56,6 +57,24 @@ def test_read_pbf_captures_place_and_lock_gate_nodes():
     gates = [n for n in feats.nodes if n.kind == NodeKind.LOCK_GATE]
     assert {n.osm_id for n in places} == {1, 4, 6}
     assert {n.osm_id for n in gates} == {5}
+
+
+def test_read_waterway_features_matches_graph_inputs_without_classifying_pois(monkeypatch):
+    legacy = read_pbf(_tiny_pbf_path())
+
+    monkeypatch.setattr(
+        "pound.ingest.osm.classify_poi",
+        lambda _tags: (_ for _ in ()).throw(AssertionError("classified POIs")),
+    )
+    waterway = read_waterway_features(_tiny_pbf_path())
+
+    assert waterway.ways == legacy.ways
+    assert waterway.nodes == legacy.nodes
+    assert waterway.source == legacy.source
+    assert waterway.fetched_at == legacy.fetched_at
+    assert waterway.bbox == legacy.bbox
+    assert waterway.poi_candidates == []
+    assert waterway.poi_ingest_report.skipped_counts == {}
 
 
 def test_read_pbf_emits_bulk_pois_with_area_assembly_and_deduplication():
