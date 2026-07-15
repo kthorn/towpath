@@ -269,6 +269,31 @@ def test_linear_stream_skips_abandoned_path_like_legacy_reader(tmp_path):
     assert candidates == []
 
 
+def test_area_stream_preserves_legacy_abandoned_tagged_closed_path(tmp_path):
+    osm = tmp_path / "abandoned_closed_path.osm"
+    osm.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6">
+  <node id="1" lat="51.7500" lon="-1.2600"/>
+  <node id="2" lat="51.7500" lon="-1.2590"/>
+  <node id="3" lat="51.7510" lon="-1.2590"/>
+  <way id="14">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="1"/>
+    <tag k="highway" v="footway"/><tag k="area" v="yes"/>
+    <tag k="abandoned:highway" v="service"/>
+  </way>
+</osm>
+"""
+    )
+    areas = []
+
+    stream_area_pois(osm, areas.append, PoiDiagnostics())
+
+    assert [
+        (candidate.osm_id, candidate.kind, candidate.geometry_source) for candidate in areas
+    ] == [(14, "path_connection", "area")]
+
+
 def test_tags_filter_round_trip_matches_overpass_shape(monkeypatch, tmp_path):
     """OQ-D1 divergence-fails-loudly: the filtered PBF reproduces the OVERPASS
     reader's WaterwayFeatures shape for the Oxford-equivalent fixture. Needs

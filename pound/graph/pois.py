@@ -7,6 +7,7 @@ from typing import Any
 import networkx as nx
 from pyproj import Transformer
 from shapely import (
+    distance as geometry_distance,
     from_wkt,
     get_point,
     get_type_id,
@@ -131,10 +132,18 @@ class PoiAttachmentIndex:
             if not _routing_eligible(data):
                 continue
             key = (min(u, v), max(u, v))
-            edge_records.append((key, _to_bng(_edge_line_wgs84(graph, u, v, data))))
+            edge_records.append((key, _edge_line_wgs84(graph, u, v, data)))
         edge_records.sort(key=lambda record: record[0])
         self.edge_keys = [record[0] for record in edge_records]
-        self.tree = STRtree([record[1] for record in edge_records]) if edge_records else None
+        if edge_records:
+            edge_geometries = transform(
+                [record[1] for record in edge_records],
+                _TO_BNG.transform,
+                interleaved=False,
+            )
+            self.tree = STRtree(edge_geometries)
+        else:
+            self.tree = None
 
     def attach(self, candidate: PoiCandidate) -> tuple[PointOfInterest | None, str | None]:
         geometry_wgs84, skip_reason = _normalized_geometry(candidate)
@@ -214,8 +223,16 @@ class PoiAttachmentIndex:
             return [result for result in results if result is not None]
 
         geometries_bng = _to_bng(geometries[usable_indexes])
-        indexes, distances = self.tree.query_nearest(
-            geometries_bng, all_matches=True, return_distance=True
+        corridors = [
+            _CORRIDOR_M[candidate_list[index].category] for index in usable_indexes
+        ]
+        indexes = self.tree.query(
+            geometries_bng,
+            predicate="dwithin",
+            distance=corridors,
+        )
+        distances = geometry_distance(
+            geometries_bng[indexes[0]], self.tree.geometries[indexes[1]]
         )
         ranked: dict[int, tuple[float, tuple[int, int], int]] = {}
         for source_index, edge_index, distance in zip(
@@ -230,10 +247,11 @@ class PoiAttachmentIndex:
 
         accepted = []
         for local_index, candidate_index in enumerate(usable_indexes):
-            distance_m, edge_key, edge_index = ranked[local_index]
-            if distance_m > _CORRIDOR_M[candidate_list[candidate_index].category]:
+            nearest = ranked.get(local_index)
+            if nearest is None:
                 results[candidate_index] = (None, "rejected_by_corridor")
             else:
+                distance_m, edge_key, edge_index = nearest
                 accepted.append(
                     (candidate_index, local_index, edge_index, distance_m, edge_key)
                 )

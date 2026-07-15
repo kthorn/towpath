@@ -307,7 +307,11 @@ def stream_area_pois(
             continue
         if object_name != "Area":
             continue
-        if obj.from_way() and tags.get("highway") in {"footway", "path", "pedestrian"}:
+        if (
+            obj.from_way()
+            and tags.get("highway") in {"footway", "path", "pedestrian"}
+            and not filters.is_derelict(tags)
+        ):
             continue
 
         osm_type = OsmElementType.WAY if obj.from_way() else OsmElementType.RELATION

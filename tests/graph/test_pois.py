@@ -353,3 +353,51 @@ def test_streaming_accumulator_add_many_matches_repeated_add():
         repeated.add(candidate)
 
     assert batched.build_result() == repeated.build_result()
+
+
+def test_attachment_index_projects_all_edge_geometries_in_one_vectorized_call(monkeypatch):
+    from pound.graph import pois as pois_module
+
+    graph = _graph()
+    graph.add_node(3, lat=graph.nodes[9]["lat"] + 0.01, lon=graph.nodes[9]["lon"])
+    graph.add_edge(9, 3, navigable=True)
+    calls = []
+    real_transform = pois_module.transform
+
+    def spy_transform(geometries, *args, **kwargs):
+        calls.append(geometries)
+        return real_transform(geometries, *args, **kwargs)
+
+    monkeypatch.setattr(pois_module, "transform", spy_transform)
+
+    PoiAttachmentIndex(graph)
+
+    assert len(calls) == 1
+    assert len(calls[0]) == 2
+
+
+def test_batched_attachment_uses_bounded_corridor_query():
+    graph = _graph()
+    index = PoiAttachmentIndex(graph)
+    real_tree = index.tree
+    assert real_tree is not None
+
+    class BoundedTree:
+        geometries = real_tree.geometries
+
+        def query(self, *args, **kwargs):
+            assert kwargs["predicate"] == "dwithin"
+            return real_tree.query(*args, **kwargs)
+
+        def query_nearest(self, *_args, **_kwargs):
+            raise AssertionError("used unbounded nearest query")
+
+    index.tree = BoundedTree()
+    candidates = [
+        _candidate(_offset_from_edge(graph, 20), osm_id=1),
+        _candidate(_offset_from_edge(graph, 2000), osm_id=2),
+    ]
+
+    assert index.attach_many(candidates) == [
+        PoiAttachmentIndex(graph).attach(candidate) for candidate in candidates
+    ]
