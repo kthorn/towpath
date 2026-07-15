@@ -181,7 +181,11 @@ def _build_england_multipass(
     fetched_at = features.fetched_at
     del features
 
-    accumulator = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+    # The split readers emit each source identity once. Avoid retaining millions of rejected
+    # candidate payloads solely to defend against duplicates that the producer excludes.
+    accumulator = PoiBuildAccumulator(
+        PoiAttachmentIndex(graph), retain_rejected_winners=False
+    )
     linear_diagnostics = PoiDiagnostics()
     linear_counts = {}
     with profiler.phase("linear_poi_processing", counts=lambda: linear_counts):

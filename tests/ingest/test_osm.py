@@ -159,15 +159,21 @@ def test_streaming_passes_match_legacy_attached_pois_and_ingest_diagnostics():
     accumulator = PoiBuildAccumulator(PoiAttachmentIndex(graph))
     linear_diagnostics = PoiDiagnostics()
     area_diagnostics = PoiDiagnostics()
+    streamed_identities = []
 
-    stream_linear_pois(_tiny_pbf_path(), accumulator.add, linear_diagnostics)
-    stream_area_pois(_tiny_pbf_path(), accumulator.add, area_diagnostics)
+    def consume(candidate):
+        streamed_identities.append(candidate.identity)
+        accumulator.add(candidate)
+
+    stream_linear_pois(_tiny_pbf_path(), consume, linear_diagnostics)
+    stream_area_pois(_tiny_pbf_path(), consume, area_diagnostics)
     diagnostics = PoiDiagnostics()
     diagnostics.merge(linear_diagnostics.build_report())
     diagnostics.merge(area_diagnostics.build_report())
 
     assert accumulator.build_result() == attach_pois(graph, legacy.poi_candidates)
     assert diagnostics.build_report() == legacy.poi_ingest_report
+    assert len(streamed_identities) == len(set(streamed_identities))
 
 
 def test_area_stream_does_not_reemit_closed_path_registered_for_linear_pass(tmp_path):

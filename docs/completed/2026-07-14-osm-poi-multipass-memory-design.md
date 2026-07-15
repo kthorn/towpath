@@ -1,6 +1,6 @@
 # OSM POI Multi-Pass Memory Design
 
-> **Status:** approved in session; implementation pending
+> **Status:** implemented and accepted on 2026-07-14
 > **Builds on:** `docs/completed/2026-07-12-osm-poi-ingest-design.md` and the Stage 1
 > memory-cleanup commits on `plan/osm-poi-ingest`
 
@@ -77,6 +77,12 @@ candidate JSON ordering; the earlier serialized candidate wins. Duplicate counts
 extra occurrence even when the incumbent remains. After all passes, accepted winners are sorted by
 `(osm_type.value, osm_id, kind)` before artifact preparation.
 
+The general accumulator retains rejected winners so duplicate ordering and rejection counts remain
+exact. The England CLI sets `retain_rejected_winners=False` to keep rejected payloads bounded. That
+mode relies on a producer invariant pinned by tests and whole-build parity: nodes are emitted only
+by the linear pass, relations only by the area pass, active path ways and area ways are disjoint,
+resolved area callbacks are suppressed, and classification de-duplicates `(category, kind)`.
+
 Diagnostics preserve exact counts and the five lexicographically smallest distinct examples per
 reason. Pass-local diagnostics merge by summing counts and applying the same bounded-set rule.
 Area bookkeeping stores only source identity and optional node count, removes emitted entries
@@ -148,3 +154,48 @@ This design does not change the artifact schema, Overpass behavior, taxonomy, ta
 routing behavior, public pure lock API, category radii, or generated-data policy. It does not add a
 candidate database, persistent scan cache, multiprocessing, UI behavior, or remote deployment work.
 Temporary PBFs, artifacts, benchmarks, and profiles remain under `/tmp` and are never committed.
+
+## 9. Acceptance evidence
+
+The implementation met the acceptance gate on the 7.50 GiB developer host. The authoritative
+England command was:
+
+```text
+/usr/bin/time -v uv run --extra bulk pound-ingest build england \
+  --pbf /home/kurtt/towpath/pound/data/england.osm.pbf \
+  --out /tmp/pound-england-final.pkl --profile
+```
+
+It exited zero in 21:18.15 with maximum RSS of 3,058,100 KiB (2.92 GiB). This is a 55.8% reduction
+from the Stage 1 peak of 6,919,480 KiB, below the 5.25 GiB target and 6 GiB hard ceiling. Runtime
+was below the 25:21 acceptance limit. The profile completed continuously from `tags_filter`
+through `artifact_validation` and `artifact_serialization`; the final two phases took 42.39 and
+9.55 seconds respectively.
+
+Strict reload produced 695,932 graph nodes, 695,510 edges, and 525,211 accepted POIs, matching the
+Stage 1 England counts. Hard validation fields were all zero: derelict edges, self-loops, duplicate
+POI identities, empty geometry, and invalid geometry. A memory-conscious whole-England comparator
+strict-loaded the artifacts sequentially and reported zero missing, added, or changed POI payloads
+across all 525,211 identities.
+
+The exact Oxford regional comparator exited zero. Raw scan benchmarks measured 22.26 seconds and
+363,228 KiB for the non-area pass, and 23.38 seconds and 365,460 KiB for the area-enabled pass. The
+final England linear POI phase took 535.78 seconds and completed with 494,082 accepted POIs before
+the 297.98-second area pass. A prior complete England iteration exposed four missing derelict
+closed-path POIs;
+fixture regressions and a repeated regional comparison pinned the legacy area-callback behavior
+before the accepted run restored the full 525,211 count.
+
+Fresh completion verification passed:
+
+- `pytest --run-bulk tests/ingest tests/graph tests/validate -q`: 322 passed, 1 network test
+  skipped;
+- `pytest --ignore=tests/web -q`: 415 passed, 22 expected network/bulk skips;
+- `pytest tests/graph/test_pois.py -q`: 22 passed, including review regressions for rejected
+  duplicates and isolated geometry-repair failures;
+- `ruff check .`: all checks passed;
+- `git diff --check`: clean.
+
+The complete default suite was also attempted, but the pre-existing web TestClient suite stalled on
+`test_candidates_returns_named_sorted_points_with_revision`; the same stall reproduced when that
+web file ran alone. No ingest, graph, route, validation, schema, or comparison test failed.

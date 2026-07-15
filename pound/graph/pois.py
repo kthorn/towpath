@@ -192,9 +192,17 @@ class PoiAttachmentIndex:
             if geometry is not None and not empty_flags[index] and not valid_flags[index]
         ]
         if repair_indexes:
-            repaired = make_valid(geometries[repair_indexes])
-            for index, geometry in zip(repair_indexes, repaired, strict=True):
-                geometries[index] = geometry
+            try:
+                repaired = make_valid(geometries[repair_indexes])
+            except GEOSException:
+                for index in repair_indexes:
+                    try:
+                        geometries[index] = make_valid(geometries[index])
+                    except GEOSException:
+                        geometries[index] = None
+            else:
+                for index, geometry in zip(repair_indexes, repaired, strict=True):
+                    geometries[index] = geometry
             empty_flags = is_empty(geometries)
             valid_flags = is_valid(geometries)
         type_ids = get_type_id(geometries)
@@ -371,11 +379,16 @@ class PoiAttachmentIndex:
 
 
 class PoiBuildAccumulator:
-    """Attach candidates immediately while retaining accepted identity winners only."""
+    """Attach candidates immediately while retaining deterministic identity winners only."""
 
-    def __init__(self, index: PoiAttachmentIndex) -> None:
+    def __init__(
+        self, index: PoiAttachmentIndex, *, retain_rejected_winners: bool = True
+    ) -> None:
         self.index = index
-        self._winners: dict[tuple, tuple[str, PointOfInterest]] = {}
+        self._retain_rejected_winners = retain_rejected_winners
+        self._winners: dict[
+            tuple, tuple[str, PointOfInterest | None, str | None]
+        ] = {}
         self._summary = {
             "duplicate_identities": 0,
             "empty_geometry": 0,
@@ -400,25 +413,43 @@ class PoiBuildAccumulator:
         poi: PointOfInterest | None,
         skip_reason: str | None,
     ) -> None:
-        if skip_reason is not None:
-            self._summary[skip_reason] += 1
+        if not self._retain_rejected_winners:
+            if skip_reason is not None:
+                self._summary[skip_reason] += 1
+                return
+            assert poi is not None
+            candidate_key = candidate.model_dump_json()
+            incumbent = self._winners.get(candidate.identity)
+            if incumbent is not None:
+                self._summary["duplicate_identities"] += 1
+                if candidate_key >= incumbent[0]:
+                    return
+            self._winners[candidate.identity] = (candidate_key, poi, None)
             return
-        assert poi is not None
+
         candidate_key = candidate.model_dump_json()
         incumbent = self._winners.get(candidate.identity)
         if incumbent is not None:
             self._summary["duplicate_identities"] += 1
             if candidate_key >= incumbent[0]:
                 return
-        self._winners[candidate.identity] = (candidate_key, poi)
+            incumbent_skip_reason = incumbent[2]
+            if incumbent_skip_reason is not None:
+                self._summary[incumbent_skip_reason] -= 1
+
+        if skip_reason is not None:
+            self._summary[skip_reason] += 1
+        else:
+            assert poi is not None
+        self._winners[candidate.identity] = (candidate_key, poi, skip_reason)
 
     @property
     def accepted_count(self) -> int:
-        return len(self._winners)
+        return sum(winner[1] is not None for winner in self._winners.values())
 
     def build_result(self) -> PoiBuildResult:
         pois = sorted(
-            (winner[1] for winner in self._winners.values()),
+            (winner[1] for winner in self._winners.values() if winner[1] is not None),
             key=lambda poi: (poi.osm_type.value, poi.osm_id, poi.kind),
         )
         return PoiBuildResult(pois=tuple(pois), summary=dict(self._summary))
@@ -431,7 +462,9 @@ def attach_pois(graph: nx.Graph, candidates: Iterable[PoiCandidate]) -> PoiBuild
     Neither the graph nor any input candidate is modified.
     """
     ordered_candidates, duplicate_count = _deduplicate_candidates(candidates)
-    accumulator = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+    accumulator = PoiBuildAccumulator(
+        PoiAttachmentIndex(graph), retain_rejected_winners=False
+    )
     for candidate in ordered_candidates:
         accumulator.add(candidate)
     result = accumulator.build_result()

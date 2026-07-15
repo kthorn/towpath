@@ -3,6 +3,7 @@ from copy import deepcopy
 import networkx as nx
 import pytest
 from pyproj import Transformer
+from shapely.errors import GEOSException
 from shapely.geometry import LineString, Point, Polygon
 
 from pound.graph.pois import PoiAttachmentIndex, PoiBuildAccumulator, attach_pois
@@ -282,6 +283,47 @@ def test_streaming_accumulator_chooses_legacy_winner_for_accepted_duplicates():
     assert reverse.build_result() == expected
 
 
+def test_streaming_accumulator_matches_legacy_when_duplicate_winner_is_rejected():
+    graph = _graph()
+    valid = _candidate(_offset_from_edge(graph, 20)).model_copy(update={"name": "Zulu"})
+    invalid = valid.model_copy(update={"name": "Alpha", "geometry_wkt": "not wkt"})
+    assert invalid.model_dump_json() < valid.model_dump_json()
+    expected = attach_pois(graph, [valid, invalid])
+
+    for candidates in ((valid, invalid), (invalid, valid)):
+        repeated = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+        batched = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+        for candidate in candidates:
+            repeated.add(candidate)
+        batched.add_many(candidates)
+
+        assert repeated.build_result() == expected
+        assert batched.build_result() == expected
+
+
+def test_streaming_accumulator_counts_rejected_duplicate_once_like_legacy():
+    graph = _graph()
+    rejected = _candidate(_offset_from_edge(graph, 2000))
+    expected = attach_pois(graph, [rejected, rejected])
+    accumulator = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+
+    accumulator.add_many([rejected, rejected])
+
+    assert accumulator.build_result() == expected
+
+
+def test_streaming_accumulator_can_discard_unique_rejected_winners():
+    graph = _graph()
+    accumulator = PoiBuildAccumulator(
+        PoiAttachmentIndex(graph), retain_rejected_winners=False
+    )
+
+    accumulator.add(_candidate(_offset_from_edge(graph, 2000)))
+
+    assert accumulator.build_result().summary["rejected_by_corridor"] == 1
+    assert accumulator._winners == {}
+
+
 def test_batched_attachment_matches_single_candidate_results_exactly():
     graph = _graph(non_navigable_shortcut=True)
     candidates = [
@@ -296,6 +338,47 @@ def test_batched_attachment_matches_single_candidate_results_exactly():
     individual = [index.attach(candidate) for candidate in candidates]
 
     assert batched == individual
+
+
+def test_batched_attachment_isolates_geometry_repair_failures():
+    graph = _graph()
+    candidates = [
+        _candidate("POLYGON ((0 0, NaN 1, 1 1, 0 0))", osm_id=1, geometry_source="area"),
+        _candidate(_offset_from_edge(graph, 20), osm_id=2),
+    ]
+    index = PoiAttachmentIndex(graph)
+
+    with pytest.warns(RuntimeWarning, match="invalid value encountered"):
+        batched = index.attach_many(candidates)
+    with pytest.warns(RuntimeWarning, match="invalid value encountered"):
+        individual = [index.attach(candidate) for candidate in candidates]
+
+    assert batched == individual
+
+
+def test_batched_attachment_contains_make_valid_exception(monkeypatch):
+    from pound.graph import pois as pois_module
+
+    graph = _graph()
+    candidates = [
+        _candidate(
+            "POLYGON ((0 0, 1 1, 1 0, 0 1, 0 0))",
+            osm_id=1,
+            geometry_source="area",
+        ),
+        _candidate(_offset_from_edge(graph, 20), osm_id=2),
+    ]
+    index = PoiAttachmentIndex(graph)
+
+    def fail_repair(_geometry):
+        raise GEOSException("forced repair failure")
+
+    monkeypatch.setattr(pois_module, "make_valid", fail_repair)
+
+    assert index.attach_many(candidates) == [
+        (None, "invalid_geometry"),
+        index.attach(candidates[1]),
+    ]
 
 
 def test_batched_attachment_vectorizes_geometry_hot_path(monkeypatch):

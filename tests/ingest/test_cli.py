@@ -178,6 +178,14 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli, "stream_linear_pois", stream_linear)
     monkeypatch.setattr(cli, "stream_area_pois", stream_area)
+    accumulator_options = []
+    real_accumulator = cli.PoiBuildAccumulator
+
+    def bounded_accumulator(index, **options):
+        accumulator_options.append(options)
+        return real_accumulator(index, **options)
+
+    monkeypatch.setattr(cli, "PoiBuildAccumulator", bounded_accumulator)
     out = tmp_path / "england.pkl"
     rc = cli.main(
         [
@@ -194,6 +202,7 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
     assert "gazetteer" in artifact.graph.graph
     assert "Oxford" in artifact.graph.graph["gazetteer"]
     assert seen_paths == [filtered, filtered, filtered]
+    assert accumulator_options == [{"retain_rejected_winners": False}]
 
 
 def test_build_england_profile_reports_multi_pass_phase_order(monkeypatch, tmp_path, capsys):
