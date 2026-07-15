@@ -280,3 +280,36 @@ def test_streaming_accumulator_chooses_legacy_winner_for_accepted_duplicates():
 
     assert forward.build_result() == expected
     assert reverse.build_result() == expected
+
+
+def test_batched_attachment_matches_single_candidate_results_exactly():
+    graph = _graph(non_navigable_shortcut=True)
+    candidates = [
+        _candidate(_offset_from_edge(graph, 20), osm_id=3),
+        _candidate(_offset_from_edge(graph, 2000), osm_id=1),
+        _candidate("POINT EMPTY", osm_id=2),
+        _candidate(_offset_from_edge(graph, 0, along=0.5), osm_id=4),
+    ]
+    index = PoiAttachmentIndex(graph)
+
+    batched = index.attach_many(candidates)
+    individual = [index.attach(candidate) for candidate in candidates]
+
+    assert batched == individual
+
+
+def test_streaming_accumulator_add_many_matches_repeated_add():
+    graph = _graph()
+    candidates = [
+        _candidate(_offset_from_edge(graph, 20), osm_id=2),
+        _candidate(_offset_from_edge(graph, 30), osm_id=1),
+        _candidate(_offset_from_edge(graph, 2000), osm_id=3),
+    ]
+    batched = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+    repeated = PoiBuildAccumulator(PoiAttachmentIndex(graph))
+
+    batched.add_many(candidates)
+    for candidate in candidates:
+        repeated.add(candidate)
+
+    assert batched.build_result() == repeated.build_result()

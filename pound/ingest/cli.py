@@ -34,6 +34,26 @@ _GEOFABRIK_ENGLAND_URL = (
     "https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf"
 )
 _ENGLAND_EXPECTED_GIB = 1.5
+_POI_BATCH_SIZE = 4096
+
+
+class _BatchingPoiConsumer:
+    def __init__(self, accumulator: PoiBuildAccumulator, *, batch_size: int = _POI_BATCH_SIZE):
+        self._accumulator = accumulator
+        self._batch_size = batch_size
+        self._candidates = []
+
+    def __call__(self, candidate) -> None:
+        self._candidates.append(candidate)
+        if len(self._candidates) >= self._batch_size:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self._candidates:
+            return
+        candidates = self._candidates
+        self._candidates = []
+        self._accumulator.add_many(candidates)
 
 
 def _cmd_oxford(args):
@@ -165,13 +185,17 @@ def _build_england_multipass(
     linear_diagnostics = PoiDiagnostics()
     linear_counts = {}
     with profiler.phase("linear_poi_processing", counts=lambda: linear_counts):
-        stream_linear_pois(filtered, accumulator.add, linear_diagnostics, linear_counts)
+        linear_consumer = _BatchingPoiConsumer(accumulator)
+        stream_linear_pois(filtered, linear_consumer, linear_diagnostics, linear_counts)
+        linear_consumer.flush()
         linear_counts["accepted"] = accumulator.accepted_count
 
     area_diagnostics = PoiDiagnostics()
     area_counts = {}
     with profiler.phase("area_poi_processing", counts=lambda: area_counts):
-        stream_area_pois(filtered, accumulator.add, area_diagnostics, area_counts)
+        area_consumer = _BatchingPoiConsumer(accumulator)
+        stream_area_pois(filtered, area_consumer, area_diagnostics, area_counts)
+        area_consumer.flush()
         area_counts["accepted"] = accumulator.accepted_count
 
     poi_result = accumulator.build_result()

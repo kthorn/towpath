@@ -405,3 +405,15 @@ def test_build_releases_feature_ir_before_poi_attachment(tmp_path, monkeypatch):
     rc = cli.main(["build", "oxford", "--out", str(tmp_path / "graph.pkl")])
 
     assert rc == 0
+
+
+def test_batching_poi_consumer_flushes_fixed_size_batches_and_tail():
+    batches = []
+    accumulator = type("Accumulator", (), {"add_many": batches.append})()
+    consumer = cli._BatchingPoiConsumer(accumulator, batch_size=2)
+
+    for value in range(5):
+        consumer(value)
+    consumer.flush()
+
+    assert batches == [[0, 1], [2, 3], [4]]

@@ -145,6 +145,77 @@ class PoiAttachmentIndex:
         if distance_m > _CORRIDOR_M[candidate.category]:
             return None, "rejected_by_corridor"
 
+        return self._finish_attachment(
+            candidate, geometry_wgs84, geometry_bng, distance_m, edge_key, edge_index
+        )
+
+    def attach_many(
+        self, candidates: Iterable[PoiCandidate]
+    ) -> list[tuple[PointOfInterest | None, str | None]]:
+        """Attach a bounded candidate batch with one vectorized nearest-edge query."""
+        candidate_list = list(candidates)
+        results: list[tuple[PointOfInterest | None, str | None] | None] = [
+            None
+        ] * len(candidate_list)
+        normalized: list[tuple[int, PoiCandidate, Any, Any]] = []
+        for position, candidate in enumerate(candidate_list):
+            geometry_wgs84, skip_reason = _normalized_geometry(candidate)
+            if skip_reason is not None:
+                results[position] = (None, skip_reason)
+                continue
+            if self.tree is None:
+                results[position] = (None, "rejected_by_corridor")
+                continue
+            normalized.append((position, candidate, geometry_wgs84, _to_bng(geometry_wgs84)))
+
+        if normalized:
+            indexes, distances = self.tree.query_nearest(
+                [item[3] for item in normalized], all_matches=True, return_distance=True
+            )
+            ranked: dict[int, tuple[float, tuple[int, int], int]] = {}
+            for source_index, edge_index, distance in zip(
+                indexes[0], indexes[1], distances, strict=True
+            ):
+                edge_position = int(edge_index)
+                choice = (
+                    float(distance),
+                    self.edge_keys[edge_position],
+                    edge_position,
+                )
+                source_position = int(source_index)
+                incumbent = ranked.get(source_position)
+                if incumbent is None or choice < incumbent:
+                    ranked[source_position] = choice
+
+            for source_position, (position, candidate, geometry_wgs84, geometry_bng) in enumerate(
+                normalized
+            ):
+                distance_m, edge_key, edge_index = ranked[source_position]
+                if distance_m > _CORRIDOR_M[candidate.category]:
+                    results[position] = (None, "rejected_by_corridor")
+                    continue
+                results[position] = self._finish_attachment(
+                    candidate,
+                    geometry_wgs84,
+                    geometry_bng,
+                    distance_m,
+                    edge_key,
+                    edge_index,
+                )
+
+        assert all(result is not None for result in results)
+        return [result for result in results if result is not None]
+
+    def _finish_attachment(
+        self,
+        candidate: PoiCandidate,
+        geometry_wgs84,
+        geometry_bng,
+        distance_m: float,
+        edge_key: tuple[int, int],
+        edge_index: int,
+    ) -> tuple[PointOfInterest, None]:
+
         candidate_nearest_bng, projected_bng = nearest_points(
             geometry_bng, self.tree.geometries[edge_index]
         )
@@ -201,6 +272,21 @@ class PoiBuildAccumulator:
 
     def add(self, candidate: PoiCandidate) -> None:
         poi, skip_reason = self.index.attach(candidate)
+        self._record(candidate, poi, skip_reason)
+
+    def add_many(self, candidates: Iterable[PoiCandidate]) -> None:
+        candidate_list = list(candidates)
+        for candidate, (poi, skip_reason) in zip(
+            candidate_list, self.index.attach_many(candidate_list), strict=True
+        ):
+            self._record(candidate, poi, skip_reason)
+
+    def _record(
+        self,
+        candidate: PoiCandidate,
+        poi: PointOfInterest | None,
+        skip_reason: str | None,
+    ) -> None:
         if skip_reason is not None:
             self._summary[skip_reason] += 1
             return
