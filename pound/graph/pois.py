@@ -6,7 +6,17 @@ from typing import Any
 
 import networkx as nx
 from pyproj import Transformer
-from shapely import from_wkt, make_valid, transform
+from shapely import (
+    from_wkt,
+    get_point,
+    get_type_id,
+    is_empty,
+    is_valid,
+    make_valid,
+    point_on_surface,
+    shortest_line,
+    transform,
+)
 from shapely.errors import GEOSException
 from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points
@@ -152,55 +162,138 @@ class PoiAttachmentIndex:
     def attach_many(
         self, candidates: Iterable[PoiCandidate]
     ) -> list[tuple[PointOfInterest | None, str | None]]:
-        """Attach a bounded candidate batch with one vectorized nearest-edge query."""
+        """Attach a bounded batch with vectorized geometry and nearest-edge operations."""
         candidate_list = list(candidates)
         results: list[tuple[PointOfInterest | None, str | None] | None] = [
             None
         ] * len(candidate_list)
-        normalized: list[tuple[int, PoiCandidate, Any, Any]] = []
-        for position, candidate in enumerate(candidate_list):
-            geometry_wgs84, skip_reason = _normalized_geometry(candidate)
-            if skip_reason is not None:
-                results[position] = (None, skip_reason)
-                continue
-            if self.tree is None:
-                results[position] = (None, "rejected_by_corridor")
-                continue
-            normalized.append((position, candidate, geometry_wgs84, _to_bng(geometry_wgs84)))
+        if not candidate_list:
+            return []
 
-        if normalized:
-            indexes, distances = self.tree.query_nearest(
-                [item[3] for item in normalized], all_matches=True, return_distance=True
-            )
-            ranked: dict[int, tuple[float, tuple[int, int], int]] = {}
-            for source_index, edge_index, distance in zip(
-                indexes[0], indexes[1], distances, strict=True
-            ):
-                edge_position = int(edge_index)
-                choice = (
-                    float(distance),
-                    self.edge_keys[edge_position],
-                    edge_position,
+        geometries = from_wkt(
+            [candidate.geometry_wkt for candidate in candidate_list], on_invalid="ignore"
+        )
+        empty_flags = is_empty(geometries)
+        valid_flags = is_valid(geometries)
+        repair_indexes = [
+            index
+            for index, geometry in enumerate(geometries)
+            if geometry is not None and not empty_flags[index] and not valid_flags[index]
+        ]
+        if repair_indexes:
+            repaired = make_valid(geometries[repair_indexes])
+            for index, geometry in zip(repair_indexes, repaired, strict=True):
+                geometries[index] = geometry
+            empty_flags = is_empty(geometries)
+            valid_flags = is_valid(geometries)
+        type_ids = get_type_id(geometries)
+        usable_type_ids = {
+            "point": {0},
+            "area": {3, 6},
+            "derived_path": {1, 5},
+        }
+        usable_indexes = []
+        for index, candidate in enumerate(candidate_list):
+            geometry = geometries[index]
+            if geometry is None:
+                results[index] = (None, "invalid_geometry")
+            elif empty_flags[index]:
+                results[index] = (None, "empty_geometry")
+            elif not valid_flags[index]:
+                results[index] = (None, "invalid_geometry")
+            elif int(type_ids[index]) not in usable_type_ids[candidate.geometry_source]:
+                results[index] = (None, "invalid_geometry")
+            else:
+                usable_indexes.append(index)
+
+        if not usable_indexes:
+            return [result for result in results if result is not None]
+        if self.tree is None:
+            for index in usable_indexes:
+                results[index] = (None, "rejected_by_corridor")
+            return [result for result in results if result is not None]
+
+        geometries_bng = _to_bng(geometries[usable_indexes])
+        indexes, distances = self.tree.query_nearest(
+            geometries_bng, all_matches=True, return_distance=True
+        )
+        ranked: dict[int, tuple[float, tuple[int, int], int]] = {}
+        for source_index, edge_index, distance in zip(
+            indexes[0], indexes[1], distances, strict=True
+        ):
+            edge_position = int(edge_index)
+            choice = (float(distance), self.edge_keys[edge_position], edge_position)
+            source_position = int(source_index)
+            incumbent = ranked.get(source_position)
+            if incumbent is None or choice < incumbent:
+                ranked[source_position] = choice
+
+        accepted = []
+        for local_index, candidate_index in enumerate(usable_indexes):
+            distance_m, edge_key, edge_index = ranked[local_index]
+            if distance_m > _CORRIDOR_M[candidate_list[candidate_index].category]:
+                results[candidate_index] = (None, "rejected_by_corridor")
+            else:
+                accepted.append(
+                    (candidate_index, local_index, edge_index, distance_m, edge_key)
                 )
-                source_position = int(source_index)
-                incumbent = ranked.get(source_position)
-                if incumbent is None or choice < incumbent:
-                    ranked[source_position] = choice
 
-            for source_position, (position, candidate, geometry_wgs84, geometry_bng) in enumerate(
-                normalized
-            ):
-                distance_m, edge_key, edge_index = ranked[source_position]
-                if distance_m > _CORRIDOR_M[candidate.category]:
-                    results[position] = (None, "rejected_by_corridor")
-                    continue
-                results[position] = self._finish_attachment(
-                    candidate,
-                    geometry_wgs84,
-                    geometry_bng,
-                    distance_m,
-                    edge_key,
-                    edge_index,
+        if accepted:
+            accepted_bng = geometries_bng[[item[1] for item in accepted]]
+            edge_geometries = self.tree.geometries[[item[2] for item in accepted]]
+            nearest_lines = shortest_line(accepted_bng, edge_geometries)
+            candidate_nearest_bng = get_point(nearest_lines, 0)
+            projected_bng = get_point(nearest_lines, -1)
+            candidate_nearest_wgs84 = _to_wgs84(candidate_nearest_bng)
+            projected_wgs84 = _to_wgs84(projected_bng)
+            representative_wgs84 = point_on_surface(
+                geometries[[item[0] for item in accepted]]
+            )
+
+            for accepted_index, (
+                candidate_index,
+                local_index,
+                _edge_index,
+                distance_m,
+                edge_key,
+            ) in enumerate(accepted):
+                candidate = candidate_list[candidate_index]
+                geometry_wgs84 = geometries[candidate_index]
+                geometry_bng = geometries_bng[local_index]
+                if candidate.geometry_source == "derived_path":
+                    display_wgs84 = candidate_nearest_wgs84[accepted_index]
+                elif geometry_wgs84.geom_type == "Point":
+                    display_wgs84 = geometry_wgs84
+                else:
+                    display_wgs84 = representative_wgs84[accepted_index]
+                projected = projected_wgs84[accepted_index]
+                lat, lon = _xy_to_pound(display_wgs84)
+                projected_lat, projected_lon = _xy_to_pound(projected)
+
+                endpoint_choices = []
+                for uid in edge_key:
+                    node = self.graph.nodes[uid]
+                    endpoint = Point(*_TO_BNG.transform(node["lon"], node["lat"]))
+                    endpoint_choices.append((geometry_bng.distance(endpoint), uid))
+                nearest_node_uid = min(endpoint_choices)[1]
+                results[candidate_index] = (
+                    PointOfInterest(
+                        osm_type=candidate.osm_type,
+                        osm_id=candidate.osm_id,
+                        category=candidate.category,
+                        kind=candidate.kind,
+                        name=candidate.name,
+                        lat=lat,
+                        lon=lon,
+                        source_tags=candidate.tags,
+                        geometry_source=candidate.geometry_source,
+                        nearest_waterway_distance_m=distance_m,
+                        nearest_edge=edge_key,
+                        nearest_node_uid=nearest_node_uid,
+                        projected_lat=projected_lat,
+                        projected_lon=projected_lon,
+                    ),
+                    None,
                 )
 
         assert all(result is not None for result in results)

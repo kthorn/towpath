@@ -298,6 +298,46 @@ def test_batched_attachment_matches_single_candidate_results_exactly():
     assert batched == individual
 
 
+def test_batched_attachment_vectorizes_geometry_hot_path(monkeypatch):
+    from pound.graph import pois as pois_module
+
+    graph = _graph(non_navigable_shortcut=True)
+    centre = _offset_from_edge(graph, 20)
+    candidates = [
+        _candidate(centre, osm_id=1),
+        _candidate(_offset_from_edge(graph, 2000), osm_id=2),
+        _candidate("POINT EMPTY", osm_id=3),
+        _candidate("not wkt", osm_id=4),
+        _candidate(
+            LineString([centre, Point(centre.x + 0.0001, centre.y + 0.0001)]),
+            osm_id=5,
+            geometry_source="derived_path",
+        ),
+        _candidate(
+            Polygon(
+                [
+                    (centre.x, centre.y),
+                    (centre.x + 0.0001, centre.y),
+                    (centre.x + 0.0001, centre.y + 0.0001),
+                    (centre.x, centre.y),
+                ]
+            ),
+            osm_id=6,
+            geometry_source="area",
+        ),
+    ]
+    index = PoiAttachmentIndex(graph)
+    expected = [index.attach(candidate) for candidate in candidates]
+
+    def scalar_hot_path(*_args, **_kwargs):
+        raise AssertionError("used scalar geometry hot path")
+
+    monkeypatch.setattr(pois_module, "_normalized_geometry", scalar_hot_path)
+    monkeypatch.setattr(pois_module, "nearest_points", scalar_hot_path)
+
+    assert index.attach_many(candidates) == expected
+
+
 def test_streaming_accumulator_add_many_matches_repeated_add():
     graph = _graph()
     candidates = [
