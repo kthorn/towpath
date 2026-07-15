@@ -163,14 +163,14 @@ England command was:
 ```text
 /usr/bin/time -v uv run --extra bulk pound-ingest build england \
   --pbf /home/kurtt/towpath/pound/data/england.osm.pbf \
-  --out /tmp/pound-england-final.pkl --profile
+  --out /tmp/pound-england-reviewed.pkl --profile
 ```
 
-It exited zero in 21:18.15 with maximum RSS of 3,058,100 KiB (2.92 GiB). This is a 55.8% reduction
+It exited zero in 15:43.09 with maximum RSS of 3,268,040 KiB (3.12 GiB). This is a 52.8% reduction
 from the Stage 1 peak of 6,919,480 KiB, below the 5.25 GiB target and 6 GiB hard ceiling. Runtime
-was below the 25:21 acceptance limit. The profile completed continuously from `tags_filter`
-through `artifact_validation` and `artifact_serialization`; the final two phases took 42.39 and
-9.55 seconds respectively.
+was below both the 19-minute target and 25:21 acceptance limit. The profile completed continuously
+from `tags_filter` through `artifact_validation` and `artifact_serialization`; the final two phases
+took 24.60 and 5.02 seconds respectively.
 
 Strict reload produced 695,932 graph nodes, 695,510 edges, and 525,211 accepted POIs, matching the
 Stage 1 England counts. Hard validation fields were all zero: derelict edges, self-loops, duplicate
@@ -180,22 +180,21 @@ across all 525,211 identities.
 
 The exact Oxford regional comparator exited zero. Raw scan benchmarks measured 22.26 seconds and
 363,228 KiB for the non-area pass, and 23.38 seconds and 365,460 KiB for the area-enabled pass. The
-final England linear POI phase took 535.78 seconds and completed with 494,082 accepted POIs before
-the 297.98-second area pass. A prior complete England iteration exposed four missing derelict
-closed-path POIs;
-fixture regressions and a repeated regional comparison pinned the legacy area-callback behavior
-before the accepted run restored the full 525,211 count.
+final England linear POI phase took 386.11 seconds and completed with 494,082 accepted POIs before
+the 218.49-second area pass. A prior complete England iteration exposed four missing derelict
+closed-path POIs; fixture regressions and a repeated regional comparison pinned the legacy
+area-callback behavior before the accepted run restored the full 525,211 count.
+
+One correction iteration deliberately retained rejected identity winners to preserve the general
+accumulator's duplicate semantics. Measurement showed why that mode cannot be used by the England
+pipeline: the linear boundary rose to 4,325,953,536 bytes and 528.97 seconds. The final pipeline
+explicitly uses accepted-only retention, backed by a bulk-fixture assertion that the split readers
+emit unique identities. Its linear boundary returned to 3,045,076,992 bytes and 386.11 seconds.
 
 Fresh completion verification passed:
 
-- `pytest --run-bulk tests/ingest tests/graph tests/validate -q`: 322 passed, 1 network test
+- `uv run pytest --run-bulk tests/ingest tests/graph tests/validate -v`: 322 passed, 1 network test
   skipped;
-- `pytest --ignore=tests/web -q`: 415 passed, 22 expected network/bulk skips;
-- `pytest tests/graph/test_pois.py -q`: 22 passed, including review regressions for rejected
-  duplicates and isolated geometry-repair failures;
-- `ruff check .`: all checks passed;
+- `uv run pytest`: 480 passed, 22 expected network/bulk skips;
+- `uv run ruff check .`: all checks passed;
 - `git diff --check`: clean.
-
-The complete default suite was also attempted, but the pre-existing web TestClient suite stalled on
-`test_candidates_returns_named_sorted_points_with_revision`; the same stall reproduced when that
-web file ran alone. No ingest, graph, route, validation, schema, or comparison test failed.
