@@ -34,7 +34,7 @@ _GEOFABRIK_ENGLAND_URL = (
     "https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf"
 )
 _ENGLAND_EXPECTED_GIB = 1.5
-_POI_BATCH_SIZE = 4096
+_POI_BATCH_SIZE = 1024
 
 
 class _BatchingPoiConsumer:
