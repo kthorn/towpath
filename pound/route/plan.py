@@ -190,7 +190,6 @@ def plan_route_from_constraints(
         boat_beam_m=c.boat_beam_m,
         boat_draft_m=c.boat_draft_m,
         boat_height_m=c.boat_height_m,
-        allow_derelict=c.allow_derelict,
     )
     return plan_route(resolved, graph=graph)
 

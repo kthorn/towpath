@@ -77,7 +77,6 @@ export interface CanalRouteRequest {
   boat_beam_m?: number | null;
   boat_draft_m?: number | null;
   boat_height_m?: number | null;
-  allow_derelict?: boolean;
 }
 
 export interface PoundApiErrorDetail {

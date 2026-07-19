@@ -19,7 +19,6 @@ class CanalConstraints(BaseModel):
     boat_draft_m: float | None = Field(gt=0, default=None)
     boat_height_m: float | None = Field(gt=0, default=None)
     amenity_prefs: list[str] = []  # ["pub", "water_point", "shop", ...]
-    allow_derelict: bool = False
 
 
 class ResolvedConstraints(BaseModel):
@@ -44,7 +43,6 @@ class ResolvedConstraints(BaseModel):
     boat_beam_m: float | None = Field(gt=0, default=None)
     boat_draft_m: float | None = Field(gt=0, default=None)
     boat_height_m: float | None = Field(gt=0, default=None)
-    allow_derelict: bool = False
 
 
 class Amenity(BaseModel):

@@ -10,8 +10,7 @@ dedicated settings page and removing manual latitude/longitude endpoint entry.
 The header exposes two navigation choices: **Plan trip** and **Settings**. This
 remains a small client-side application, so `App.svelte` switches views without
 adding a routing dependency. The planner keeps place search, map selection,
-candidate selection, schedule controls, the derelict-waterway option, route
-submission, and route results.
+candidate selection, schedule controls, route submission, and route results.
 
 The settings view owns four optional measurements in metres: boat length, beam,
 draft, and height. Each supplied value must be finite and greater than zero.
@@ -23,9 +22,9 @@ Malformed or invalid stored data is ignored and replaced with empty settings.
 A small boat-settings store loads and validates persisted settings, exposes them
 as a readable Svelte store, and saves validated updates. `App.svelte` creates one
 store for its lifetime and passes it to the settings form and schedule form. On
-route submission, the schedule form combines current days, hours per day, and
-the derelict flag with the current persisted boat settings before calling the
-existing trip store. The API contract is unchanged.
+route submission, the schedule form combines current days and hours per day
+with the current persisted boat settings before calling the existing trip store.
+The route contract excludes the retired derelict-waterway option.
 
 ## Endpoint Cleanup
 

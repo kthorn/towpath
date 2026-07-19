@@ -20,7 +20,8 @@ def test_canal_constraints_defaults():
     assert c.hours_per_day == 6.0
     assert c.boat_beam_m is None
     assert c.amenity_prefs == []
-    assert c.allow_derelict is False
+    assert "allow_derelict" not in CanalConstraints.model_fields
+    assert "allow_derelict" not in ResolvedConstraints.model_fields
 
 
 def test_route_result_round_trip():

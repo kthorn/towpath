@@ -123,7 +123,7 @@ pound/
 | canal centreline | `waterway=canal` | routable edge |
 | navigable river | `waterway=river` (+ navigation tags) | routable edge |
 | fairway | `waterway=fairway` | routable edge |
-| **derelict/disused** | `waterway=derelict_canal`, `disused:*`, `abandoned:*` | EXCLUDE by default |
+| **derelict/disused** | `waterway=derelict_canal`, `disused:*`, `abandoned:*` | EXCLUDE |
 | lock chamber | `waterway=lock` (short way) and/or `lock=yes` | lock edge → time penalty |
 | lock gate | node `waterway=lock_gate` | lock counting |
 | movable bridge | `bridge:movable=*` / `bridge=movable` / swing/lift | optional time penalty |
@@ -186,8 +186,7 @@ of the towpath/route.
 - Edge = a **pound**: a stretch of waterway between nodes, carrying
   `length_m`, geometry, and the restrictive `max_beam/length/draft/height`
   (min along the segment), plus a `locks` count for any lock(s) on it.
-- Exclude `derelict_canal` / `disused:*` / `abandoned:*` by default
-  (configurable — restoration routes are a future flag).
+- Exclude `derelict_canal` / `disused:*` / `abandoned:*` from routing.
 - Tooling: **NetworkX** for a pure-Python first cut; **pgRouting/PostGIS** if you
   want SQL-side topology (`pgr_createTopology`) and easy joins to CRT assets in
   the same DB. Start with NetworkX; the artifact interface (§4.4) hides the
@@ -287,7 +286,6 @@ class CanalConstraints(BaseModel):
     boat_draft_m: float | None = None
     boat_height_m: float | None = None
     amenity_prefs: list[str] = []       # ["pub", "water_point", "shop", ...]
-    allow_derelict: bool = False
 
 class Amenity(BaseModel):
     kind: str                           # "pub" | "water_point" | "marina" | ...
@@ -361,7 +359,7 @@ validation). Produces a build report (JSON) and fails the build on hard errors:
 - **Lock attachment:** every lock node/way resolved onto an edge; report any
   orphans.
 - **Filter sanity:** zero `derelict_canal`/`disused:*`/`abandoned:*` edges in the
-  routable graph (unless `allow_derelict`).
+  routable graph.
 - **Tag coverage:** count edges missing dimension tags (informational; surfaced
   later as route `warnings`).
 - **Degenerate geometry:** zero-length or self-looping edges.
@@ -461,4 +459,3 @@ real corroboration in a way self-recomputation never is.
   permission-gated per §8 and keep it out of the core build entirely.
 
 ```
-

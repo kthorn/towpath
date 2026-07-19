@@ -40,7 +40,7 @@ def test_route_returns_geojson_and_route(web_client: TestClient):
         {"end_uid": None},
         {"days": 0},
         {"hours_per_day": 0},
-        {"allow_derelict": "sometimes"},
+        {"allow_derelict": False},
     ],
 )
 def test_route_leaves_body_type_errors_as_422(web_client: TestClient, changes: dict):
@@ -53,8 +53,6 @@ def test_route_leaves_body_type_errors_as_422(web_client: TestClient, changes: d
         {"start_uid": "1"},
         {"end_uid": "3"},
         {"start_uid": True},
-        {"allow_derelict": 1},
-        {"allow_derelict": "true"},
         {"hours_per_day": "6"},
         {"artifact_revision": 123},
     ],
@@ -154,7 +152,6 @@ def test_route_calls_planner_once_with_resolved_constraints(web_client: TestClie
         "boat_beam_m": 2.5,
         "boat_draft_m": None,
         "boat_height_m": None,
-        "allow_derelict": False,
     }
 
 

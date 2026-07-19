@@ -1,12 +1,11 @@
 <script lang="ts">
   import type { TripStore } from '../lib/stores/trip';
   import type { BoatSettingsStore } from '../lib/stores/boat-settings';
-  let { store, settings, days = $bindable<string | number>(''), hours = $bindable<string | number>('6'), derelict = $bindable(false) }: {
+  let { store, settings, days = $bindable<string | number>(''), hours = $bindable<string | number>('6') }: {
     store: TripStore;
     settings: BoatSettingsStore;
     days?: string | number;
     hours?: string | number;
-    derelict?: boolean;
   } = $props();
   let error = $state('');
   const optional = (value: string | number) => String(value).trim() === '' ? null : Number(value);
@@ -22,7 +21,7 @@
       if (String(hours).trim() === '' || !Number.isFinite(hoursPerDay) || hoursPerDay <= 0) throw new Error('Hours per day must be greater than 0.');
       const dayCount = positiveOptional('Days', days);
       if (dayCount !== null && !Number.isInteger(dayCount)) throw new Error('Days must be a whole number greater than 0.');
-      await store.planCanalRoute({ days: dayCount, hours_per_day: hoursPerDay, ...$settings, allow_derelict: derelict });
+      await store.planCanalRoute({ days: dayCount, hours_per_day: hoursPerDay, ...$settings });
     }
     catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
   }
@@ -34,7 +33,6 @@
     <label>Days (optional)<input type="number" min="1" bind:value={days} /></label>
     <label>Hours per day<input type="number" required min="0.1" step="0.5" bind:value={hours} /></label>
   </div>
-  <label class="check"><input type="checkbox" bind:checked={derelict} /> Allow derelict waterways</label>
   <button type="submit">Plan canal route</button>
   {#if error}<p role="alert">{error}</p>{/if}
 </form>

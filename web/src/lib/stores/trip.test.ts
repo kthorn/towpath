@@ -114,7 +114,7 @@ describe('trip store', () => {
     const { store, canalRoute } = setup({ map });
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
-    const constraints = { days: 4, hours_per_day: 7, boat_beam_m: 2.1, allow_derelict: true };
+    const constraints = { days: 4, hours_per_day: 7, boat_beam_m: 2.1 };
     await store.planCanalRoute(constraints);
     expect(canalRoute).toHaveBeenCalledWith({ start_uid: 2, end_uid: 4, artifact_revision: 'r1', ...constraints });
     expect(get(store).canalRoute).toEqual(canal);

@@ -15,7 +15,7 @@
   const store = $derived(dependencies.store);
   const boatSettings = createBoatSettingsStore();
   let active = $state<EndpointSlot>('origin');
-  let plannerSession = $state({ days: '' as string | number, hours: '6' as string | number, derelict: false });
+  let plannerSession = $state({ days: '' as string | number, hours: '6' as string | number });
 
   const navigation = createNavigation();
   let saveFeedback = $state<SettingsSaveResult | null>(null);
@@ -72,7 +72,7 @@
     <div class="planner-column">
       <EndpointPanel slot="origin" endpoint={$store.origin} {store} search={dependencies.placeSearch} />
       <EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} />
-      <BoatConstraints {store} settings={boatSettings} bind:days={plannerSession.days} bind:hours={plannerSession.hours} bind:derelict={plannerSession.derelict} />
+      <BoatConstraints {store} settings={boatSettings} bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
       <TripSummary state={$store} />
     </div>
   </main>
