@@ -33,7 +33,6 @@ class CanalRouteRequest(BaseModel):
     boat_beam_m: float | None = Field(gt=0, default=None)
     boat_draft_m: float | None = Field(gt=0, default=None)
     boat_height_m: float | None = Field(gt=0, default=None)
-    allow_derelict: bool = False
 
 
 class APIError(BaseModel):
@@ -110,7 +109,6 @@ def canal_route(body: CanalRouteRequest, request: Request) -> CanalRouteResponse
         boat_beam_m=body.boat_beam_m,
         boat_draft_m=body.boat_draft_m,
         boat_height_m=body.boat_height_m,
-        allow_derelict=body.allow_derelict,
     )
     try:
         return plan_canal_route(constraints, graph=graph)

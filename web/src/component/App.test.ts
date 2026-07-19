@@ -7,6 +7,14 @@ import type { AppDependencies } from '../lib/app';
 import type { EndpointSlot, MapView, SelectedPlace } from '../lib/google/contracts';
 import type { TripState, TripStore } from '../lib/stores/trip';
 
+function storedSettings(): unknown {
+  try {
+    return JSON.parse(localStorage.getItem('pound.boat-settings') ?? 'null');
+  } catch {
+    return null;
+  }
+}
+
 const endpoint = (name: string, uid: number, unavailable = false) => ({
   place: { name, address: `${name} address`, coordinate: { lat: 51, lon: -1 } },
   candidates: [
@@ -68,7 +76,6 @@ describe('trip planning interface', () => {
     expect(planTrip).toHaveAttribute('aria-current', 'page');
     await fireEvent.input(screen.getByLabelText(/^days/i), { target: { value: '4' } });
     await fireEvent.input(screen.getByLabelText(/hours per day/i), { target: { value: '7' } });
-    await fireEvent.click(screen.getByLabelText(/allow derelict/i));
 
     await fireEvent.click(settings);
     expect(settings).toHaveAttribute('aria-current', 'page');
@@ -76,7 +83,7 @@ describe('trip planning interface', () => {
 
     expect(screen.getByLabelText(/^days/i)).toHaveValue(4);
     expect(screen.getByLabelText(/hours per day/i)).toHaveValue(7);
-    expect(screen.getByLabelText(/allow derelict/i)).toBeChecked();
+    expect(screen.queryByLabelText(/allow derelict/i)).not.toBeInTheDocument();
   });
 
   it('restores saved dimensions and includes them in route planning', async () => {
@@ -112,7 +119,7 @@ describe('trip planning interface', () => {
     await fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/boat beam.*greater than 0/i);
-    expect(JSON.parse(localStorage.getItem('pound.boat-settings')!)).toEqual({
+    expect(storedSettings()).toEqual({
       boat_length_m: 18,
       boat_beam_m: null,
       boat_draft_m: null,
@@ -177,9 +184,8 @@ describe('trip planning interface', () => {
     render(App, { props: { dependencies } });
     await fireEvent.input(screen.getByLabelText(/^days/i), { target: { value: '4' } });
     await fireEvent.input(screen.getByLabelText(/hours per day/i), { target: { value: '7' } });
-    await fireEvent.click(screen.getByLabelText(/allow derelict/i));
     await fireEvent.click(screen.getByRole('button', { name: /plan canal route/i }));
-    expect(store.planCanalRoute).toHaveBeenCalledWith({ days: 4, hours_per_day: 7, boat_length_m: null, boat_beam_m: null, boat_draft_m: null, boat_height_m: null, allow_derelict: true });
+    expect(store.planCanalRoute).toHaveBeenCalledWith({ days: 4, hours_per_day: 7, boat_length_m: null, boat_beam_m: null, boat_draft_m: null, boat_height_m: null });
   });
 
   it.each(['', '0', '-2'])('blocks invalid hours per day %j', async (value) => {
@@ -237,7 +243,6 @@ describe('trip planning interface', () => {
 
     await fireEvent.input(screen.getByLabelText(/^days/i), { target: { value: '4' } });
     await fireEvent.input(screen.getByLabelText(/hours per day/i), { target: { value: '7' } });
-    await fireEvent.click(screen.getByLabelText(/allow derelict/i));
     await fireEvent.click(settings);
     expect(screen.getByRole('heading', { name: /boat settings/i })).toBeVisible();
     expect(screen.getAllByRole('main')).toHaveLength(1);
@@ -245,7 +250,7 @@ describe('trip planning interface', () => {
     await fireEvent.click(planner);
     expect(screen.getByLabelText(/^days/i)).toHaveValue(4);
     expect(screen.getByLabelText(/hours per day/i)).toHaveValue(7);
-    expect(screen.getByLabelText(/allow derelict/i)).toBeChecked();
+    expect(screen.queryByLabelText(/allow derelict/i)).not.toBeInTheDocument();
   });
 
   it('preserves planner state across settings visit', async () => {

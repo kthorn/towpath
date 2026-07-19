@@ -6,9 +6,8 @@ core of the ingest pipeline.
 
 Tag reference: design §3.1. We keep waterway=canal/river/fairway as routable
 edges, waterway=lock (and lock=yes) as lock features, and exclude
-derelict_canal / disused:* / abandoned:* by default (allow_derelict is a
-later, graph-build concern — at the IR level we only *flag* derelict so the
-reader can drop it; restoration routes are a future flag).
+derelict_canal / disused:* / abandoned:* unconditionally. At the IR level we
+only *flag* derelict so the reader can drop it.
 """
 
 from pound.ingest.ir import NodeKind, WaterwayFeatures, WaterwayKind, WayDimensions

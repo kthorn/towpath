@@ -11,6 +11,7 @@
 ### Task 1: Persistent boat settings store
 
 **Files:**
+
 - Create: `web/src/lib/stores/boat-settings.ts`
 - Create: `web/src/lib/stores/boat-settings.test.ts`
 
@@ -22,6 +23,7 @@
 ### Task 2: Settings view and navigation
 
 **Files:**
+
 - Create: `web/src/component/BoatSettings.svelte`
 - Modify: `web/src/App.svelte`
 - Modify: `web/src/app.css`
@@ -35,6 +37,7 @@
 ### Task 3: Planner integration and coordinate removal
 
 **Files:**
+
 - Modify: `web/src/component/BoatConstraints.svelte`
 - Modify: `web/src/component/EndpointPanel.svelte`
 - Modify: `web/src/App.svelte`
@@ -42,13 +45,14 @@
 
 1. Replace the controlled-constraints test with a failing test proving saved boat settings are included in route submissions, and add a failing assertion that manual coordinate controls are absent.
 2. Run the narrow tests and confirm failures for the old combined form/coordinate UI.
-3. Reduce `BoatConstraints.svelte` to schedule and derelict controls, merge in the settings values on submit, and delete coordinate-entry state and markup.
+3. Reduce `BoatConstraints.svelte` to schedule controls, merge in the settings values on submit, and delete coordinate-entry and derelict-option state and markup.
 4. Remove obsolete coordinate-fallback tests and keep place-search/map-click coverage.
 5. Re-run the component test file and verify it passes.
 
 ### Task 4: Verification
 
 **Files:**
+
 - Modify if needed: `web/src/app.css`
 
 1. Run `npm test -- --run` and verify all web tests pass.
