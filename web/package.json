@@ -8,7 +8,8 @@
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest",
-    "test:smoke": "playwright test"
+    "test:smoke": "playwright test",
+    "test:navigation": "playwright test --config playwright.navigation.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",

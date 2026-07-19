@@ -28,6 +28,11 @@ def test_static_site_serves_index_assets_and_client_routes(tmp_path: Path):
         assert "javascript" in asset.headers["content-type"]
         assert client.get("/journeys/oxford").text == "<h1>Pound map</h1>"
 
+        settings = client.get("/settings")
+        assert settings.status_code == 200
+        assert settings.text == "<h1>Pound map</h1>"
+        assert settings.headers["content-type"].startswith("text/html")
+
 
 def test_missing_static_assets_are_not_replaced_by_index(tmp_path: Path):
     static_dir = tmp_path / "dist"

@@ -38,3 +38,6 @@ pound/artifacts/
 
 # SDD per-run progress tracking (not project artifact)
 progress.md
+
+# Local Pi setup notes and routing data
+docs/local/

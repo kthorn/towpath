@@ -1,8 +1,14 @@
 <script lang="ts">
   import type { TripStore } from '../lib/stores/trip';
   import type { BoatSettingsStore } from '../lib/stores/boat-settings';
-  let { store, settings }: { store: TripStore; settings: BoatSettingsStore } = $props();
-  let days = $state<string | number>(''); let hours = $state<string | number>('6'); let derelict = $state(false); let error = $state('');
+  let { store, settings, days = $bindable<string | number>(''), hours = $bindable<string | number>('6'), derelict = $bindable(false) }: {
+    store: TripStore;
+    settings: BoatSettingsStore;
+    days?: string | number;
+    hours?: string | number;
+    derelict?: boolean;
+  } = $props();
+  let error = $state('');
   const optional = (value: string | number) => String(value).trim() === '' ? null : Number(value);
   function positiveOptional(label: string, value: string | number): number | null {
     const number = optional(value);

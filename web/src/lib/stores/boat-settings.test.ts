@@ -1,7 +1,7 @@
 import { get } from 'svelte/store';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { createBoatSettingsStore } from './boat-settings';
+import { createBoatSettingsStore, type SettingsSaveResult } from './boat-settings';
 
 const emptySettings = {
   boat_length_m: null,
@@ -56,6 +56,33 @@ describe('boat settings store', () => {
 
     expect(get(store)).toEqual(settings);
     expect(JSON.parse(localStorage.getItem('pound.boat-settings')!)).toEqual(settings);
+  });
+
+  it('reports a persistent save when browser storage accepts the write', () => {
+    const store = createBoatSettingsStore(localStorage);
+    const result: SettingsSaveResult = store.save({
+      boat_length_m: 17.5,
+      boat_beam_m: 2.05,
+      boat_draft_m: 0.8,
+      boat_height_m: null,
+    });
+
+    expect(result).toBe('persistent');
+  });
+
+  it('reports a session-only save when browser storage rejects the write', () => {
+    const blocked = {
+      getItem() { throw new DOMException('Blocked', 'SecurityError'); },
+      setItem() { throw new DOMException('Blocked', 'SecurityError'); },
+    };
+    const store = createBoatSettingsStore(blocked);
+
+    expect(store.save({
+      boat_length_m: 18,
+      boat_beam_m: null,
+      boat_draft_m: null,
+      boat_height_m: null,
+    })).toBe('session-only');
   });
 
   it.each([Number.NaN, Number.POSITIVE_INFINITY])(

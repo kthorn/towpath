@@ -9,8 +9,10 @@ export interface BoatSettings {
   boat_height_m: number | null;
 }
 
+export type SettingsSaveResult = 'persistent' | 'session-only';
+
 export interface BoatSettingsStore extends Readable<BoatSettings> {
-  save(settings: BoatSettings): void;
+  save(settings: BoatSettings): SettingsSaveResult;
 }
 
 type SettingsStorage = Pick<Storage, 'getItem' | 'setItem'>;
@@ -65,10 +67,12 @@ export function createBoatSettingsStore(storage?: SettingsStorage): BoatSettings
     save(settings) {
       const validated = validateSettings(settings);
       inner.set(validated);
+      if (!storage) return 'session-only';
       try {
-        storage?.setItem(BOAT_SETTINGS_KEY, JSON.stringify(validated));
+        storage.setItem(BOAT_SETTINGS_KEY, JSON.stringify(validated));
+        return 'persistent';
       } catch {
-        // Settings remain usable for this session when browser storage is unavailable.
+        return 'session-only';
       }
     },
   };
