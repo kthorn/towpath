@@ -11,30 +11,22 @@ from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 
-from pound.graph.artifact import load_artifact
+from pound.graph.artifact import GraphArtifact, InvalidArtifactError, load_artifact
+from pound.graph.spatial import GraphSpatialIndex
 from pound.web.api import router as api_router
 from pound.web.config import WebSettings
 
 
-def _load_web_artifact(settings: WebSettings) -> tuple[object, dict]:
+def _load_web_artifact(settings: WebSettings) -> GraphArtifact:
     """Load and validate the artifact fields required by the web application."""
 
     path = settings.artifact_path
     try:
-        graph, metadata = load_artifact(path)
-    except KeyError as exc:
-        missing = exc.args[0] if exc.args else "required field"
-        raise RuntimeError(f"Artifact {path} is missing {missing}") from exc
+        return load_artifact(path)
+    except InvalidArtifactError as exc:
+        raise RuntimeError(f"Could not load routing artifact {path}: {exc}") from exc
     except Exception as exc:
         raise RuntimeError(f"Could not load routing artifact {path}: {exc}") from exc
-
-    if graph is None:
-        raise RuntimeError(f"Artifact {path} is missing graph")
-    if not isinstance(metadata, dict):
-        raise RuntimeError(f"Artifact {path} is missing metadata")
-    if not metadata.get("artifact_revision"):
-        raise RuntimeError(f"Artifact {path} is missing artifact_revision")
-    return graph, metadata
 
 
 def create_app(settings: WebSettings | None = None) -> FastAPI:
@@ -43,11 +35,14 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         runtime_settings = settings if settings is not None else WebSettings.from_env()
-        graph, metadata = _load_web_artifact(runtime_settings)
-        app.state.graph = graph
-        app.state.metadata = metadata
-        app.state.artifact_revision = metadata["artifact_revision"]
+        artifact = _load_web_artifact(runtime_settings)
+        app.state.artifact = artifact
+        app.state.graph = artifact.graph
+        app.state.pois = artifact.pois
+        app.state.metadata = artifact.metadata
+        app.state.artifact_revision = artifact.metadata["artifact_revision"]
         app.state.settings = runtime_settings
+        app.state.spatial_index = GraphSpatialIndex(artifact.graph)
         yield
 
     application = FastAPI(lifespan=lifespan)

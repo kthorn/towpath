@@ -25,6 +25,14 @@ Use `pytest`. Name files `test_<subject>.py` and tests `test_<behavior>`. Place 
 
 Recent history follows Conventional Commit-style subjects such as `feat(route): ...`, `refactor(route): ...`, and `docs: ...`. Keep commits focused, imperative, and scoped when useful. Pull requests should explain the behavioral change, list verification commands, link relevant issues or design documents, and call out artifact or data-format changes. Include sample CLI output when changing user-facing commands; screenshots are only needed for visual changes.
 
+## Design and Plan Lifecycle
+
+When a design document or specification exists for a change, do not commit its separate
+implementation plan. Treat implementation plans as disposable execution aids. Once the change is
+implemented in a pull request, move the corresponding design/specification from `docs/plans/` to
+`docs/completed/` in that same pull request. Do not commit temporary review transcripts; delete them
+after their actionable feedback has been incorporated.
+
 ## Security & Data Practices
 
 Do not commit downloaded PBF files, generated artifacts, credentials, or API tokens. Treat graph validation reports as authoritative and record confirmed topology corrections in `pound/data/overrides.json` rather than patching generated output.

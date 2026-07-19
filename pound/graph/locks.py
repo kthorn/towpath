@@ -26,9 +26,13 @@ def _edge_point_dist_m(edge_geom: list[tuple[float, float]], lat: float, lon: fl
 
 
 def attach_locks(
-    graph: nx.Graph, features: WaterwayFeatures, tolerance_m: float = 25.0
+    graph: nx.Graph,
+    features: WaterwayFeatures,
+    tolerance_m: float = 25.0,
+    *,
+    in_place: bool = False,
 ) -> tuple[nx.Graph, dict]:
-    g = copy.deepcopy(graph)
+    g = graph if in_place else copy.deepcopy(graph)
     report = {
         "lock_ways_attached": 0,
         "lock_nodes_attached": 0,

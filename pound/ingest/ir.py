@@ -12,8 +12,9 @@ this plan stopping before graph build.
 """
 
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class WaterwayKind(StrEnum):
@@ -31,6 +32,79 @@ class NodeKind(StrEnum):
     MARINA = "marina"  # forward-compat; amenities/marinas are design step 5, not this plan
     PLACE = "place"
     OTHER = "other"
+
+
+class PoiCategory(StrEnum):
+    CANAL_SERVICE = "canal_service"
+    PROVISIONS = "provisions"
+    TRANSPORT = "transport"
+    PEDESTRIAN_ACCESS = "pedestrian_access"
+
+
+class OsmElementType(StrEnum):
+    NODE = "node"
+    WAY = "way"
+    RELATION = "relation"
+
+
+class PoiCandidate(BaseModel):
+    osm_type: OsmElementType
+    osm_id: int = Field(gt=0)
+    category: PoiCategory
+    kind: str
+    name: str | None
+    tags: dict[str, str]
+    geometry_wkt: str
+    geometry_source: Literal["point", "area", "derived_path"]
+
+    @property
+    def identity(self) -> tuple[OsmElementType, int, str]:
+        return self.osm_type, self.osm_id, self.kind
+
+
+class PoiIngestReport(BaseModel):
+    skipped_counts: dict[str, int] = Field(default_factory=dict)
+    skipped_examples: dict[str, list[str]] = Field(default_factory=dict)
+
+    @field_validator("skipped_counts")
+    @classmethod
+    def validate_counts(cls, counts: dict[str, int]) -> dict[str, int]:
+        if any(count < 0 for count in counts.values()):
+            raise ValueError("skip counts must be nonnegative")
+        return counts
+
+    @field_validator("skipped_examples")
+    @classmethod
+    def cap_examples(cls, examples: dict[str, list[str]]) -> dict[str, list[str]]:
+        return {reason: sorted(set(values))[:5] for reason, values in examples.items()}
+
+
+class PointOfInterest(BaseModel):
+    osm_type: OsmElementType
+    osm_id: int = Field(gt=0)
+    category: PoiCategory
+    kind: str
+    name: str | None
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    source_tags: dict[str, str]
+    geometry_source: Literal["point", "area", "derived_path"]
+    nearest_waterway_distance_m: float = Field(ge=0)
+    nearest_edge: tuple[int, int]
+    nearest_node_uid: int = Field(ge=0)
+    projected_lat: float = Field(ge=-90, le=90)
+    projected_lon: float = Field(ge=-180, le=180)
+
+    @field_validator("nearest_edge")
+    @classmethod
+    def validate_nearest_edge(cls, edge: tuple[int, int]) -> tuple[int, int]:
+        if edge[0] < 0 or edge[0] >= edge[1]:
+            raise ValueError("nearest edge must be a canonical pair of distinct nonnegative UIDs")
+        return edge
+
+    @property
+    def identity(self) -> tuple[OsmElementType, int, str]:
+        return self.osm_type, self.osm_id, self.kind
 
 
 class WayDimensions(BaseModel):
@@ -68,3 +142,5 @@ class WaterwayFeatures(BaseModel):
     source: str  # "overpass" | "geofabrik"
     fetched_at: str  # ISO 8601 timestamp
     bbox: tuple[float, float, float, float] | None  # (south, west, north, east)
+    poi_candidates: list[PoiCandidate] = Field(default_factory=list)
+    poi_ingest_report: PoiIngestReport = Field(default_factory=PoiIngestReport)

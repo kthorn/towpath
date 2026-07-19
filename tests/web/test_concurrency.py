@@ -44,3 +44,36 @@ def test_concurrent_routes_are_deterministic_and_do_not_mutate_graph(web_client:
     assert graph.graph == before_graph
     assert dict(graph.nodes(data=True)) == before_nodes
     assert {(u, v): data for u, v, data in graph.edges(data=True)} == before_edges
+
+
+def test_concurrent_candidates_share_and_do_not_mutate_spatial_index(
+    web_client: TestClient,
+):
+    spatial_index = web_client.app.state.spatial_index
+    before = (
+        spatial_index.node_uids,
+        spatial_index.node_points,
+        spatial_index.node_tree,
+        spatial_index.edge_keys,
+        spatial_index.edge_lines,
+        spatial_index.edge_tree,
+    )
+    payloads = [{"lat": 51.0 + offset, "lon": -1.0} for offset in (0, 0.001) * 3]
+
+    def candidates(payload: dict[str, float]) -> tuple[int, dict]:
+        response = web_client.post("/api/canal-candidates", json=payload)
+        return response.status_code, response.json()
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(candidates, payloads))
+
+    assert all(status == 200 for status, _ in results)
+    assert spatial_index is web_client.app.state.spatial_index
+    assert before == (
+        spatial_index.node_uids,
+        spatial_index.node_points,
+        spatial_index.node_tree,
+        spatial_index.edge_keys,
+        spatial_index.edge_lines,
+        spatial_index.edge_tree,
+    )

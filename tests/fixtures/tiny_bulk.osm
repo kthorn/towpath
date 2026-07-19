@@ -11,8 +11,26 @@
   <node id="5" lat="51.7545000" lon="-1.2635000" version="1">
     <tag k="waterway" v="lock_gate"/>
   </node>
+  <node id="6" lat="51.7556000" lon="-1.2659000" version="1"><tag k="place" v="suburb"/><tag k="name" v="Marston"/></node>
   <node id="9" lat="51.7700000" lon="-1.2800000" version="1"/>
   <node id="10" lat="51.7710000" lon="-1.2810000" version="1"/>
+  <node id="2001" lat="51.7500000" lon="-1.2600000" version="1"><tag k="waterway" v="water_point"/><tag k="name" v="Canal Tap"/><tag k="drinking_water" v="yes"/><tag k="toilets" v="yes"/></node>
+  <node id="2002" lat="51.7501000" lon="-1.2601000" version="1"><tag k="amenity" v="pub"/><tag k="name" v="Towpath Arms"/><tag k="opening_hours" v="Mo-Su 12:00-22:00"/></node>
+  <node id="2003" lat="51.7502000" lon="-1.2602000" version="1"><tag k="shop" v="supermarket"/><tag k="name" v="Food"/></node>
+  <node id="2004" lat="51.7503000" lon="-1.2603000" version="1"><tag k="railway" v="station"/><tag k="name" v="Oxford"/></node>
+  <node id="2005" lat="51.7504000" lon="-1.2604000" version="1"><tag k="highway" v="bus_stop"/><tag k="name" v="Canal Road"/></node>
+  <node id="2006" lat="51.7505000" lon="-1.2605000" version="1"><tag k="entrance" v="yes"/><tag k="wheelchair" v="yes"/></node>
+  <node id="2007" lat="51.7506000" lon="-1.2606000" version="1"><tag k="barrier" v="gate"/></node>
+  <node id="2008" lat="51.7507000" lon="-1.2607000" version="1"><tag k="amenity" v="parking"/></node>
+  <node id="2009" lat="51.7508000" lon="-1.2608000" version="1"><tag k="shop" v="magic"/></node>
+  <node id="2010" lat="51.7509000" lon="-1.2609000" version="1"><tag k="amenity" v="drinking_water"/></node>
+  <node id="2011" lat="51.7510000" lon="-1.2610000" version="1"><tag k="amenity" v="toilets"/></node>
+  <node id="2012" lat="51.7511000" lon="-1.2611000" version="1"><tag k="amenity" v="shower"/></node>
+  <node id="3001" lat="51.7520000" lon="-1.2630000" version="1"/><node id="3002" lat="51.7520000" lon="-1.2620000" version="1"/><node id="3003" lat="51.7530000" lon="-1.2620000" version="1"/><node id="3004" lat="51.7530000" lon="-1.2630000" version="1"/>
+  <node id="3011" lat="51.7540000" lon="-1.2640000" version="1"/><node id="3012" lat="51.7540000" lon="-1.2620000" version="1"/><node id="3013" lat="51.7550000" lon="-1.2630000" version="1"/><node id="3014" lat="51.7560000" lon="-1.2620000" version="1"/><node id="3015" lat="51.7560000" lon="-1.2640000" version="1"/>
+  <node id="3021" lat="51.7500000" lon="-1.2650000" version="1"/><node id="3022" lat="51.7510000" lon="-1.2640000" version="1"/>
+  <node id="3031" lat="51.7570000" lon="-1.2640000" version="1"/><node id="3032" lat="51.7570000" lon="-1.2620000" version="1"/><node id="3033" lat="51.7590000" lon="-1.2620000" version="1"/><node id="3034" lat="51.7590000" lon="-1.2640000" version="1"/>
+  <node id="3041" lat="51.7575000" lon="-1.2635000" version="1"/><node id="3042" lat="51.7575000" lon="-1.2625000" version="1"/><node id="3043" lat="51.7585000" lon="-1.2625000" version="1"/><node id="3044" lat="51.7585000" lon="-1.2635000" version="1"/>
   <way id="1001" version="1">
     <nd ref="1"/><nd ref="2"/>
     <tag k="waterway" v="canal"/><tag k="name" v="Oxford Canal"/>
@@ -30,4 +48,13 @@
     <nd ref="9"/><nd ref="10"/>
     <tag k="waterway" v="derelict_canal"/><tag k="name" v="Abandoned Branch"/>
   </way>
+  <way id="2101" version="1"><nd ref="3001"/><nd ref="3002"/><nd ref="3003"/><nd ref="3004"/><nd ref="3001"/><tag k="leisure" v="marina"/><tag k="name" v="Basin"/><tag k="area" v="yes"/></way>
+  <way id="2102" version="1"><nd ref="3011"/><nd ref="3012"/><nd ref="3013"/><nd ref="3014"/><nd ref="3015"/><nd ref="3011"/><tag k="amenity" v="cafe"/><tag k="name" v="Concave Cafe"/><tag k="area" v="yes"/></way>
+  <way id="2103" version="1"><nd ref="3021"/><nd ref="3022"/><tag k="highway" v="footway"/><tag k="name" v="Access Path"/></way>
+  <way id="2104" version="1"><nd ref="3021"/><tag k="shop" v="bakery"/></way>
+  <way id="2105" version="1"><nd ref="3021"/><nd ref="3022"/><tag k="amenity" v="restaurant"/></way>
+  <way id="2201" version="1"><nd ref="3031"/><nd ref="3032"/><nd ref="3033"/><nd ref="3034"/><nd ref="3031"/></way>
+  <way id="2202" version="1"><nd ref="3041"/><nd ref="3042"/><nd ref="3043"/><nd ref="3044"/><nd ref="3041"/></way>
+  <relation id="2301" version="1"><member type="way" ref="2201" role="outer"/><member type="way" ref="2202" role="inner"/><tag k="type" v="multipolygon"/><tag k="amenity" v="fuel"/><tag k="name" v="Fuel Island"/></relation>
+  <relation id="2302" version="1"><member type="way" ref="999999" role="outer"/><tag k="type" v="multipolygon"/><tag k="amenity" v="pub"/></relation>
 </osm>

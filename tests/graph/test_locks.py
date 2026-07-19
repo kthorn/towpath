@@ -60,6 +60,27 @@ def test_orphan_locks_reported():
     assert report["orphan_lock_nodes"] == []
 
 
+def test_attach_locks_is_pure_by_default():
+    features = _oxford()
+    graph = build_graph(features)
+
+    attached, _ = attach_locks(graph, features)
+
+    assert attached is not graph
+    assert sum(data["locks"] for _, _, data in graph.edges(data=True)) == 0
+    assert sum(data["locks"] for _, _, data in attached.edges(data=True)) > 0
+
+
+def test_attach_locks_can_mutate_a_build_owned_graph_in_place():
+    features = _oxford()
+    graph = build_graph(features)
+
+    attached, _ = attach_locks(graph, features, in_place=True)
+
+    assert attached is graph
+    assert sum(data["locks"] for _, _, data in graph.edges(data=True)) > 0
+
+
 # --- Staircase fixture (the bug the Task 3 classify_way fix existed to catch) ---
 
 

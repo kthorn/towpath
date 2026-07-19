@@ -1,0 +1,27 @@
+{
+  "elements": [
+    {"type": "node", "id": 2001, "lat": 51.7500, "lon": -1.2600, "tags": {"waterway": "water_point", "name": "Canal Tap", "drinking_water": "yes", "toilets": "yes"}},
+    {"type": "node", "id": 2002, "lat": 51.7501, "lon": -1.2601, "tags": {"amenity": "pub", "name": "Towpath Arms", "opening_hours": "Mo-Su 12:00-22:00", "phone": "ignored"}},
+    {"type": "node", "id": 2003, "lat": 51.7502, "lon": -1.2602, "tags": {"shop": "supermarket", "name": "Food"}},
+    {"type": "node", "id": 2004, "lat": 51.7503, "lon": -1.2603, "tags": {"railway": "station", "name": "Oxford"}},
+    {"type": "node", "id": 2005, "lat": 51.7504, "lon": -1.2604, "tags": {"highway": "bus_stop", "name": "Canal Road"}},
+    {"type": "node", "id": 2006, "lat": 51.7505, "lon": -1.2605, "tags": {"entrance": "yes", "wheelchair": "yes"}},
+    {"type": "node", "id": 2007, "lat": 51.7506, "lon": -1.2606, "tags": {"barrier": "gate"}},
+    {"type": "node", "id": 2008, "lat": 51.7507, "lon": -1.2607, "tags": {"amenity": "parking"}},
+    {"type": "node", "id": 2009, "lat": 51.7508, "lon": -1.2608, "tags": {"shop": "magic"}},
+    {"type": "node", "id": 2010, "lat": 51.7509, "lon": -1.2609, "tags": {"amenity": "drinking_water"}},
+    {"type": "node", "id": 2011, "lat": 51.7510, "lon": -1.2610, "tags": {"amenity": "toilets"}},
+    {"type": "node", "id": 2012, "lat": 51.7511, "lon": -1.2611, "tags": {"amenity": "shower"}},
+    {"type": "node", "id": 2001, "lat": 51.7500, "lon": -1.2600, "tags": {"waterway": "water_point", "name": "Canal Tap", "drinking_water": "yes", "toilets": "yes"}},
+
+    {"type": "way", "id": 2101, "tags": {"leisure": "marina", "name": "Basin"}, "geometry": [{"lat": 51.7520, "lon": -1.2630}, {"lat": 51.7520, "lon": -1.2620}, {"lat": 51.7530, "lon": -1.2620}, {"lat": 51.7530, "lon": -1.2630}, {"lat": 51.7520, "lon": -1.2630}]},
+    {"type": "way", "id": 2102, "tags": {"amenity": "cafe", "name": "Concave Cafe"}, "geometry": [{"lat": 51.7540, "lon": -1.2640}, {"lat": 51.7540, "lon": -1.2620}, {"lat": 51.7550, "lon": -1.2630}, {"lat": 51.7560, "lon": -1.2620}, {"lat": 51.7560, "lon": -1.2640}, {"lat": 51.7540, "lon": -1.2640}]},
+    {"type": "way", "id": 2103, "tags": {"highway": "footway", "name": "Access Path"}, "geometry": [{"lat": 51.7500, "lon": -1.2650}, {"lat": 51.7510, "lon": -1.2640}]},
+    {"type": "way", "id": 2104, "tags": {"shop": "bakery", "name": "No Shape"}, "center": {"lat": 51.75, "lon": -1.26}},
+    {"type": "way", "id": 2105, "tags": {"amenity": "restaurant"}, "geometry": [{"lat": 51.75, "lon": -1.26}, {"lat": 51.75, "lon": -1.25}]},
+
+    {"type": "way", "id": 2201, "nodes": [3001, 3002, 3003, 3004, 3001], "geometry": [{"lat": 51.7570, "lon": -1.2640}, {"lat": 51.7570, "lon": -1.2620}, {"lat": 51.7590, "lon": -1.2620}, {"lat": 51.7590, "lon": -1.2640}, {"lat": 51.7570, "lon": -1.2640}]},
+    {"type": "way", "id": 2202, "geometry": [{"lat": 51.7575, "lon": -1.2635}, {"lat": 51.7575, "lon": -1.2625}, {"lat": 51.7585, "lon": -1.2625}, {"lat": 51.7585, "lon": -1.2635}, {"lat": 51.7575, "lon": -1.2635}]},
+    {"type": "relation", "id": 2301, "tags": {"type": "multipolygon", "amenity": "fuel", "name": "Fuel Island"}, "members": [{"type": "way", "ref": 2201, "role": "outer"}, {"type": "way", "ref": 2202, "role": "inner"}]}
+  ]
+}

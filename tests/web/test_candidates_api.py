@@ -8,6 +8,7 @@ from pound.graph.artifact import save_artifact
 from pound.web.api import CanalCandidatesRequest
 from pound.web.app import create_app
 from pound.web.config import WebSettings
+from tests.web.conftest import artifact_metadata
 
 
 def test_candidate_http_model_has_contract_name():
@@ -40,6 +41,7 @@ def test_candidates_uses_runtime_tuning(web_client: TestClient):
         51.0,
         -1.0,
         web_client.app.state.graph,
+        web_client.app.state.spatial_index,
         artifact_revision="revision-test",
         limit=3,
     )
@@ -50,7 +52,7 @@ def test_candidates_uses_runtime_tuning(web_client: TestClient):
 
 def test_candidates_empty_graph_returns_empty_list(tmp_path: Path):
     artifact_path = tmp_path / "empty.pkl"
-    save_artifact(nx.Graph(), artifact_path, {"artifact_revision": "empty-revision"})
+    save_artifact(nx.Graph(), [], artifact_path, artifact_metadata("empty-revision"))
     settings = WebSettings(artifact_path=artifact_path, static_dir=tmp_path / "static")
 
     with TestClient(create_app(settings)) as client:

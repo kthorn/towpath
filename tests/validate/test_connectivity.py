@@ -87,3 +87,21 @@ def test_report_defaults_when_graph_has_no_bulk_attrs():
     # removed snap/override keys are absent
     for k in ("tolerance_snaps_used", "tolerance_snaps_unresolved", "overrides_applied"):
         assert k not in v
+
+
+def test_report_merges_poi_attachment_validation_counts():
+    g, report = _graph_and_report()
+    v = validate_graph(
+        g,
+        report,
+        {
+            "duplicate_identities": 2,
+            "empty_geometry": 1,
+            "invalid_geometry": 3,
+            "rejected_by_corridor": 4,
+        },
+    )
+    assert v["poi_duplicate_identities"] == 2
+    assert v["poi_empty_geometry"] == 1
+    assert v["poi_invalid_geometry"] == 3
+    assert v["poi_rejected_by_corridor"] == 4

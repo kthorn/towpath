@@ -1,12 +1,16 @@
 from pound.ingest.ir import (
     NodeKind,
+    OsmElementType,
+    PoiCategory,
+    PoiIngestReport,
+    PointOfInterest,
     WaterwayFeatures,
     WaterwayKind,
     WaterwayNode,
     WaterwayWay,
     WayDimensions,
 )
-from pound.ingest.summarize import summarize
+from pound.ingest.summarize import summarize, summarize_pois
 
 
 def _canal(osm_id, dims=None, tunnel=False, movable=False):
@@ -119,3 +123,53 @@ def test_summarize_provenance_fields():
     assert r["source"] == "overpass"
     assert r["fetched_at"] == "2026-06-21T12:00:00+00:00"
     assert r["bbox"] == [51.70, -1.35, 51.80, -1.20]
+
+
+def test_summarize_pois_combines_retained_and_reader_attachment_diagnostics():
+    pois = [
+        PointOfInterest(
+            osm_type=OsmElementType.NODE,
+            osm_id=1,
+            category=PoiCategory.CANAL_SERVICE,
+            kind="water_point",
+            name="Canal Tap",
+            lat=51.75,
+            lon=-1.26,
+            source_tags={"waterway": "water_point", "drinking_water": "yes"},
+            geometry_source="point",
+            nearest_waterway_distance_m=0,
+            nearest_edge=(0, 1),
+            nearest_node_uid=0,
+            projected_lat=51.75,
+            projected_lon=-1.26,
+        )
+    ]
+    ingest = PoiIngestReport(
+        skipped_counts={
+            "invalid_geometry": 2,
+            "incomplete_relation_geometry": 1,
+            "unknown_value": 3,
+        },
+        skipped_examples={
+            "unknown_value": ["node/9:shop=magic", "node/8:shop=magic"],
+            "invalid_geometry": ["way/7"],
+        },
+    )
+
+    summary = summarize_pois(
+        pois,
+        ingest,
+        {"rejected_by_corridor": 4, "invalid_geometry": 1, "empty_geometry": 2},
+    )
+
+    assert summary["retained"] == 1
+    assert summary["by_category"] == {"canal_service": 1}
+    assert summary["by_kind"] == {"water_point": 1}
+    assert summary["rejected_by_corridor"] == 4
+    assert summary["malformed_geometry"] == 5
+    assert summary["incomplete_relation"] == 1
+    assert summary["unknown_tag_value"] == 3
+    assert summary["skipped_examples"] == {
+        "invalid_geometry": ["way/7"],
+        "unknown_value": ["node/8:shop=magic", "node/9:shop=magic"],
+    }

@@ -10,7 +10,9 @@ import networkx as nx
 from pound.ingest.ir import WaterwayKind
 
 
-def validate_graph(graph: nx.Graph, lock_report: dict) -> dict:
+def validate_graph(
+    graph: nx.Graph, lock_report: dict, poi_validation: dict[str, int] | None = None
+) -> dict:
     components = list(nx.connected_components(graph))
     sizes = sorted((len(c) for c in components), reverse=True)
 
@@ -53,7 +55,7 @@ def validate_graph(graph: nx.Graph, lock_report: dict) -> dict:
 
     ambiguous = sorted([name for name, v in gaz.items() if isinstance(v, list)]) if gaz else []
 
-    return {
+    report = {
         "component_count": len(components),
         "largest_component_size": sizes[0] if sizes else 0,
         "component_sizes": sizes,
@@ -70,3 +72,17 @@ def validate_graph(graph: nx.Graph, lock_report: dict) -> dict:
         "named_nodes_in_graph": named_nodes,
         "ambiguous_place_names": ambiguous,
     }
+    if poi_validation is not None:
+        report.update(
+            {
+                "poi_duplicate_identities": int(
+                    poi_validation.get("duplicate_identities", 0)
+                ),
+                "poi_empty_geometry": int(poi_validation.get("empty_geometry", 0)),
+                "poi_invalid_geometry": int(poi_validation.get("invalid_geometry", 0)),
+                "poi_rejected_by_corridor": int(
+                    poi_validation.get("rejected_by_corridor", 0)
+                ),
+            }
+        )
+    return report

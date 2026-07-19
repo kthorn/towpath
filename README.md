@@ -152,6 +152,9 @@ potentially billable; its exact prerequisites and command are in
 
 ## Prerequisites
 
+- Shapely and pyproj are core dependencies used to normalize POI geometry,
+  measure corridor distances in British National Grid coordinates, and build
+  runtime spatial indexes. They are installed by `uv sync`.
 - `osmium-tool` (system CLI) for `pound-ingest build england` — install via
   apt/brew/conda. The `pyosmium` Python package is separate and pulled by the
   `bulk` extra: `uv sync --extra bulk`. The base `uv sync` works without it.
@@ -206,6 +209,28 @@ forcing manual curation via `pound/data/overrides.json` before a real England
 artifact is trusted). Advisory keys (`edges_missing_dims`,
 `ambiguous_place_names`, gazetteer discrepancy, and **component_count /
 component_sizes**) are reported but never fail the build.
+
+The build also attaches a deliberately bounded set of OSM points of interest:
+
+- Canal services (`water_point`, sanitary disposal, fuel, marina, and mooring)
+  and pedestrian access signals (entrances, paths, bridges, steps, and selected
+  barriers) must be within 250 m of a navigable waterway edge.
+- Provisions (selected food amenities and shops) and public transport (rail,
+  bus, and taxi) must be within 1,000 m.
+
+Boat water points are identified only by `waterway=water_point`. Generic
+`amenity=drinking_water`, toilets, and showers are intentionally outside the
+product scope and are not imported as POIs.
+
+The CLI's `poi_summary` reports the retained total, counts by category and
+kind, corridor rejections, malformed geometry, incomplete relations, unknown
+tag values, and detailed skipped counts with capped examples. The same summary
+is stored in artifact metadata.
+
+POI support changes the strict artifact schema. Rebuild existing artifacts;
+there is no legacy fallback or in-place migration. Pickle artifacts are trusted
+local build products only: never load a pickle obtained from an untrusted
+source.
 
 **Tuning connectivity against real data:** start with a deliberately low
 tolerance to *measure* how fragmented the network really is, then dial up:
