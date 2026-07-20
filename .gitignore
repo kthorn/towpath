@@ -41,3 +41,8 @@ progress.md
 
 # Local Pi setup notes and routing data
 docs/local/
+
+# Local agent orchestration, review output, and helper scripts
+.pi-subagents/
+reviews/
+scripts/local/
