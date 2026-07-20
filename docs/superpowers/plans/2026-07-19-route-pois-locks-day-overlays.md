@@ -37,8 +37,6 @@
   query helper.
 - `pound/web/api.py`: strict `/api/route-pois` request/response handling.
 - `pound/web/app.py`: build and expose the POI index at artifact startup.
-- `pound/ingest/ir.py`: only if a shared typed overlay or POI response field
-  requires an existing model adjustment; do not duplicate `PointOfInterest`.
 
 ### Backend tests
 
@@ -250,7 +248,6 @@ git commit -m "feat(route): expose lock and day overlays"
 - Modify: `pound/graph/spatial.py`
 - Modify: `pound/web/app.py`
 - Modify: `pound/web/api.py`
-- Modify: `pound/web/config.py` only if a named cap setting is needed
 - Create: `tests/web/test_route_pois_api.py`
 - Modify: `tests/graph/test_spatial.py`
 - Modify: `tests/web/test_startup.py`
@@ -354,7 +351,12 @@ the existing structured API error shape for bad input. Add:
 @router.post("/route-pois", response_model=RoutePoisResponse)
 def route_pois(body: RoutePoisRequest, request: Request) -> RoutePoisResponse:
     if body.artifact_revision != request.app.state.artifact_revision:
-        raise _error(409, code="artifact_revision_mismatch", ...)
+        raise _error(
+            409,
+            code="artifact_revision_mismatch",
+            message="The routing artifact has changed; refresh the route.",
+            fields=["artifact_revision"],
+        )
     result = request.app.state.poi_spatial_index.query(
         body.bounds,
         body.day_geometry or body.route_geometry,
@@ -413,7 +415,7 @@ git add pound/graph/spatial.py pound/web/app.py pound/web/api.py \
 - `MapBounds`, `RoutePoi`, `RoutePoisResponse`, `RouteDayGeometry`, and `RouteLock` TypeScript types matching Task 1/2 JSON.
 - `createPoundApi().routePois(request)`.
 - `MapView.pois(pois)`, `MapView.locks(locks)`, `MapView.day(dayGeometry | null)`, and `MapView.onViewportIdle(callback)`.
-- `MapFacade.getBounds(map)` and `MapInstance.addListener('idle', ...)`.
+- `MapFacade.getBounds(map): MapBounds` and `MapInstance.addListener('idle', callback): RemovableListener`.
 
 - [ ] **Step 1: Add failing adapter tests**
 
