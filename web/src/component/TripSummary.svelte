@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { TripState } from '../lib/stores/trip';
-  let { state }: { state: TripState } = $props();
+  let { state, onDaySelect }: { state: TripState; onDaySelect: (day: number | null) => void } = $props();
   const transfer = (seconds: number, metres: number) => `${Math.round(seconds / 60)} min · ${(metres / 1000).toFixed(1)} km`;
   const hours = (minutes: number) => Number.isInteger(minutes / 60) ? `${minutes / 60} hr` : `${(minutes / 60).toFixed(1)} hr`;
 </script>
@@ -19,7 +19,13 @@
     {:else}
       <div class="metrics"><strong>{route.total_km} km canal</strong><strong>{route.total_locks} locks</strong><strong>{hours(route.total_minutes)} cruising</strong></div>
       {#if route.warnings.length}<ul class="warnings">{#each route.warnings as warning}<li>{warning}</li>{/each}</ul>{/if}
-      {#if route.days.length}<ol class="days">{#each route.days as day}<li><strong>Day {day.day}</strong><span>{hours(day.cruising_minutes)}{#if day.end_near} · end near {day.end_near}{/if}</span></li>{/each}</ol>{/if}
+      {#if route.days.length}<ol class="days">{#each route.days as day}<li><button
+        type="button"
+        class:active={state.selectedDay === day.day}
+        aria-pressed={state.selectedDay === day.day}
+        aria-label={`Day ${day.day}`}
+        onclick={() => onDaySelect(state.selectedDay === day.day ? null : day.day)}
+      ><strong>Day {day.day}</strong><span>{hours(day.cruising_minutes)}{#if day.end_near} · end near {day.end_near}{/if}</span></button></li>{/each}</ol>{/if}
     {/if}
   {/if}
 </section>

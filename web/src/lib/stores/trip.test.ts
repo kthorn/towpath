@@ -1,7 +1,13 @@
 import { get } from 'svelte/store';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { CanalCandidatesResponse, CanalRouteRequest, CanalRouteResponse, LatLon } from '../types';
+import type {
+  CanalCandidatesResponse,
+  CanalRouteRequest,
+  CanalRouteResponse,
+  LatLon,
+  RoutePoisResponse,
+} from '../types';
 import type { LandRoute, MapView, SelectedPlace, TransferResult, TransferRouter } from '../google/contracts';
 import { createTripStore } from './trip';
 
@@ -16,9 +22,15 @@ const response = (revision: string, uids: number[]): CanalCandidatesResponse => 
 const land: LandRoute = { path: [{ lat: 1, lon: 2 }], durationSeconds: 20, distanceMeters: 30 };
 const canal: CanalRouteResponse = { route: { start: 'a', end: 'b', is_ring: false, legs: [], days: [], total_km: 1, total_locks: 0, total_minutes: 2, amenities: [], warnings: [], graph_source_date: 'today' }, geometry: { type: 'LineString', coordinates: [[-1, 51], [-2, 52]] } };
 
-function setup(options: { matrices?: TransferResult[][]; routeError?: Error; map?: MapView } = {}) {
+function setup(options: {
+  matrices?: TransferResult[][];
+  routeError?: Error;
+  map?: MapView;
+  routePois?: (request: unknown) => Promise<RoutePoisResponse>;
+} = {}) {
   const canalCandidates = vi.fn(async ({ lat }: LatLon) => lat < 52 ? response('r1', [1, 2]) : response('r1', [3, 4]));
   const canalRoute = vi.fn(async (_request: CanalRouteRequest) => canal);
+  const routePois = options.routePois ?? vi.fn(async () => ({ pois: [], zoom_in_required: false, matching_count: 0, day: null }));
   const matrices = options.matrices ?? [[
     { available: true, durationSeconds: 20, distanceMeters: 100 },
     { available: true, durationSeconds: 10, distanceMeters: 200 },
@@ -28,7 +40,7 @@ function setup(options: { matrices?: TransferResult[][]; routeError?: Error; map
     matrix: vi.fn(async () => matrices[Math.min(matrixIndex++, matrices.length - 1)]),
     route: vi.fn(async () => { if (options.routeError) throw options.routeError; return land; }),
   };
-  const store = createTripStore({ poundApi: { canalCandidates, canalRoute }, transferRouter, mapView: options.map, transferMode: 'WALK' });
+  const store = createTripStore({ poundApi: { canalCandidates, canalRoute, routePois }, transferRouter, mapView: options.map, transferMode: 'WALK' });
   return { store, canalCandidates, canalRoute, transferRouter };
 }
 
@@ -119,6 +131,32 @@ describe('trip store', () => {
     expect(canalRoute).toHaveBeenCalledWith({ start_uid: 2, end_uid: 4, artifact_revision: 'r1', ...constraints });
     expect(get(store).canalRoute).toEqual(canal);
     expect(drawCanal).toHaveBeenCalledWith(canal.geometry);
+  });
+
+  it('keeps POIs opt-in and refreshes selected route/day data', async () => {
+    const routePois = vi.fn(async () => ({ pois: [], zoom_in_required: false, matching_count: 0, day: null }));
+    const { store } = setup({ routePois });
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    await store.planCanalRoute({});
+
+    expect(routePois).not.toHaveBeenCalled();
+    store.togglePoiKind('pub');
+    await store.refreshRoutePois({ south: 50, west: -2, north: 54, east: 0 });
+
+    expect(routePois).toHaveBeenCalledWith(expect.objectContaining({ kinds: ['pub'] }));
+  });
+
+  it('selects a day without replanning', async () => {
+    const { store, canalRoute } = setup();
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    await store.planCanalRoute({});
+
+    store.selectDay(2);
+
+    expect(get(store).selectedDay).toBe(2);
+    expect(canalRoute).toHaveBeenCalledTimes(1);
   });
 
   it('rejects mixed revisions before calling the backend', async () => {

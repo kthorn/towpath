@@ -16,11 +16,15 @@ import type {
   CanalRouteRequest,
   CanalRouteResponse,
   LatLon,
+  MapBounds,
+  RoutePoisRequest,
+  RoutePoisResponse,
 } from '../types';
 
 interface PoundApi {
   canalCandidates(request: CanalCandidatesRequest): Promise<CanalCandidatesResponse>;
   canalRoute(request: CanalRouteRequest): Promise<CanalRouteResponse>;
+  routePois(request: RoutePoisRequest): Promise<RoutePoisResponse>;
 }
 
 export interface EndpointState {
@@ -42,6 +46,10 @@ export interface TripState {
   canalRoute: CanalRouteResponse | null;
   routeError: string | null;
   routing: boolean;
+  selectedDay: number | null;
+  enabledPoiKinds: string[];
+  routePois: RoutePoisResponse | null;
+  poiError: string | null;
 }
 
 export type CanalConstraints = Omit<CanalRouteRequest, 'start_uid' | 'end_uid' | 'artifact_revision'>;
@@ -51,6 +59,9 @@ export interface TripStore extends Readable<TripState> {
   selectCandidate(slot: EndpointSlot, uid: number): Promise<void>;
   confirmGeometricFallback(slot: EndpointSlot): void;
   planCanalRoute(constraints: CanalConstraints): Promise<CanalRouteResponse>;
+  togglePoiKind(kind: string): void;
+  selectDay(day: number | null): void;
+  refreshRoutePois(bounds: MapBounds): Promise<void>;
   setMapView(mapView: MapView | undefined): void;
 }
 
@@ -72,6 +83,7 @@ export function createTripStore(dependencies: {
   let mapView = dependencies.mapView;
   const initial: TripState = {
     origin: emptyEndpoint(), destination: emptyEndpoint(), canalRoute: null, routeError: null, routing: false,
+    selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null,
   };
   const inner = writable(initial);
   let state = initial;
@@ -79,6 +91,9 @@ export function createTripStore(dependencies: {
   const generations: Record<EndpointSlot, number> = { origin: 0, destination: 0 };
   let routeGeneration = 0;
   let routeRequest = 0;
+  let poiRequest = 0;
+  let viewportUnsubscribe: (() => void) | undefined;
+  let lastViewportBounds: MapBounds | undefined;
 
   const updateEndpoint = (slot: EndpointSlot, patch: Partial<EndpointState>) => {
     inner.update((current) => ({ ...current, [slot]: { ...current[slot], ...patch } }));
@@ -91,9 +106,22 @@ export function createTripStore(dependencies: {
     if (!operation) return;
     try { operation(); } catch (error) { warn(slot, `Map display failed: ${message(error)}`); }
   };
+  const clearRouteOverlays = () => {
+    poiRequest += 1;
+    inner.update((current) => ({
+      ...current,
+      selectedDay: null,
+      routePois: null,
+      poiError: null,
+    }));
+    mapCall('origin', () => mapView?.pois?.([]));
+    mapCall('origin', () => mapView?.locks?.([]));
+    mapCall('origin', () => mapView?.day?.(null));
+  };
   const invalidateCanalRoute = (slot: EndpointSlot) => {
     routeGeneration += 1;
     inner.update((current) => ({ ...current, canalRoute: null, routeError: null, routing: false }));
+    clearRouteOverlays();
     mapCall(slot, () => mapView?.canal(null));
   };
   const clearLand = (slot: EndpointSlot) => {
@@ -208,12 +236,14 @@ export function createTripStore(dependencies: {
     };
     const endpointGeneration = routeGeneration;
     const requestSequence = ++routeRequest;
+    clearRouteOverlays();
     inner.update((current) => ({ ...current, routing: true, routeError: null }));
     try {
       const result = await poundApi.canalRoute(request);
       if (endpointGeneration === routeGeneration && requestSequence === routeRequest) {
         inner.update((current) => ({ ...current, routing: false, canalRoute: result }));
         mapCall('origin', () => mapView?.canal(result.geometry));
+        mapCall('origin', () => mapView?.locks?.(result.locks ?? []));
       }
       return result;
     } catch (error) {
@@ -224,9 +254,64 @@ export function createTripStore(dependencies: {
     }
   }
 
+  function selectedDayGeometry(day: number | null) {
+    return state.canalRoute?.day_geometries?.find((geometry) => geometry.day === day) ?? null;
+  }
+
+  async function refreshRoutePois(bounds: MapBounds): Promise<void> {
+    const route = state.canalRoute;
+    const kinds = [...state.enabledPoiKinds];
+    const artifactRevision = state.origin.artifactRevision ?? state.destination.artifactRevision;
+    if (!route || !kinds.length || !artifactRevision) return;
+
+    const selectedDay = state.selectedDay;
+    const dayGeometry = selectedDayGeometry(selectedDay);
+    const request: RoutePoisRequest = {
+      artifact_revision: artifactRevision,
+      kinds,
+      bounds,
+      route_geometry: route.geometry,
+      ...(dayGeometry ? { day_geometry: dayGeometry.geometry } : {}),
+      day: selectedDay,
+    };
+    const requestSequence = ++poiRequest;
+    try {
+      const result = await poundApi.routePois(request);
+      if (requestSequence !== poiRequest || route !== state.canalRoute) return;
+      inner.update((current) => ({ ...current, routePois: result, poiError: null }));
+      mapCall('origin', () => mapView?.pois?.(result.pois));
+    } catch (error) {
+      if (requestSequence !== poiRequest || route !== state.canalRoute) return;
+      inner.update((current) => ({ ...current, poiError: message(error) }));
+    }
+  }
+
+  function togglePoiKind(kind: string): void {
+    const enabled = state.enabledPoiKinds.includes(kind);
+    const kinds = enabled
+      ? state.enabledPoiKinds.filter((value) => value !== kind)
+      : [...state.enabledPoiKinds, kind];
+    poiRequest += 1;
+    inner.update((current) => ({ ...current, enabledPoiKinds: kinds, routePois: null, poiError: null }));
+    mapCall('origin', () => mapView?.pois?.([]));
+    if (kinds.length && lastViewportBounds) {
+      void refreshRoutePois(lastViewportBounds);
+    }
+  }
+
+  function selectDay(day: number | null): void {
+    poiRequest += 1;
+    inner.update((current) => ({ ...current, selectedDay: day, poiError: null }));
+    mapCall('origin', () => mapView?.day?.(selectedDayGeometry(day)));
+    if (lastViewportBounds) void refreshRoutePois(lastViewportBounds);
+  }
+
   return {
     subscribe: inner.subscribe, setEndpointCoordinate, selectCandidate, confirmGeometricFallback,
-    planCanalRoute, setMapView(value) {
+    planCanalRoute, togglePoiKind, selectDay, refreshRoutePois, setMapView(value) {
+      viewportUnsubscribe?.();
+      viewportUnsubscribe = undefined;
+      lastViewportBounds = undefined;
       mapView = value;
       if (!mapView) return;
       for (const slot of ['origin', 'destination'] as const) {
@@ -238,6 +323,17 @@ export function createTripStore(dependencies: {
         if (endpoint.landRoute) mapCall(slot, () => mapView?.land(slot, endpoint.landRoute));
       }
       mapCall('origin', () => mapView?.canal(state.canalRoute?.geometry ?? null));
+      mapCall('origin', () => mapView?.locks?.(state.canalRoute?.locks ?? []));
+      mapCall('origin', () => mapView?.day?.(selectedDayGeometry(state.selectedDay)));
+      mapCall('origin', () => mapView?.pois?.(state.routePois?.pois ?? []));
+      try {
+        viewportUnsubscribe = mapView.onViewportIdle?.((bounds) => {
+          lastViewportBounds = bounds;
+          if (state.enabledPoiKinds.length) void refreshRoutePois(bounds);
+        });
+      } catch (error) {
+        warn('origin', `Map display failed: ${message(error)}`);
+      }
     },
   };
 }

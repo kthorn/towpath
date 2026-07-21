@@ -5,6 +5,7 @@
   import BoatSettings from './component/BoatSettings.svelte';
   import EndpointPanel from './component/EndpointPanel.svelte';
   import MapCanvas from './component/MapCanvas.svelte';
+  import RouteLayers from './component/RouteLayers.svelte';
   import TripSummary from './component/TripSummary.svelte';
   import type { AppDependencies } from './lib/app';
   import type { EndpointSlot } from './lib/google/contracts';
@@ -73,7 +74,8 @@
       <EndpointPanel slot="origin" endpoint={$store.origin} {store} search={dependencies.placeSearch} />
       <EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} />
       <BoatConstraints {store} settings={boatSettings} bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
-      <TripSummary state={$store} />
+      <TripSummary state={$store} onDaySelect={store.selectDay} />
+      <RouteLayers {store} />
     </div>
   </main>
 {:else}

@@ -32,18 +32,34 @@ const route = {
 };
 
 function setup(overrides: { unavailable?: boolean; mapReject?: boolean; sameNode?: boolean } = {}) {
-  const state: TripState = { origin: endpoint('Bletchley Park', 1, overrides.unavailable), destination: endpoint('Canal Base', 2), canalRoute: overrides.sameNode ? { ...route, route: { ...route.route, start: 'A', end: 'A', total_km: 0, total_minutes: 0, total_locks: 0, days: [] } } : route, routeError: null, routing: false };
+  const state: TripState = {
+    origin: endpoint('Bletchley Park', 1, overrides.unavailable),
+    destination: endpoint('Canal Base', 2),
+    canalRoute: overrides.sameNode ? { ...route, route: { ...route.route, start: 'A', end: 'A', total_km: 0, total_minutes: 0, total_locks: 0, days: [] } } : route,
+    routeError: null,
+    routing: false,
+    selectedDay: null,
+    enabledPoiKinds: [],
+    routePois: null,
+    poiError: null,
+  };
   const inner = writable(state);
   const calls: Array<{ slot: EndpointSlot; place: SelectedPlace | { lat: number; lon: number } }> = [];
   const store: TripStore = {
     subscribe: inner.subscribe,
     setEndpointCoordinate: vi.fn(async (slot, place) => { calls.push({ slot, place }); }),
     selectCandidate: vi.fn(async () => {}), confirmGeometricFallback: vi.fn(),
-    planCanalRoute: vi.fn(async () => route), setMapView: vi.fn(),
+    planCanalRoute: vi.fn(async () => route),
+    togglePoiKind: vi.fn(), selectDay: vi.fn(), refreshRoutePois: vi.fn(async () => {}), setMapView: vi.fn(),
   };
   const selects: Array<(place: SelectedPlace) => void> = [];
   const mapClick = { callback: (_coordinate: { lat: number; lon: number }) => {} };
-  const map: MapView = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn((callback) => { mapClick.callback = callback; return vi.fn(); }) };
+  const map: MapView = {
+    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+    clearLand: vi.fn(), destroy: vi.fn(),
+    onMapClick: vi.fn((callback) => { mapClick.callback = callback; return vi.fn(); }),
+    onViewportIdle: vi.fn(() => vi.fn()),
+  };
   const dependencies: AppDependencies = {
     store,
     placeSearch: { attach: vi.fn((_input, onSelect) => { selects.push(onSelect); return vi.fn(); }) },
@@ -207,6 +223,18 @@ describe('trip planning interface', () => {
     expect(screen.getAllByText(/10 min.*2.4 km/i)).toHaveLength(2);
   });
 
+  it('toggles POI layers and selects a route day without replanning', async () => {
+    const { dependencies, store } = setup();
+    render(App, { props: { dependencies } });
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Pubs' }));
+    await fireEvent.click(screen.getByRole('button', { name: /Day 1/i }));
+
+    expect(store.togglePoiKind).toHaveBeenCalledWith('pub');
+    expect(store.selectDay).toHaveBeenCalledWith(1);
+    expect(store.planCanalRoute).not.toHaveBeenCalled();
+  });
+
   it('uses the exact same-node label without empty day chrome', () => {
     render(App, { props: { dependencies: setup({ sameNode: true }).dependencies } });
     expect(screen.getByText('No canal travel required')).toBeVisible();
@@ -254,7 +282,7 @@ describe('trip planning interface', () => {
   });
 
   it('preserves planner state across settings visit', async () => {
-    const { dependencies, store, selects, mapClick, calls } = setup();
+    const { dependencies, store, selects } = setup();
     render(App, { props: { dependencies } });
     await vi.waitFor(() => expect(selects).toHaveLength(2));
     selects[0]({ name: 'Museum', address: '', coordinate: { lat: 1, lon: 2 } });
@@ -264,8 +292,14 @@ describe('trip planning interface', () => {
   });
 
   it('tears down and recreates the map across settings round trip', async () => {
-    const firstMap: MapView = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()) };
-    const secondMap: MapView = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()) };
+    const firstMap: MapView = {
+      marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+      clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onViewportIdle: vi.fn(() => vi.fn()),
+    };
+    const secondMap: MapView = {
+      marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+      clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onViewportIdle: vi.fn(() => vi.fn()),
+    };
     let loadCount = 0;
     const loadMapView = vi.fn(async () => {
       loadCount++;
@@ -325,7 +359,7 @@ describe('trip planning interface', () => {
     await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
 
     expect(screen.getByLabelText(/boat length/i)).toHaveValue(18);
-    expect(JSON.parse(localStorage.getItem('pound.boat-settings')!)).toMatchObject({ boat_length_m: 18 });
+    expect(storedSettings()).toMatchObject({ boat_length_m: 18 });
   });
 
   it('keeps invalid drafts, marks the field, and focuses the first invalid input', async () => {
