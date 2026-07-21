@@ -8,9 +8,12 @@ from shapely.geometry import Point
 from pound.graph.spatial import (
     _INITIAL_RADIUS_M,
     GraphSpatialIndex,
+    PoiSpatialIndex,
     lat_lon_to_xy,
     spherical_envelopes,
 )
+from pound.ingest.ir import OsmElementType, PoiCategory, PointOfInterest
+from pound.schemas import GeoJSONLineString, MapBounds
 
 
 def _graph() -> nx.Graph:
@@ -90,3 +93,55 @@ def test_index_construction_and_queries_do_not_mutate_graph_or_index():
     assert first == second
     assert (index.node_uids, index.edge_keys, index.node_points, index.edge_lines) == state
     assert nx.utils.graphs_equal(graph, graph_before)
+
+
+def _poi(kind: str, lat: float, lon: float, osm_id: int = 1) -> PointOfInterest:
+    return PointOfInterest(
+        osm_type=OsmElementType.NODE,
+        osm_id=osm_id,
+        category=PoiCategory.PROVISIONS,
+        kind=kind,
+        name=f"{kind} name",
+        lat=lat,
+        lon=lon,
+        source_tags={},
+        geometry_source="point",
+        nearest_waterway_distance_m=0,
+        nearest_edge=(2, 9),
+        nearest_node_uid=2,
+        projected_lat=lat,
+        projected_lon=lon,
+    )
+
+
+def _line(points: list[tuple[float, float]]) -> GeoJSONLineString:
+    return GeoJSONLineString(coordinates=[(lon, lat) for lat, lon in points])
+
+
+def test_poi_spatial_index_filters_kind_viewport_and_route_corridor():
+    index = PoiSpatialIndex(
+        (
+            _poi("pub", 51.0, -1.0),
+            _poi("pub", 51.02, -1.0, 4),
+            _poi("pub", 52.0, -2.0, 2),
+            _poi("marina", 51.0, -1.0, 3),
+        )
+    )
+    result = index.query(
+        bounds=MapBounds(south=50.9, west=-1.1, north=51.1, east=-0.9),
+        route_geometry=_line([(51.0, -1.1), (51.0, -0.9)]),
+        kinds=("pub",),
+    )
+    assert [poi.kind for poi in result.pois] == ["pub"]
+
+
+def test_poi_spatial_index_returns_over_cap_without_points():
+    pois = tuple(_poi("pub", 51.0 + index * 0.000001, -1.0, index + 1) for index in range(1001))
+    result = PoiSpatialIndex(pois).query(
+        bounds=MapBounds(south=50.9, west=-1.1, north=51.1, east=-0.9),
+        route_geometry=_line([(51.0, -1.1), (51.0, -0.9)]),
+        kinds=("pub",),
+    )
+    assert not result.pois
+    assert result.zoom_in_required
+    assert result.matching_count == 1001

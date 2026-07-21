@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 
 from pound.graph.artifact import GraphArtifact, InvalidArtifactError, load_artifact
-from pound.graph.spatial import GraphSpatialIndex
+from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.api import router as api_router
 from pound.web.config import WebSettings
 
@@ -43,6 +43,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         app.state.artifact_revision = artifact.metadata["artifact_revision"]
         app.state.settings = runtime_settings
         app.state.spatial_index = GraphSpatialIndex(artifact.graph)
+        app.state.poi_spatial_index = PoiSpatialIndex(artifact.pois)
         yield
 
     application = FastAPI(lifespan=lifespan)

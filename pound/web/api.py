@@ -5,7 +5,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from pound.route.candidates import nearest_coord_candidates, select_spaced_candidates
 from pound.route.plan import RouteUnavailableError, plan_canal_route
-from pound.schemas import CanalCandidatesResponse, CanalRouteResponse, ResolvedConstraints
+from pound.schemas import (
+    CanalCandidatesResponse,
+    CanalRouteResponse,
+    ResolvedConstraints,
+    RoutePoisRequest,
+    RoutePoisResponse,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -49,9 +55,7 @@ def _error(status_code: int, *, code: str, message: str, fields: list[str] | Non
 
 
 @router.post("/canal-candidates", response_model=CanalCandidatesResponse)
-def canal_candidates(
-    body: CanalCandidatesRequest, request: Request
-) -> CanalCandidatesResponse:
+def canal_candidates(body: CanalCandidatesRequest, request: Request) -> CanalCandidatesResponse:
     """Return tuned, spaced graph candidates nearest to a map coordinate."""
 
     graph = request.app.state.graph
@@ -71,6 +75,46 @@ def canal_candidates(
         minimum_spacing_m=settings.minimum_candidate_spacing_m,
     )
     return CanalCandidatesResponse(artifact_revision=revision, candidates=candidates)
+
+
+@router.post("/route-pois", response_model=RoutePoisResponse)
+def route_pois(body: RoutePoisRequest, request: Request) -> RoutePoisResponse:
+    """Return selected POIs within the current viewport and route corridor."""
+
+    if body.artifact_revision != request.app.state.artifact_revision:
+        raise _error(
+            409,
+            code="artifact_revision_mismatch",
+            message="The routing artifact has changed; refresh the route.",
+            fields=["artifact_revision"],
+        )
+    if body.bounds.south > body.bounds.north or body.bounds.west > body.bounds.east:
+        raise _error(
+            400,
+            code="invalid_bounds",
+            message="Bounds must be ordered south <= north and west <= east.",
+            fields=["bounds"],
+        )
+    allowed_kinds = {poi.kind for poi in request.app.state.pois}
+    if set(body.kinds) - allowed_kinds:
+        raise _error(
+            400,
+            code="invalid_poi_kind",
+            message="One or more POI kinds do not exist in this artifact.",
+            fields=["kinds"],
+        )
+    poi_index = request.app.state.poi_spatial_index
+    result = poi_index.query(
+        body.bounds,
+        body.day_geometry or body.route_geometry,
+        tuple(body.kinds),
+    )
+    return RoutePoisResponse(
+        pois=list(result.pois),
+        zoom_in_required=result.zoom_in_required,
+        matching_count=result.matching_count,
+        day=body.day,
+    )
 
 
 @router.post("/canal-route", response_model=CanalRouteResponse)

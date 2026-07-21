@@ -1,5 +1,6 @@
 import pickle
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import networkx as nx
@@ -7,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pound.graph.artifact import InvalidArtifactError, load_artifact, save_artifact
-from pound.graph.spatial import GraphSpatialIndex
+from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.app import _load_web_artifact, create_app
 from pound.web.config import WebSettings
 from tests.web.conftest import artifact_metadata
@@ -56,7 +57,10 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
     ],
 )
 def test_settings_reject_invalid_tuning(field: str, value: int | float, tmp_path: Path):
-    values = {"artifact_path": tmp_path / "graph.pkl", "static_dir": tmp_path / "static"}
+    values: dict[str, Any] = {
+        "artifact_path": tmp_path / "graph.pkl",
+        "static_dir": tmp_path / "static",
+    }
     values[field] = value
 
     with pytest.raises(ValueError, match=field):
@@ -103,9 +107,7 @@ def test_startup_reports_malformed_artifact_wrapper(tmp_path: Path):
         ({"graph": nx.Graph()}, "metadata"),
     ],
 )
-def test_startup_rejects_incomplete_artifact(
-    tmp_path: Path, blob: dict[str, object], missing: str
-):
+def test_startup_rejects_incomplete_artifact(tmp_path: Path, blob: dict[str, object], missing: str):
     artifact = tmp_path / "incomplete.pkl"
     _write_blob(artifact, blob)
 
@@ -134,17 +136,19 @@ def test_startup_attaches_artifact_state_and_loads_once(tmp_path: Path):
     with (
         patch("pound.web.app.load_artifact", wraps=load_artifact) as load,
         patch("pound.web.app.GraphSpatialIndex", wraps=GraphSpatialIndex) as build_index,
+        patch("pound.web.app.PoiSpatialIndex", wraps=PoiSpatialIndex) as build_poi_index,
     ):
         with TestClient(app) as client:
             assert app.state.graph.nodes == graph.nodes
             assert app.state.artifact.graph is app.state.graph
-            assert app.state.artifact.pois == ()
+            assert not app.state.artifact.pois
             assert app.state.pois is app.state.artifact.pois
             assert app.state.metadata["source"] == "test"
             assert app.state.metadata is app.state.artifact.metadata
             assert app.state.artifact_revision == "revision-7"
             assert app.state.settings is settings
             assert isinstance(app.state.spatial_index, GraphSpatialIndex)
+            assert isinstance(app.state.poi_spatial_index, PoiSpatialIndex)
             assert client.get("/api/health").json() == {
                 "status": "healthy",
                 "artifact_revision": "revision-7",
@@ -153,6 +157,7 @@ def test_startup_attaches_artifact_state_and_loads_once(tmp_path: Path):
 
     load.assert_called_once_with(artifact)
     build_index.assert_called_once_with(app.state.graph)
+    build_poi_index.assert_called_once_with(app.state.pois)
 
 
 def test_startup_does_not_mutate_loaded_artifact_fields(tmp_path: Path):
@@ -168,4 +173,4 @@ def test_startup_does_not_mutate_loaded_artifact_fields(tmp_path: Path):
 
     assert loaded.graph.graph == {"marker": {"stable": True}}
     assert loaded.metadata == metadata
-    assert loaded.pois == ()
+    assert not loaded.pois

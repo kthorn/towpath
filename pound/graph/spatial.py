@@ -7,12 +7,14 @@ from typing import Any
 import networkx as nx
 from pyproj import Transformer
 from shapely import transform
-from shapely.geometry import Point, box
+from shapely.geometry import LineString, Point, box
 from shapely.ops import nearest_points
 from shapely.strtree import STRtree
 
 from pound.graph.build import _haversine_m
-from pound.graph.pois import _edge_line_wgs84, _routing_eligible
+from pound.graph.pois import _CORRIDOR_M, _edge_line_wgs84, _routing_eligible
+from pound.ingest.ir import PointOfInterest
+from pound.schemas import Coordinate, GeoJSONLineString, MapBounds, RoutePoi
 
 _EARTH_RADIUS_M = 6_371_000.0
 _MAX_RADIUS_M = math.pi * _EARTH_RADIUS_M
@@ -52,6 +54,77 @@ def spherical_envelopes(*, lon: float, lat: float, radius_m: float) -> tuple[Any
     if west <= east:
         return (box(west, south, east, north),)
     return (box(-180.0, south, east, north), box(west, south, 180.0, north))
+
+
+@dataclass(frozen=True)
+class PoiQueryResult:
+    """Bounded POI query output, with a sentinel for an overly broad match."""
+
+    pois: tuple[RoutePoi, ...]
+    matching_count: int
+    zoom_in_required: bool
+
+
+@dataclass(frozen=True)
+class PoiSpatialIndex:
+    """Stable WGS84 POI points and a metric route-corridor query tree."""
+
+    pois: tuple[PointOfInterest, ...]
+    poi_points: tuple[Point, ...]
+    poi_tree: STRtree | None
+
+    def __init__(self, pois: tuple[PointOfInterest, ...]) -> None:
+        ordered_pois = tuple(
+            sorted(pois, key=lambda poi: (poi.osm_type.value, poi.osm_id, poi.kind))
+        )
+        points = tuple(Point(*lat_lon_to_xy(lat=poi.lat, lon=poi.lon)) for poi in ordered_pois)
+        object.__setattr__(self, "pois", ordered_pois)
+        object.__setattr__(self, "poi_points", points)
+        object.__setattr__(self, "poi_tree", STRtree(points) if points else None)
+
+    def query(
+        self,
+        bounds: MapBounds,
+        route_geometry: GeoJSONLineString,
+        kinds: tuple[str, ...],
+    ) -> PoiQueryResult:
+        """Return selected POIs in a viewport and category-specific route corridor."""
+        if self.poi_tree is None or not kinds:
+            return PoiQueryResult(pois=(), matching_count=0, zoom_in_required=False)
+
+        viewport = box(bounds.west, bounds.south, bounds.east, bounds.north)
+        positions = sorted(int(position) for position in self.poi_tree.query(viewport))
+        route = transform(
+            LineString(route_geometry.coordinates),
+            _TO_BNG.transform,
+            interleaved=False,
+        )
+        selected_kinds = set(kinds)
+        matches: list[RoutePoi] = []
+        matching_count = 0
+        for position in positions:
+            poi = self.pois[position]
+            if poi.kind not in selected_kinds:
+                continue
+            point_bng = transform(self.poi_points[position], _TO_BNG.transform, interleaved=False)
+            distance_m = float(point_bng.distance(route))
+            if distance_m > _CORRIDOR_M[poi.category]:
+                continue
+            matching_count += 1
+            if matching_count > 1000:
+                return PoiQueryResult(pois=(), matching_count=1001, zoom_in_required=True)
+            matches.append(
+                RoutePoi(
+                    identity=f"{poi.osm_type.value}/{poi.osm_id}/{poi.kind}",
+                    kind=poi.kind,
+                    name=poi.name,
+                    coordinate=Coordinate(lat=poi.lat, lon=poi.lon),
+                    distance_to_route_m=distance_m,
+                )
+            )
+        return PoiQueryResult(
+            pois=tuple(matches), matching_count=matching_count, zoom_in_required=False
+        )
 
 
 @dataclass(frozen=True)
@@ -102,9 +175,7 @@ class GraphSpatialIndex:
         if self.node_tree is None:
             return ()
         positions = {
-            int(position)
-            for envelope in envelopes
-            for position in self.node_tree.query(envelope)
+            int(position) for envelope in envelopes for position in self.node_tree.query(envelope)
         }
         return tuple(self.node_uids[position] for position in sorted(positions))
 
@@ -149,9 +220,11 @@ def nearest_node_distances(
         whole_world = radius >= _MAX_RADIUS_M
         search_radius = _MAX_RADIUS_M if whole_world else radius
         envelopes = spherical_envelopes(lon=x, lat=y, radius_m=search_radius)
-        envelope_covers_world = (
-            len(envelopes) == 1
-            and envelopes[0].bounds == (-180.0, -90.0, 180.0, 90.0)
+        envelope_covers_world = len(envelopes) == 1 and envelopes[0].bounds == (
+            -180.0,
+            -90.0,
+            180.0,
+            90.0,
         )
         uids = index.query_node_uids(envelopes)
         ranked = sorted(

@@ -4,9 +4,10 @@ Per design §6. Field names are the integration seam; do not rename without
 coordinating with labyrinth-core / labyrinth-agent.
 """
 
+import math
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CanalConstraints(BaseModel):
@@ -103,8 +104,82 @@ class CanalCandidatesResponse(BaseModel):
 
 
 class GeoJSONLineString(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["LineString"] = "LineString"
     coordinates: list[tuple[float, float]]
+
+
+class MapBounds(BaseModel):
+    """Ordered WGS84 viewport bounds used by bounded map queries."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    south: float = Field(ge=-90, le=90)
+    west: float = Field(ge=-180, le=180)
+    north: float = Field(ge=-90, le=90)
+    east: float = Field(ge=-180, le=180)
+
+
+class RoutePoi(BaseModel):
+    """A retained POI projected into the route overlay response."""
+
+    identity: str
+    kind: str
+    name: str | None
+    coordinate: Coordinate
+    distance_to_route_m: float = Field(ge=0)
+
+
+class RoutePoisRequest(BaseModel):
+    """Strict, artifact-scoped input for bounded route POI queries."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    artifact_revision: str
+    kinds: list[str]
+    bounds: MapBounds
+    route_geometry: GeoJSONLineString
+    day_geometry: GeoJSONLineString | None = None
+    day: int | None = Field(gt=0, default=None)
+
+    @field_validator("route_geometry", "day_geometry", mode="before")
+    @classmethod
+    def require_numeric_line_coordinates(cls, geometry):
+        if geometry is None:
+            return None
+        coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+        if coordinates is not None:
+            for coordinate in coordinates:
+                if isinstance(coordinate, (list, tuple)) and any(
+                    not isinstance(value, (int, float)) or isinstance(value, bool)
+                    for value in coordinate
+                ):
+                    raise ValueError("LineString coordinates must contain numbers")
+        return geometry
+
+    @field_validator("route_geometry", "day_geometry")
+    @classmethod
+    def require_line_coordinates(cls, geometry: GeoJSONLineString | None):
+        if geometry is None:
+            return None
+        if len(geometry.coordinates) < 2:
+            raise ValueError("LineString geometry must contain at least two coordinates")
+        for lon, lat in geometry.coordinates:
+            if not math.isfinite(lon) or not -180 <= lon <= 180:
+                raise ValueError("LineString longitude must be finite and within -180 through 180")
+            if not math.isfinite(lat) or not -90 <= lat <= 90:
+                raise ValueError("LineString latitude must be finite and within -90 through 90")
+        return geometry
+
+
+class RoutePoisResponse(BaseModel):
+    """Bounded route POI results and the selected day label."""
+
+    pois: list[RoutePoi]
+    zoom_in_required: bool
+    matching_count: int = Field(ge=0)
+    day: int | None = None
 
 
 class RouteDayGeometry(BaseModel):
