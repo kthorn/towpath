@@ -1,4 +1,12 @@
-import type { CanalCandidate, GeoJSONLineString, LatLon } from '../types';
+import type {
+  CanalCandidate,
+  GeoJSONLineString,
+  LatLon,
+  MapBounds,
+  RouteDayGeometry,
+  RouteLock,
+  RoutePoi,
+} from '../types';
 import type { TransferMode } from '../config';
 
 export type EndpointSlot = 'origin' | 'destination';
@@ -42,7 +50,11 @@ export interface MapView {
   candidates(slot: EndpointSlot, candidates: CanalCandidate[], selectedUid?: number): void;
   land(slot: EndpointSlot, route: LandRoute | null): void;
   canal(geometry: GeoJSONLineString | null): void;
+  pois(pois: RoutePoi[]): void;
+  locks(locks: RouteLock[]): void;
+  day(dayGeometry: RouteDayGeometry | null): void;
   onMapClick(callback: (coordinate: LatLon) => void): () => void;
+  onViewportIdle(callback: (bounds: MapBounds) => void): () => void;
   clearLand(slot: EndpointSlot): void;
   destroy(): void;
 }

@@ -4,6 +4,8 @@ import type {
   CanalRouteRequest,
   CanalRouteResponse,
   PoundApiErrorDetail,
+  RoutePoisRequest,
+  RoutePoisResponse,
 } from './types';
 
 export class PoundApiError extends Error implements PoundApiErrorDetail {
@@ -66,6 +68,9 @@ export function createPoundApi(fetchFn: typeof fetch = fetch) {
     },
     canalRoute(request: CanalRouteRequest): Promise<CanalRouteResponse> {
       return postJson(fetchFn, '/api/canal-route', request);
+    },
+    routePois(request: RoutePoisRequest): Promise<RoutePoisResponse> {
+      return postJson(fetchFn, '/api/route-pois', request);
     },
   };
 }

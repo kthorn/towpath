@@ -60,9 +60,56 @@ export interface GeoJSONLineString {
   coordinates: [number, number][];
 }
 
+export interface MapBounds {
+  south: number;
+  west: number;
+  north: number;
+  east: number;
+}
+
+export interface RoutePoi {
+  identity: string;
+  kind: string;
+  name: string | null;
+  coordinate: LatLon;
+  distance_to_route_m: number;
+}
+
+export interface RoutePoisRequest {
+  artifact_revision: string;
+  kinds: string[];
+  bounds: MapBounds;
+  route_geometry: GeoJSONLineString;
+  day_geometry?: GeoJSONLineString;
+  day?: number | null;
+}
+
+export interface RoutePoisResponse {
+  pois: RoutePoi[];
+  zoom_in_required: boolean;
+  matching_count: number;
+  day: number | null;
+}
+
+export interface RouteDayGeometry {
+  day: number;
+  geometry: GeoJSONLineString;
+  start: LatLon;
+  end: LatLon;
+}
+
+export interface RouteLock {
+  coordinate: LatLon;
+  name: string | null;
+  day: number;
+  approximate: boolean;
+}
+
 export interface CanalRouteResponse {
   route: RouteResult;
   geometry: GeoJSONLineString;
+  day_geometries?: RouteDayGeometry[];
+  locks?: RouteLock[];
 }
 
 export type CanalCandidatesRequest = LatLon;

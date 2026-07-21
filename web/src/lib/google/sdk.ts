@@ -1,3 +1,4 @@
+import type { MapBounds } from '../types';
 import type { MapView, PlaceSearch, TransferRouter } from './contracts';
 import type { GoogleMapsModules } from './loader';
 import { createGoogleMapView, type MapFacade } from './map';
@@ -13,6 +14,7 @@ interface MapsModule {
 
 interface RuntimeMap {
   fitBounds(bounds: { north: number; south: number; east: number; west: number }): void;
+  getBounds(): { toJSON(): MapBounds } | undefined;
 }
 
 interface MarkerModule {
@@ -102,6 +104,11 @@ function createMapFacade(modules: RuntimeModules): MapFacade {
         east: Math.max(...longitudes),
         west: Math.min(...longitudes),
       });
+    },
+    getBounds(map) {
+      const bounds = (map as unknown as RuntimeMap).getBounds();
+      if (!bounds) throw new Error('Google map has no viewport bounds');
+      return bounds.toJSON();
     },
   };
 }

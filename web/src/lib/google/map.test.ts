@@ -37,6 +37,7 @@ function setup() {
       return polyline;
     }),
     fitBounds: vi.fn(),
+    getBounds: vi.fn(() => ({ south: 50, west: -2, north: 54, east: 0 })),
   };
   const element = document.createElement('div');
   return { view: createGoogleMapView(facade, element), element, facade, map, mapListeners, markers, polylines };
@@ -82,6 +83,46 @@ describe('Google map adapter', () => {
     view.canal(null);
     expect(element).not.toHaveAttribute('data-canal-overlay');
     expect(polylines[1].setMap).toHaveBeenCalledWith(null);
+  });
+
+  it('replaces POI and lock markers and highlights a selected day', () => {
+    const { view, markers, polylines, facade } = setup();
+    view.pois([
+      {
+        identity: 'node/1/pub',
+        kind: 'pub',
+        name: 'The Pub',
+        coordinate: { lat: 51, lon: -1 },
+        distance_to_route_m: 12,
+      },
+    ]);
+    view.locks([
+      { coordinate: { lat: 51.1, lon: -1.1 }, name: null, day: 1, approximate: true },
+    ]);
+    view.day({
+      day: 1,
+      geometry: { type: 'LineString', coordinates: [[-1, 51], [-1.1, 51.1]] },
+      start: { lat: 51, lon: -1 },
+      end: { lat: 51.1, lon: -1.1 },
+    });
+
+    expect(markers.some((marker) => marker.title === 'The Pub')).toBe(true);
+    expect(markers.some((marker) => marker.title === 'Lock (approximate) — day 1')).toBe(true);
+    expect(polylines.at(-1)?.options.strokeWeight).toBe(8);
+    expect(facade.fitBounds).toHaveBeenCalled();
+  });
+
+  it('reports viewport bounds immediately and when the map becomes idle', () => {
+    const { view, facade, mapListeners } = setup();
+    const callback = vi.fn();
+    const unsubscribe = view.onViewportIdle(callback);
+
+    expect(callback).toHaveBeenCalledWith({ south: 50, west: -2, north: 54, east: 0 });
+    mapListeners[0].callback(undefined as never);
+    expect(callback).toHaveBeenCalledTimes(2);
+    unsubscribe();
+    expect(mapListeners[0].remove).toHaveBeenCalledOnce();
+    expect(facade.getBounds).toHaveBeenCalledTimes(2);
   });
 
   it('converts map clicks and cleans up unsubscribe and destroy listeners', () => {
