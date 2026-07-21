@@ -32,6 +32,19 @@ def test_lock_way_sets_edge_locks():
     assert report["lock_ways_attached"] == 1
 
 
+def test_attach_locks_retains_source_lock_point():
+    features = _oxford()
+    graph = build_graph(features)
+    graph, _ = attach_locks(graph, features, in_place=True)
+
+    lock_edges = [data for _, _, data in graph.edges(data=True) if data.get("locks")]
+    lock_node = next(node for node in features.nodes if node.kind.value == "lock")
+    expected_point = (lock_node.lat, lock_node.lon)
+    assert lock_edges
+    assert len(lock_edges[0]["lock_points"]) == 1
+    assert lock_edges[0]["lock_points"][0] == expected_point
+
+
 def test_lock_node_at_endpoint_attaches_to_edge():
     # node 2002 (lock=yes) sits at 51.7540,-1.2640 == end of way 1003
     g, report = attach_locks(build_graph(_oxford()), _oxford())

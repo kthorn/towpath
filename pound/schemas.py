@@ -107,6 +107,22 @@ class GeoJSONLineString(BaseModel):
     coordinates: list[tuple[float, float]]
 
 
+class RouteDayGeometry(BaseModel):
+    day: int = Field(gt=0)
+    geometry: GeoJSONLineString
+    start: Coordinate
+    end: Coordinate
+
+
+class RouteLock(BaseModel):
+    coordinate: Coordinate
+    name: str | None = None
+    day: int = Field(gt=0)
+    approximate: bool = False
+
+
 class CanalRouteResponse(BaseModel):
     route: RouteResult
     geometry: GeoJSONLineString
+    day_geometries: list[RouteDayGeometry] = Field(default_factory=list)
+    locks: list[RouteLock] = Field(default_factory=list)

@@ -9,13 +9,16 @@ from pound.graph.locks import attach_locks
 from pound.ingest.overpass import parse
 from pound.route.cost import CRUISE_KMH, LOCK_MINUTES, time_min
 from pound.route.plan import plan_canal_route, plan_route, plan_route_from_constraints
-from pound.schemas import CanalConstraints, ResolvedConstraints
+from pound.schemas import CanalConstraints, Coordinate, ResolvedConstraints
 from tests.fixtures import oxford_fixture_path
 
 
 def _graph_and_gaz():
-    with open(oxford_fixture_path()) as f:
-        raw = json.load(f)
+    try:
+        with open(oxford_fixture_path()) as f:
+            raw = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+        raise RuntimeError(f"Failed to load Oxford fixture: {e}") from e
     feats = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
     g, _ = attach_locks(build_graph(feats), feats)
     attach_node_names(g, feats)
@@ -205,6 +208,23 @@ def test_day_index_sequential():
     rc = _long_resolved(days=4, hours_per_day=3.0, g=g)
     r = plan_route(rc, graph=g)
     assert [d.day for d in r.days] == [1, 2, 3, 4]
+
+
+def test_plan_canal_route_emits_day_geometries_and_route_locks():
+    g, _ = _graph_and_gaz()
+    g = copy.deepcopy(g)
+    for _, _, d in g.edges(data=True):
+        d["length_m"] = 13000.0
+    rc = _long_resolved(days=None, hours_per_day=6.0, g=g)
+
+    response = plan_canal_route(rc, graph=g)
+
+    assert [item.day for item in response.day_geometries] == [1, 2]
+    assert response.day_geometries[0].start == Coordinate(lat=51.75, lon=-1.26)
+    assert response.day_geometries[0].end == response.day_geometries[1].start
+    assert [lock.day for lock in response.locks] == [2]
+    assert response.locks[0].coordinate == Coordinate(lat=51.754, lon=-1.264)
+    assert not response.locks[0].approximate
 
 
 def test_plan_route_from_constraints_bridge():

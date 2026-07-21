@@ -14,6 +14,7 @@ bridge the CLI and Agent Core use.
 from dataclasses import dataclass
 
 import networkx as nx
+from networkx.exception import NetworkXNoPath
 
 from pound.graph.build import _node_key
 from pound.route.cost import is_eligible, time_min
@@ -21,10 +22,13 @@ from pound.route.resolve import resolve_place
 from pound.schemas import (
     CanalConstraints,
     CanalRouteResponse,
+    Coordinate,
     DayPlan,
     GeoJSONLineString,
     ResolvedConstraints,
+    RouteDayGeometry,
     RouteLeg,
+    RouteLock,
     RouteResult,
 )
 
@@ -33,6 +37,7 @@ from pound.schemas import (
 class _ComputedRoute:
     route: RouteResult
     path: tuple[int, ...]
+    day_ranges: tuple[tuple[int, int], ...]
 
 
 class RouteUnavailableError(ValueError):
@@ -44,14 +49,25 @@ def plan_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> RouteRes
     return _compute_route(constraints, graph=graph).route
 
 
-def plan_canal_route(
-    constraints: ResolvedConstraints, *, graph: nx.Graph
-) -> CanalRouteResponse:
+def plan_canal_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> CanalRouteResponse:
     """Plan a route and retain its traversed geometry for web clients."""
     computed = _compute_route(constraints, graph=graph)
+    day_geometries = []
+    for day, (start, end) in enumerate(computed.day_ranges, start=1):
+        points = _path_geometry(computed.path[start : end + 1], graph)
+        day_geometries.append(
+            RouteDayGeometry(
+                day=day,
+                geometry=_to_geojson(points),
+                start=Coordinate(lat=points[0][0], lon=points[0][1]),
+                end=Coordinate(lat=points[-1][0], lon=points[-1][1]),
+            )
+        )
     return CanalRouteResponse(
         route=computed.route,
         geometry=_to_geojson(_path_geometry(computed.path, graph)),
+        day_geometries=day_geometries,
+        locks=_route_locks(computed.path, graph, computed.day_ranges),
     )
 
 
@@ -85,7 +101,7 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
 
     try:
         path = nx.shortest_path(graph, start, end, weight=weight)
-    except nx.NetworkXNoPath:
+    except NetworkXNoPath:
         if nx.has_path(graph, start, end):
             raise RouteUnavailableError(
                 f"no path between '{start_name}' and '{_name_attr(end)}' "
@@ -120,6 +136,7 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
     if unknown_edges:
         warnings.append(f"draft/beam unknown on {len(set(unknown_edges))} segment(s)")
 
+    day_ranges = _day_path_ranges(legs, constraints.hours_per_day, constraints.days)
     days = _chunk_days(legs, constraints.hours_per_day, constraints.days)
     budget = constraints.hours_per_day * 60
     if any(day.cruising_minutes > budget for day in days):
@@ -140,6 +157,7 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
             graph_source_date=graph.graph.get("fetched_at", ""),
         ),
         path=tuple(path),
+        day_ranges=tuple(day_ranges),
     )
 
 
@@ -172,6 +190,68 @@ def _to_geojson(points: list[tuple[float, float]]) -> GeoJSONLineString:
     return GeoJSONLineString(coordinates=[(lon, lat) for lat, lon in points])
 
 
+def _route_locks(
+    path: tuple[int, ...], graph: nx.Graph, day_ranges: tuple[tuple[int, int], ...]
+) -> list[RouteLock]:
+    """Extract lock points from traversed edges and assign them to route days."""
+    route_locks: list[RouteLock] = []
+    for edge_index, (u, v) in enumerate(zip(path, path[1:], strict=False)):
+        edge = graph.edges[u, v]
+        lock_points = edge.get("lock_points", [])
+        approximate = not lock_points
+        if not lock_points and edge.get("locks", 0):
+            geometry = edge.get("geometry", [])
+            if geometry:
+                lock_points = [
+                    (
+                        (geometry[0][0] + geometry[-1][0]) / 2,
+                        (geometry[0][1] + geometry[-1][1]) / 2,
+                    )
+                ]
+            else:
+                lock_points = [
+                    (
+                        (graph.nodes[u]["lat"] + graph.nodes[v]["lat"]) / 2,
+                        (graph.nodes[u]["lon"] + graph.nodes[v]["lon"]) / 2,
+                    )
+                ]
+        if not lock_points:
+            continue
+        day = next(
+            (
+                day_index
+                for day_index, (start, end) in enumerate(day_ranges, start=1)
+                if start <= edge_index < end
+            ),
+            None,
+        )
+        if day is None:
+            continue
+        edge_name = edge.get("name")
+        for lat, lon in lock_points:
+            name = edge_name
+            if name is None:
+                named_nodes = [
+                    (
+                        (lat - graph.nodes[uid]["lat"]) ** 2 + (lon - graph.nodes[uid]["lon"]) ** 2,
+                        graph.nodes[uid].get("name"),
+                    )
+                    for uid in (u, v)
+                    if graph.nodes[uid].get("name")
+                ]
+                if named_nodes:
+                    name = min(named_nodes)[1]
+            route_locks.append(
+                RouteLock(
+                    coordinate=Coordinate(lat=lat, lon=lon),
+                    name=name,
+                    day=day,
+                    approximate=approximate,
+                )
+            )
+    return route_locks
+
+
 def plan_route_from_constraints(
     c: CanalConstraints,
     *,
@@ -194,44 +274,41 @@ def plan_route_from_constraints(
     return plan_route(resolved, graph=graph)
 
 
-def _chunk_days(legs, hours_per_day, max_days) -> list[DayPlan]:
-    """Greedy cumulative-minute packing. max_days=None => no cap (infer).
-
-    Each day's cruising_minutes <= hours_per_day*60. Emits as many non-empty
-    days as the route needs. With max_days set, the cap folds trailing legs
-    into the last day once max_days days exist (OQ-8: no empty padding).
-    With max_days=None (the default since days became optional), day count is
-    inferred from hours_per_day alone and never folds. Mooring-aware placement
-    is a Scope D concern; end_near is the day's last leg to_place for now.
-    """
+def _day_path_ranges(legs, hours_per_day, max_days) -> list[tuple[int, int]]:
+    """Return half-open path-edge ranges matching ``_chunk_days`` grouping."""
     budget = hours_per_day * 60.0
-    days: list[DayPlan] = []
-    current: list[RouteLeg] = []
+    ranges: list[tuple[int, int]] = []
+    current_start: int | None = None
     current_min = 0
 
-    def flush():
-        nonlocal current, current_min
-        if current:
-            days.append(
-                DayPlan(
-                    day=len(days) + 1,
-                    legs=current,
-                    end_near=current[-1].to_place,
-                    cruising_minutes=current_min,
-                )
-            )
-            current, current_min = [], 0
-
-    for leg in legs:
-        if current and current_min + leg.est_minutes > budget:
-            flush()
-        if max_days is not None and len(days) >= max_days and not current and days:
-            last = days[-1]
-            last.legs.append(leg)
-            last.cruising_minutes += leg.est_minutes
-            last.end_near = leg.to_place
+    for edge_index, leg in enumerate(legs):
+        if current_start is not None and current_min + leg.est_minutes > budget:
+            ranges.append((current_start, edge_index))
+            current_start = None
+            current_min = 0
+        if max_days is not None and len(ranges) >= max_days and current_start is None and ranges:
+            start, _ = ranges[-1]
+            ranges[-1] = (start, edge_index + 1)
             continue
-        current.append(leg)
+        if current_start is None:
+            current_start = edge_index
         current_min += leg.est_minutes
-    flush()
-    return days
+
+    if current_start is not None:
+        ranges.append((current_start, len(legs)))
+    return ranges
+
+
+def _chunk_days(legs, hours_per_day, max_days) -> list[DayPlan]:
+    """Greedy cumulative-minute packing. max_days=None => no cap (infer)."""
+    return [
+        DayPlan(
+            day=day_index,
+            legs=legs[start:end],
+            end_near=legs[end - 1].to_place,
+            cruising_minutes=sum(leg.est_minutes for leg in legs[start:end]),
+        )
+        for day_index, (start, end) in enumerate(
+            _day_path_ranges(legs, hours_per_day, max_days), start=1
+        )
+    ]

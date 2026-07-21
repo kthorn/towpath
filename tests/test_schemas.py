@@ -5,9 +5,14 @@ from pound import schemas
 from pound.schemas import (
     Amenity,
     CanalConstraints,
+    CanalRouteResponse,
+    Coordinate,
     DayPlan,
+    GeoJSONLineString,
     ResolvedConstraints,
+    RouteDayGeometry,
     RouteLeg,
+    RouteLock,
     RouteResult,
 )
 
@@ -104,26 +109,29 @@ def test_constraints_days_defaults_to_none_meaning_infer():
 
 
 @pytest.mark.parametrize("model", [CanalConstraints, ResolvedConstraints])
-@pytest.mark.parametrize(
-    "field", ["boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"]
-)
+@pytest.mark.parametrize("field", ["boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"])
 @pytest.mark.parametrize("value", [0, -0.1])
 def test_constraints_reject_nonpositive_boat_dimensions(model, field: str, value: float):
-    required = {"start": "Oxford"} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
+    payload: dict[str, object] = (
+        {"start": "Oxford"} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
+    )
+    payload[field] = value
     with pytest.raises(ValidationError):
-        model(**required, **{field: value})
+        model.model_validate(payload)
 
 
 @pytest.mark.parametrize("model", [CanalConstraints, ResolvedConstraints])
 def test_constraints_accept_positive_boat_dimensions(model):
-    required = {"start": "Oxford"} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
-    constraints = model(
-        **required,
+    payload: dict[str, object] = (
+        {"start": "Oxford"} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
+    )
+    payload.update(
         boat_length_m=18,
         boat_beam_m=2.1,
         boat_draft_m=0.7,
         boat_height_m=2.4,
     )
+    constraints = model.model_validate(payload)
     assert constraints.boat_length_m == 18
 
 
@@ -150,7 +158,8 @@ def test_geojson_linestring_preserves_lon_lat_coordinate_order():
     geometry = schemas.GeoJSONLineString(coordinates=[(-1.258, 51.752), (-1.25, 51.76)])
 
     assert geometry.type == "LineString"
-    assert geometry.coordinates[0] == (-1.258, 51.752)
+    assert geometry.coordinates[0][0] == -1.258
+    assert geometry.coordinates[0][1] == 51.752
 
 
 def test_canal_candidates_response_accepts_empty_candidates():
@@ -160,6 +169,43 @@ def test_canal_candidates_response_accepts_empty_candidates():
     )
 
     assert response.candidates == []
+
+
+def test_canal_route_response_accepts_overlay_fields():
+    route = RouteResult(
+        start="Oxford",
+        end="Heyford",
+        is_ring=False,
+        legs=[],
+        days=[],
+        total_km=0.0,
+        total_locks=0,
+        total_minutes=0,
+        amenities=[],
+        graph_source_date="2026-07-11",
+    )
+    response = CanalRouteResponse(
+        route=route,
+        geometry=GeoJSONLineString(coordinates=[(-1.0, 51.0), (-1.1, 51.1)]),
+        day_geometries=[
+            RouteDayGeometry(
+                day=1,
+                geometry=GeoJSONLineString(coordinates=[(-1.0, 51.0), (-1.1, 51.1)]),
+                start=Coordinate(lat=51.0, lon=-1.0),
+                end=Coordinate(lat=51.1, lon=-1.1),
+            )
+        ],
+        locks=[
+            RouteLock(
+                coordinate=Coordinate(lat=51.05, lon=-1.05),
+                name=None,
+                day=1,
+                approximate=True,
+            )
+        ],
+    )
+    assert response.day_geometries[0].day == 1
+    assert response.locks[0].approximate
 
 
 def test_canal_route_response_accepts_route_with_empty_legs_and_days():

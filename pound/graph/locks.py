@@ -54,7 +54,12 @@ def attach_locks(
     # insensitive — routes in either direction read the one locks attr). A
     # gateless flight (G<2, gates not mapped) floors to 1 lock on its first
     # segment edge by (osm_way_id, segment index) order.
-    gate_ids = {n.osm_id for n in features.nodes if n.kind in (NodeKind.LOCK_GATE, NodeKind.LOCK)}
+    gate_points = {
+        n.osm_id: (n.lat, n.lon)
+        for n in features.nodes
+        if n.kind in (NodeKind.LOCK_GATE, NodeKind.LOCK)
+    }
+    gate_ids = set(gate_points)
     lock_ways = [w for w in features.ways if w.kind == WaterwayKind.LOCK]
     # Build adjacency by shared OSM node-id endpoint, then find flights (CCs).
     endpoint_ways: dict[int, set[int]] = {}
@@ -126,11 +131,16 @@ def attach_locks(
         for w, u, v, d, down_ref in way_segments:
             if down_ref is not None and down_ref in gate_ids:
                 d["locks"] = max(d.get("locks", 0), 1)
+                lock_points = d.setdefault("lock_points", [])
+                point = gate_points[down_ref]
+                if point not in lock_points:
+                    lock_points.append(point)
                 lock_segments.append((w.osm_id, u, v, d))
         # Floor: gateless flight -> 1 lock on the first segment of the first way.
         if not lock_segments and way_segments:
             w0, u0, v0, d0, _ = way_segments[0]
             d0["locks"] = max(d0.get("locks", 0), 1)
+            d0.setdefault("lock_points", [])
             lock_segments.append((w0.osm_id, u0, v0, d0))
         # report: one lock_way_attached per flight way that has >=1 matched edge.
         attached_ways = {wid for wid, _, _, _ in lock_segments}
@@ -165,7 +175,12 @@ def attach_locks(
                 best_key = key
                 best_edge = (u, v, d)
         if best_edge is not None:
-            best_edge[2]["locks"] = max(best_edge[2].get("locks", 0), 1)
+            edge_data = best_edge[2]
+            edge_data["locks"] = max(edge_data.get("locks", 0), 1)
+            lock_points = edge_data.setdefault("lock_points", [])
+            point = (node.lat, node.lon)
+            if point not in lock_points:
+                lock_points.append(point)
             report["lock_nodes_attached"] += 1
         else:
             report["orphan_lock_nodes"].append(node.osm_id)
