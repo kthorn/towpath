@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPoundApi, PoundApiError } from './api';
-import type { CanalCandidatesResponse, CanalRouteResponse } from './types';
+import type { CanalCandidatesResponse, CanalRouteResponse, RoutePoisRequest, RoutePoisResponse } from './types';
 
 const candidatesResponse: CanalCandidatesResponse = {
   artifact_revision: 'artifact-123',
@@ -138,17 +138,34 @@ describe('createPoundApi', () => {
   });
 
   it('posts route POI queries and returns the typed response', async () => {
-      const fetchFn = vi.fn(async () => new Response(JSON.stringify({
-        pois: [], zoom_in_required: false, matching_count: 0, day: null,
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
-      await createPoundApi(fetchFn).routePois({
-        artifact_revision: 'rev',
-        kinds: ['pub'],
-        bounds: { south: 50, west: -2, north: 52, east: 0 },
-        route_geometry: { type: 'LineString', coordinates: [[-1, 51], [-1.1, 51.1]] },
-      });
-      expect(fetchFn).toHaveBeenCalledWith('/api/route-pois', expect.objectContaining({ method: 'POST' }));
+    const response: RoutePoisResponse = {
+      pois: [],
+      zoom_in_required: false,
+      matching_count: 0,
+      day: null,
+    };
+    const request: RoutePoisRequest = {
+      artifact_revision: 'rev',
+      kinds: ['pub'],
+      bounds: { south: 50, west: -2, north: 52, east: 0 },
+      route_geometry: { type: 'LineString', coordinates: [[-1, 51], [-1.1, 51.1]] },
+    };
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const result = await createPoundApi(fetchFn).routePois(request);
+
+    expect(result).toEqual(response);
+    expect(fetchFn).toHaveBeenCalledWith('/api/route-pois', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
     });
+  });
 
   it('uses a safe fallback for non-JSON errors', async () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
