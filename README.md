@@ -136,6 +136,24 @@ cruising time, warnings, and day divisions where applicable. Verify proposed
 access and navigation restrictions locally; a graph node is not a promise of a
 safe mooring, pedestrian entrance, or vehicle drop-off.
 
+### Route overlays and POI layers
+
+The map shows points of interest and route overlays when a route is planned.
+
+- **POI layers** (pubs, water points, provisions, transport) are disabled by
+  default. Toggle them via the layer control panel; each layer queries only POIs
+  near the route and within the current viewport bounds.
+- **Zoom-in indicator**: when a selected POI layer exceeds 1,000 matching
+  features in the viewport a "zoom in to see markers" message appears. Zooming
+  closer restores individual markers.
+- **Lock markers**: locks on the planned route appear as overlay markers. Each
+  lock shows its name (if available) and the day it falls on.
+- **Day segments**: clicking a day in the plan summary highlights its route
+  segment on the map and fits the viewport to that segment.
+- **API endpoint**: the `/api/route-pois` endpoint serves POI data scoped to an
+  `artifact_revision`. It accepts bounds, route geometry, POI kinds, and an
+  optional day filter.
+
 ### Frontend tests
 
 ```bash
