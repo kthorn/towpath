@@ -75,6 +75,79 @@ export interface RoutePoi {
   distance_to_route_m: number;
 }
 
+export interface CatalogAddress {
+  house_number: string | null;
+  street: string | null;
+  place: string | null;
+  city: string | null;
+  postcode: string | null;
+}
+
+export interface CatalogLink {
+  label: string;
+  url: string;
+}
+
+export interface CatalogMetadata {
+  name: string | null;
+  alt_name: string | null;
+  brand: string | null;
+  operator: string | null;
+  address: CatalogAddress | null;
+  opening_hours: string | null;
+  access: string | null;
+  fee: string | null;
+  wheelchair: string | null;
+  phone: string | null;
+  email: string | null;
+  description: string | null;
+  links: CatalogLink[];
+  kind_details: Record<string, string>;
+}
+
+export type CatalogPolicyBasis = 'route' | 'waterway' | 'none';
+
+export interface CatalogQueryPolicy {
+  basis: CatalogPolicyBasis;
+  radius_m?: number;
+}
+
+export interface CatalogPlace {
+  identity: string;
+  kind: string;
+  name: string | null;
+  coordinate: LatLon;
+  waterway_distance_m: number | null;
+  distance_to_full_route_m: number | null;
+  distance_to_selected_geometry_m: number | null;
+  metadata: CatalogMetadata;
+}
+
+export interface CatalogPlacesRequest {
+  catalog_revision: string;
+  kinds: string[];
+  bounds: MapBounds;
+  route_geometry?: GeoJSONLineString;
+  day_geometry?: GeoJSONLineString;
+  day?: number | null;
+  policy: CatalogQueryPolicy;
+}
+
+export interface CatalogPlacesResponse {
+  catalog_revision: string;
+  places: CatalogPlace[];
+  matching_count: number;
+  over_cap: boolean;
+  day: number | null;
+}
+
+export interface HealthResponse {
+  status: string;
+  artifact_revision: string;
+  catalog_revision: string | null;
+  catalog_status: 'available' | 'unavailable';
+}
+
 export interface RoutePoisRequest {
   artifact_revision: string;
   kinds: string[];
