@@ -13,7 +13,6 @@ import sys
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from pound.catalog.artifact import prepare_catalog, write_catalog
 from pound.catalog.reader import read_catalog
@@ -42,7 +41,7 @@ _POI_BATCH_SIZE = 1024
 
 
 class _BatchingPoiConsumer:
-    def __init__(self, accumulator: Any, *, batch_size: int = _POI_BATCH_SIZE):
+    def __init__(self, accumulator: PoiBuildAccumulator, *, batch_size: int = _POI_BATCH_SIZE):
         self._accumulator = accumulator
         self._batch_size = batch_size
         self._candidates = []
