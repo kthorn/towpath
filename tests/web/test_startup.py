@@ -9,7 +9,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from pound.catalog.artifact import prepare_catalog, write_catalog
-from pound.catalog.spatial import CatalogSpatialIndex
+from pound.catalog.spatial import (
+    MAX_CATALOG_QUERY_WORK,
+    MAX_CATALOG_VIEWPORT_SPAN_DEGREES,
+    CatalogSpatialIndex,
+)
 from pound.graph.artifact import InvalidArtifactError, load_artifact, save_artifact
 from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.app import _load_web_artifact, create_app
@@ -71,9 +75,11 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
         ("minimum_candidate_spacing_m", -0.1),
         ("catalog_max_kinds", 0),
         ("catalog_max_viewport_span_deg", 0),
+        ("catalog_max_viewport_span_deg", MAX_CATALOG_VIEWPORT_SPAN_DEGREES + 0.1),
         ("catalog_max_radius_m", -1),
         ("catalog_max_route_vertices", 0),
         ("catalog_query_work_budget", 0),
+        ("catalog_query_work_budget", MAX_CATALOG_QUERY_WORK + 1),
     ],
 )
 def test_settings_reject_invalid_tuning(field: str, value: int | float, tmp_path: Path):
