@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved design for implementation planning.
+Approved design for implementation planning; revised after codebase review.
 
 ## Goal
 
@@ -23,8 +23,8 @@ those currently close to navigable waterways. The initial scope includes:
 - visitor attractions: museums, galleries, historic sites, gardens, wildlife
   attractions, landmarks, and similar OSM-tagged destinations.
 
-Transport and pedestrian-access infrastructure are excluded. Google Maps is the
-native surface for transport information.
+Transport and pedestrian-access infrastructure are excluded from the new catalog
+and marker UX. Google Maps is the native surface for transport information.
 
 The catalog is broad at ingest time and narrow at presentation/query time. The
 frontend decides which kinds to request and which proximity policy to apply:
@@ -51,31 +51,59 @@ by the metadata inventory spike before production ingestion is finalized.
 
 ## Architecture
 
-Build a separate OSM place-catalog artifact and spatial index from the England
-PBF. Keep the existing routing graph artifact focused on graph and route data;
-the catalog must not make route planning depend on marker presentation.
+Build a separate OSM place-catalog artifact and spatial index from the original
+England PBF. Do not reuse the filtered waterway PBF as the catalog source. Keep
+the existing routing graph artifact focused on graph and route data; the catalog
+must not make route planning depend on marker presentation.
 
-A catalog record contains the OSM identity, stable kind/category, coordinates,
-normalized user-facing metadata, and source provenance. The catalog loader builds
-an immutable spatial index for bounded viewport, route, and locality queries.
+A catalog record contains the OSM identity, stable kind/category, display
+coordinate, normalized user-facing metadata, source provenance, and internal
+normalized geometry sufficient for spatial distance queries. Point, linear-way,
+and area/multipolygon records are supported. Area records use a representative
+point for marker placement but retain normalized geometry for distance filtering.
+Malformed or inactive/disused records are rejected according to the inventory
+manifest rather than silently converted to points.
 
-The route map requests selected kinds, viewport bounds, and optional route/day
-geometry. The backend performs the spatial index work and returns bounded results
-with distance information. Future locality/chat clients can reuse the catalog
-with a locality bounding box or equivalent place-resolution result.
+The catalog loader builds an immutable spatial index for bounded viewport, route,
+and locality queries. Build and startup measurements are mandatory: Phase 1
+establishes record counts and a memory/time/artifact-size budget; Phase 2 must
+meet that budget before the catalog is considered production-ready. The design
+does not assume that a second all-in-memory index will fit merely because the
+existing routing artifact loads successfully.
 
-The backend owns canonical kind validation, spatial indexing, bounds validation,
-maximum radius/result limits, artifact validation, and efficient query execution.
-The frontend owns kind grouping, default visibility, proximity policy selection,
-and marker presentation. This keeps display policy easy to change without
-allowing unbounded catalog downloads or duplicating spatial-query logic in every
-client.
+### Compatibility and migration
+
+The separate catalog is additive initially:
+
+- the existing routing artifact, embedded graph-bound POIs, `PoiSpatialIndex`,
+  and `/api/route-pois` remain available for existing route overlays;
+- existing route lock/day geometry behavior remains unchanged except for the
+  centered lock-marker UX described below;
+- the new catalog endpoint powers the new user-facing destination/utility layers
+  and their rich metadata;
+- the new UI removes transport and pedestrian-access controls rather than
+  reintroducing them through the catalog;
+- shared kinds are rendered from one source at a time; the frontend must not
+  request both legacy and catalog markers for the same layer.
+
+A later cleanup may migrate or remove the legacy route-POI endpoint, but that is
+not required for the first catalog release. This avoids changing the strict
+routing artifact contract while the independent catalog is introduced.
+
+The backend exposes independent `artifact_revision` and `catalog_revision`
+values. Route requests continue to use the routing artifact revision. Catalog
+requests use the catalog revision returned by health/capability metadata and
+repeat it in catalog responses. A stale catalog revision returns the existing
+structured revision-mismatch shape with `catalog_revision` as the field; rebuilding
+either artifact does not invalidate the other.
 
 ## Metadata contract
 
 The frontend receives normalized, user-facing fields rather than arbitrary
-`source_tags`. The inventory spike measures coverage by kind and determines the
-final allowlist.
+`source_tags`. The Phase 1 inventory produces a checked-in manifest containing
+the exact final fields, validators, coverage by kind, and explicit exclusions.
+The lists below are candidates for that manifest, not permission to expose every
+raw tag.
 
 Common candidate fields are:
 
@@ -107,30 +135,55 @@ and uncontrolled raw tags are not exposed directly. Existing scope decisions
 excluding generic toilet and shower POIs remain in force unless separately
 revised.
 
-OSM object URLs can be derived from the stored element type and ID. External URLs
-must be restricted to validated web links before being returned to the browser.
-OSM attribution and provenance remain visible wherever OSM-derived data is shown.
+External URL validation permits only `http` and `https` schemes, rejects
+credentials and malformed/overlong values, and canonicalizes Wikipedia/Wikidata
+references into known safe links. The frontend creates links as DOM elements,
+uses safe external-link attributes, and never injects URL or description strings
+as HTML. OSM object URLs can be derived from the stored element type and ID. OSM
+attribution and provenance remain visible wherever OSM-derived data is shown.
 
-## Query contract
+## Catalog query contract
 
-The frontend queries the catalog primarily by `kind`. A request includes:
+Add a new `POST /api/catalog-places` endpoint separate from `/api/route-pois`.
+The frontend queries
+it primarily by `kind`. A request includes:
 
-- selected kinds;
-- viewport bounds;
-- optional route/day geometry;
-- optional frontend-selected proximity limit.
+- `catalog_revision`;
+- selected kinds, with a server-validated maximum count;
+- viewport bounds with a server-validated maximum span;
+- optional full route geometry;
+- optional selected-day geometry and day number;
+- an optional proximity policy selected by the frontend.
 
-The response includes each record's normalized metadata plus:
+A proximity policy has an explicit basis and radius:
 
-- `waterway_distance_m`, when available;
-- `distance_to_route_m`, when route geometry is supplied;
+- `route` measures against the full route, or the selected-day geometry when one
+  is supplied;
+- `waterway` measures against the navigable-waterway index;
+- no proximity basis is used for locality queries without route geometry.
+
+The frontend issues separate requests when groups need different policies; a
+single mixed request never applies one radius ambiguously to utilities and
+destinations. Utilities normally use a waterway policy. Route destinations and
+route attractions normally use a route policy, with attractions allowing about
+2 km. Locality queries use viewport bounds without a waterway requirement.
+
+If a waterway distance is unavailable, a waterway-bounded request does not match
+the record; the response may still include the record for an unbounded locality
+query. The response includes each record's normalized metadata plus:
+
+- `waterway_distance_m`, when computed;
+- `distance_to_full_route_m`, when full route geometry is supplied;
+- `distance_to_selected_geometry_m`, when selected-day geometry is supplied;
 - the selected kind and source identity;
 - bounded-result status when the request exceeds the server cap.
 
-The frontend can therefore implement different policies for utilities and
-destinations without requiring separate catalog artifacts. The backend validates
-kinds and caps the allowable query/radius/result size. Empty kind selections do
-not request catalog data.
+The backend validates kinds, bounds, revision, geometry shape, radius, and query
+budgets. Hard budgets include the maximum kind count, viewport span, radius,
+route/day vertex count, and a 1,000-record response cap. Over-cap queries return
+no arbitrary partial set and use the existing sentinel/status pattern. Empty kind
+selections do not request catalog data. The backend may reject a request that
+would exceed its configured work budget even when the response cap is small.
 
 ## Marker UX
 
@@ -154,7 +207,11 @@ does not make API calls, display links, or change persistent selection state.
 
 ### Click
 
-Click opens one persistent info window containing available fields:
+The map adapter owns one shared info window for POIs and locks. Marker listeners,
+content, focus behavior, and the window are cleaned up when markers are replaced
+or the map is destroyed.
+
+Click opens a persistent info window containing available fields:
 
 - name and kind;
 - distance to route;
@@ -163,16 +220,21 @@ Click opens one persistent info window containing available fields:
 - opening hours, accessibility, and fee information;
 - OSM, website, Wikipedia, or other validated links.
 
-Absent fields are omitted. Clicking elsewhere or pressing Escape closes the
-window. Keyboard focus must reach links and controls normally. On touch devices,
-tap opens the same info window because hover is unavailable.
+Absent fields are omitted. Escape or an explicit close control closes the window.
+A marker click stops propagation to the map-background endpoint-selection handler.
+When an info window is open, the first background click closes it and is consumed;
+subsequent background clicks retain the existing endpoint-selection behavior.
+Keyboard focus must reach links and controls normally. On touch devices, tap
+opens the same info window because hover is unavailable.
 
 ## Lock marker placement
 
 Lock chevrons are centered on the canal at the lock location. The route response
-uses the source lock gate/chamber coordinate when available and validates or snaps
-it to the route geometry. If no source coordinate is available, it uses the
-lock-bearing edge midpoint and marks the record `approximate`.
+uses the source lock gate/chamber coordinate when available and projects it onto
+the attached route edge. A source point within 25 m of that edge is considered
+source-confirmed and is emitted with `approximate=false` after projection. A
+source point farther than 25 m, malformed source data, or a missing source point
+uses the lock-bearing edge midpoint and emits `approximate=true`.
 
 The map adapter uses a center-centered marker anchor; the chevron must not behave
 like a pin whose tip sits below the canal. The lock info window displays the lock
@@ -185,48 +247,72 @@ The OSM-only catalog and info windows are the first usable release. A separate
 spike compares, for representative pubs and attractions:
 
 1. generated Google Maps search links using name and coordinates;
-2. on-demand Google Places Details lookup.
+2. an explicit Google text/nearby search matching step followed by on-demand Place
+   Details with a narrow field mask.
 
-The spike records match accuracy, website availability, latency, billing/quotas,
-mobile behavior, attribution/terms, and privacy implications. It must not scrape
-consumer pages or persist Google-derived place data during ingest. A production
-Google integration is added only after this evidence-based comparison.
+The spike records match thresholds, ambiguous/no-match behavior, website
+availability, latency, billing/quotas, mobile behavior, attribution/terms,
+privacy implications, and the execution surface. It must not scrape consumer
+pages or persist Google-derived place data during ingest. Any temporary match
+logging is minimized and discarded. A production Google integration is added
+only after this evidence-based comparison.
+
+## Runtime degradation
+
+The catalog path is an optional independent web setting. If the catalog is
+missing or invalid, the application remains able to load the routing artifact and
+serve route planning; health reports `catalog_status: unavailable`, and catalog
+requests return a structured 503 `catalog_unavailable` error. The frontend hides
+or disables catalog layers while leaving route planning, locks, and day overlays
+usable. There is no silent fallback from the catalog endpoint to legacy POIs.
+
+If the routing artifact is unavailable, existing startup failure behavior remains
+unchanged. Catalog and routing revisions/status are reported independently by
+health/capability metadata.
 
 ## Delivery phases
 
-### Phase 1: OSM metadata inventory
+### Phase 1: OSM metadata and taxonomy inventory
 
-Scan relevant source objects and candidate attraction tags, measure field coverage
-by kind, choose the normalized allowlist, and document exclusions, attribution,
-and provenance requirements.
+Scan the original England PBF for relevant user-facing and candidate attraction
+tags. Produce the exact kind manifest, metadata validators, geometry policy,
+coverage counts by kind, duplicate/inactive handling, URL policy, OSM attribution
+requirements, and measured catalog build/index resource budget.
 
 ### Phase 2: Nationwide catalog
 
-Build and load the separate England catalog artifact, ingest all approved kinds,
-construct spatial indexes, and expose bounded kind-based API queries.
+Add a dedicated source reader, catalog record model, geometry normalizer,
+artifact validator, build command, independent revision, and spatial indexes.
+Do not reuse graph-bound `PointOfInterest`, graph attachment fields, or the
+filtered waterway PBF. Add API tests for independent revisions, degraded startup,
+kind queries, mixed-policy separation, locality queries, route/day distances,
+and hard query budgets.
 
 ### Phase 3: Map UX
 
-Add opt-in kind/group layers, distinct glyphs, hover tooltips, persistent info
-windows, conditional OSM metadata links, and centered lock chevrons while
+Add opt-in kind/group layers backed by the catalog endpoint, distinct glyphs,
+hover tooltips, one adapter-owned persistent info window, conditional OSM
+metadata links, background-click arbitration, and centered lock chevrons while
 preserving existing route/day overlays.
 
 ### Phase 4: Google spike
 
-Run the search-link versus on-demand Place Details comparison and record the
-chosen follow-up, if any.
+Run the search-link versus matched on-demand Place Details comparison and record
+the chosen follow-up, if any.
 
 ## Error handling
 
 - Invalid or unknown kinds return the existing structured API error shape.
-- Invalid bounds or excessive query radii are rejected.
+- Invalid bounds, revisions, geometry, or excessive query budgets are rejected.
 - Over-cap results are a normal bounded-query state; the response does not send
   an arbitrary partial catalog.
 - Catalog failures leave route planning and existing route overlays usable.
-- A failed optional Google lookup never blocks OSM marker rendering.
+- A failed optional Google lookup never blocks OSM marker rendering; Google
+  failure behavior belongs to the follow-up design rather than this release's
+  acceptance criteria.
 - Missing or malformed OSM metadata is omitted rather than shown as placeholder
   content.
-- Stale artifact revisions use the existing revision-mismatch behavior.
+- Stale routing and catalog revisions use independent structured mismatch errors.
 
 ## Testing and acceptance
 
@@ -234,23 +320,39 @@ chosen follow-up, if any.
 
 - Metadata normalization preserves validated fields and omits excluded/noisy
   fields.
-- Coverage reports identify final field availability by kind.
+- The inventory manifest identifies final field availability by kind.
+- Node, linear-way, area-way, multipolygon, malformed-geometry, duplicate,
+  inactive/disused, and representative-point cases are covered.
 - Catalog artifacts reload successfully and retain OSM identity/provenance.
+- Routing and catalog artifacts can be rebuilt independently and report separate
+  revisions.
+- Missing/corrupt catalogs leave routing startup and health behavior explicit.
 - Queries filter by kind and bounds and return bounded, deterministic results.
+- Mixed kinds use separate explicit policies; route, selected-day, waterway, and
+  locality distance semantics are tested at exact boundaries.
+- Maximum bounds, kind count, radius, geometry vertices, response cap, query
+  latency, startup time, artifact size, and build memory are measured against the
+  Phase 1 budget.
 - Route and waterway distance calculations use the existing metric spatial
   helpers.
+- URL scheme rejection, field-length limits, safe link construction, and safe
+  rendering are tested.
 
 ### Frontend
 
 - Kind-layer selection sends only selected kinds and does not request empty
   selections.
-- Marker replacement and cleanup do not leak stale overlays.
+- Marker replacement and cleanup do not leak stale overlays or listeners.
 - Tooltips contain only lightweight name/kind content.
-- Info windows persist on click, close correctly, and expose keyboard-accessible
-  links.
+- One shared info window switches correctly between POIs and locks, persists on
+  click, closes via Escape/explicit close/background-click arbitration, and
+  exposes keyboard-accessible links.
+- Marker clicks do not trigger endpoint selection; normal background clicks still
+  select endpoints after the consumed close click.
 - Touch interaction opens the same info window.
-- Lock chevrons use center anchoring and display approximate fallback state.
-- OSM metadata omissions and optional Google failures do not break the map.
+- Lock chevrons use center anchoring, source projection tolerance, and approximate
+  fallback state.
+- OSM metadata omissions do not break the map.
 
 Manual acceptance uses representative pubs, shops, marinas, and attractions near
 a planned route, plus a locality-sized query. It verifies readable glyphs,
