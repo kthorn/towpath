@@ -11,6 +11,8 @@ from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 
+from pound.catalog.artifact import load_catalog
+from pound.catalog.spatial import CatalogSpatialIndex
 from pound.graph.artifact import GraphArtifact, InvalidArtifactError, load_artifact
 from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.api import router as api_router
@@ -30,7 +32,7 @@ def _load_web_artifact(settings: WebSettings) -> GraphArtifact:
 
 
 def create_app(settings: WebSettings | None = None) -> FastAPI:
-    """Create the Pound web application without loading its artifact yet."""
+    """Create the Pound web application without loading artifacts yet."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -44,16 +46,39 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         app.state.settings = runtime_settings
         app.state.spatial_index = GraphSpatialIndex(artifact.graph)
         app.state.poi_spatial_index = PoiSpatialIndex(artifact.pois)
+
+        app.state.catalog = None
+        app.state.catalog_revision = None
+        app.state.catalog_spatial_index = None
+        app.state.catalog_status = "unavailable"
+        app.state.catalog_error = None
+        if runtime_settings.catalog_path is not None:
+            try:
+                catalog = load_catalog(runtime_settings.catalog_path)
+                app.state.catalog = catalog
+                app.state.catalog_revision = catalog.metadata["catalog_revision"]
+                app.state.catalog_spatial_index = CatalogSpatialIndex(
+                    catalog.places, app.state.spatial_index
+                )
+                app.state.catalog_status = "available"
+            except Exception as exc:
+                app.state.catalog_error = str(exc)
         yield
 
     application = FastAPI(lifespan=lifespan)
     application.include_router(api_router)
 
     @application.get("/api/health")
-    async def health(request: Request) -> dict[str, str]:
+    async def health(request: Request) -> dict[str, str | None]:
+        catalog_configured = request.app.state.settings.catalog_path is not None
+        status = "healthy"
+        if catalog_configured and request.app.state.catalog_status != "available":
+            status = "degraded"
         return {
-            "status": "healthy",
+            "status": status,
             "artifact_revision": request.app.state.artifact_revision,
+            "catalog_revision": request.app.state.catalog_revision,
+            "catalog_status": request.app.state.catalog_status,
         }
 
     configured_static_dir = (

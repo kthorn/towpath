@@ -61,6 +61,20 @@ def test_edge_projection_returns_canonical_key_and_wgs84_point():
     assert distance == pytest.approx(111, abs=3)
 
 
+def test_public_waterway_distance_accepts_normalized_geometry():
+    index = GraphSpatialIndex(_graph())
+
+    distance = index.distance_to_waterway(Point(-0.995, 51.001))
+
+    assert distance == pytest.approx(111, abs=3)
+
+
+def test_public_waterway_distance_returns_none_without_navigable_edges():
+    index = GraphSpatialIndex(nx.Graph())
+
+    assert index.distance_to_waterway(Point(-0.995, 51.001)) is None
+
+
 def test_spherical_envelopes_split_antimeridian_and_cover_all_longitudes_at_pole():
     wrapped = spherical_envelopes(lon=179.9, lat=0, radius_m=30_000)
     polar = spherical_envelopes(lon=12, lat=89.9, radius_m=30_000)
