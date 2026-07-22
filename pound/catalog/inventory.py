@@ -84,6 +84,20 @@ _PEDESTRIAN_TAGS = {
 _INACTIVE_KEYS = {"abandoned", "disused", "razed", "removed"}
 
 
+def _build_catalog_tag_filter_expr() -> str:
+    values_by_key: dict[str, list[str]] = {}
+    for key, value, _kind in _CANDIDATE_TAGS:
+        if value not in values_by_key.setdefault(key, []):
+            values_by_key[key].append(value)
+    lines = [f"nwr/{key}={','.join(values)}" for key, values in values_by_key.items()]
+    lines.append("nwr/mooring")
+    lines.append(f"nwr/historic={','.join(sorted(_HISTORIC_SITE_VALUES))}")
+    return "\n".join(lines) + "\n"
+
+
+CATALOG_TAG_FILTER_EXPR = _build_catalog_tag_filter_expr()
+
+
 def inventory_pbf(path: Path) -> CatalogInventory:
     """Scan node, way, and relation tags from an original PBF or OSM XML file."""
     import osmium

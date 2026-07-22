@@ -1,6 +1,8 @@
 import json
+import subprocess
 import weakref
 from pathlib import Path
+from typing import Any, cast
 
 import networkx as nx
 import pytest
@@ -158,6 +160,70 @@ def test_catalog_england_writes_independent_artifact_and_json_summary(tmp_path, 
         "inventory_summary",
         "build_summary",
     }
+
+
+def test_catalog_england_filters_pbf_in_unique_temp_file_without_mutating_source(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "england.osm.pbf"
+    source.write_bytes(b"original")
+    out = tmp_path / "catalog.pkl"
+    commands = []
+    read_paths = []
+
+    def fake_run(command, *, check):
+        assert check is True
+        commands.append(command)
+        filtered = Path(command[command.index("-o") + 1])
+        filtered.write_bytes(b"filtered")
+
+    real_read_catalog = cli.read_catalog
+
+    def fake_read_catalog(path, **kwargs):
+        read_paths.append(Path(path))
+        return real_read_catalog(Path("tests/fixtures/tiny_bulk.osm"), **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(cli, "read_catalog", fake_read_catalog)
+
+    assert cli.main(["catalog", "england", "--pbf", str(source), "--out", str(out)]) == 0
+
+    assert source.read_bytes() == b"original"
+    assert len(commands) == 1
+    assert commands[0][:2] == ["osmium", "tags-filter"]
+    assert str(source) in commands[0]
+    assert "-R" not in commands[0]
+    assert read_paths and read_paths[0] != source
+    assert not read_paths[0].exists()
+
+
+def test_catalog_england_cleans_temp_filter_on_failure(tmp_path, monkeypatch):
+    source = tmp_path / "england.osm.pbf"
+    source.write_bytes(b"original")
+    filtered_paths = []
+
+    def fake_run(command, *, check):
+        assert check is True
+        filtered = Path(command[command.index("-o") + 1])
+        filtered_paths.append(filtered)
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        cli.main(
+            [
+                "catalog",
+                "england",
+                "--pbf",
+                str(source),
+                "--out",
+                str(tmp_path / "catalog.pkl"),
+            ]
+        )
+
+    assert source.read_bytes() == b"original"
+    assert filtered_paths and not filtered_paths[0].parent.exists()
 
 
 def test_catalog_england_profile_reports_reader_and_serialization_phases(tmp_path, capsys):
@@ -501,7 +567,7 @@ def test_build_releases_feature_ir_before_poi_attachment(tmp_path, monkeypatch):
 def test_batching_poi_consumer_flushes_fixed_size_batches_and_tail():
     batches = []
     accumulator = type("Accumulator", (), {"add_many": batches.append})()
-    consumer = cli._BatchingPoiConsumer(accumulator, batch_size=2)
+    consumer = cli._BatchingPoiConsumer(cast(Any, accumulator), batch_size=2)
 
     for value in range(5):
         consumer(value)

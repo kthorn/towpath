@@ -9,12 +9,16 @@ Usage:
 import argparse
 import json
 import os
+import subprocess
 import sys
+import tempfile
 from collections import Counter
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 
 from pound.catalog.artifact import prepare_catalog, write_catalog
+from pound.catalog.inventory import CATALOG_TAG_FILTER_EXPR
 from pound.catalog.reader import read_catalog
 from pound.graph.artifact import _prepare_build_artifact, write_artifact
 from pound.graph.build import build_graph
@@ -84,6 +88,15 @@ def _catalog_inventory_summary(places) -> dict:
     }
 
 
+def _run_catalog_tags_filter(in_pbf: Path, out_pbf: Path) -> None:
+    expressions = [line for line in CATALOG_TAG_FILTER_EXPR.splitlines() if line.strip()]
+    # Keep referenced nodes: the catalog reader needs them for way and relation geometry.
+    subprocess.run(
+        ["osmium", "tags-filter", "--overwrite", "-o", str(out_pbf), str(in_pbf), *expressions],
+        check=True,
+    )
+
+
 def _cmd_catalog(args):
     pbf = Path(args.pbf)
     if not pbf.is_file():
@@ -91,42 +104,57 @@ def _cmd_catalog(args):
         raise SystemExit(2)
 
     profiler = BuildProfiler(enabled=args.profile)
-    places = read_catalog(pbf, profiler=profiler)
-    build_summary = dict(getattr(places, "report", {}))
-    metadata = {
-        "source": str(pbf),
-        "fetched_at": datetime.fromtimestamp(pbf.stat().st_mtime, tz=UTC).isoformat(),
-        "built_at": datetime.now(UTC).isoformat(),
-        "inventory_summary": _catalog_inventory_summary(places),
-        "build_summary": build_summary,
-    }
-    out = Path(args.out)
-    validation_counts = {"places": len(places)}
-    with profiler.phase("catalog_artifact_validation", counts=lambda: validation_counts):
-        artifact = prepare_catalog(places, metadata)
-
-    serialization_counts: dict[str, int] = {}
-    with profiler.phase(
-        "catalog_artifact_serialization",
-        counts=lambda: serialization_counts,
-    ):
-        write_catalog(artifact, out)
-        if profiler.enabled:
-            serialization_counts["output_bytes"] = out.stat().st_size
-
-    print(
-        json.dumps(
-            {
-                "catalog_count": len(artifact.places),
-                "inventory_summary": artifact.metadata["inventory_summary"],
-                "build_summary": artifact.metadata["build_summary"],
-                "output_bytes": out.stat().st_size,
-                "catalog_revision": artifact.metadata["catalog_revision"],
-            },
-            indent=2,
-            sort_keys=True,
-        )
+    temporary = (
+        tempfile.TemporaryDirectory(prefix="pound-catalog-")
+        if pbf.suffix.lower() == ".pbf"
+        else nullcontext()
     )
+    with temporary as temporary_path:
+        source = pbf
+        if temporary_path is not None:
+            filtered = Path(temporary_path) / "catalog.osm.pbf"
+            filter_counts: dict[str, int] = {}
+            with profiler.phase("catalog_tags_filter", counts=lambda: filter_counts):
+                _run_catalog_tags_filter(pbf, filtered)
+                filter_counts["output_bytes"] = filtered.stat().st_size
+            source = filtered
+
+        places = read_catalog(source, profiler=profiler)
+        build_summary = dict(getattr(places, "report", {}))
+        metadata = {
+            "source": str(pbf),
+            "fetched_at": datetime.fromtimestamp(pbf.stat().st_mtime, tz=UTC).isoformat(),
+            "built_at": datetime.now(UTC).isoformat(),
+            "inventory_summary": _catalog_inventory_summary(places),
+            "build_summary": build_summary,
+        }
+        out = Path(args.out)
+        validation_counts = {"places": len(places)}
+        with profiler.phase("catalog_artifact_validation", counts=lambda: validation_counts):
+            artifact = prepare_catalog(places, metadata)
+
+        serialization_counts: dict[str, int] = {}
+        with profiler.phase(
+            "catalog_artifact_serialization",
+            counts=lambda: serialization_counts,
+        ):
+            write_catalog(artifact, out)
+            if profiler.enabled:
+                serialization_counts["output_bytes"] = out.stat().st_size
+
+        print(
+            json.dumps(
+                {
+                    "catalog_count": len(artifact.places),
+                    "inventory_summary": artifact.metadata["inventory_summary"],
+                    "build_summary": artifact.metadata["build_summary"],
+                    "output_bytes": out.stat().st_size,
+                    "catalog_revision": artifact.metadata["catalog_revision"],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
     return 0
 
 
