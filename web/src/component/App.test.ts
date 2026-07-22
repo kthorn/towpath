@@ -225,14 +225,22 @@ describe('trip planning interface', () => {
   });
 
   it('toggles POI layers and selects a route day without replanning', async () => {
-    const { dependencies, store } = setup();
-    render(App, { props: { dependencies } });
+    const fixture = setup();
+    const inner = writable(get(fixture.store));
+    const selectDay = vi.fn((day: number | null) => {
+      inner.update((state) => ({ ...state, selectedDay: day }));
+    });
+    const store: TripStore = { ...fixture.store, subscribe: inner.subscribe, selectDay };
+    render(App, { props: { dependencies: { ...fixture.dependencies, store } } });
 
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Pubs' }));
-    await fireEvent.click(screen.getByRole('button', { name: /Day 1/i }));
+    const dayButton = screen.getByRole('button', { name: /Day 1/i });
+    await fireEvent.click(dayButton);
+    await fireEvent.click(dayButton);
 
     expect(store.togglePoiKind).toHaveBeenCalledWith('pub');
-    expect(store.selectDay).toHaveBeenCalledWith(1);
+    expect(store.selectDay).toHaveBeenNthCalledWith(1, 1);
+    expect(store.selectDay).toHaveBeenNthCalledWith(2, null);
     expect(store.planCanalRoute).not.toHaveBeenCalled();
   });
 

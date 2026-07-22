@@ -100,12 +100,31 @@ def _validate_graph(graph: Any) -> nx.Graph:
                     coordinate,
                     "expected a (lat, lon) coordinate pair",
                 )
-            _finite_coordinate(
-                f"graph edge {(u, v)} geometry[{index}].lat", coordinate[0], -90, 90
-            )
+            _finite_coordinate(f"graph edge {(u, v)} geometry[{index}].lat", coordinate[0], -90, 90)
             _finite_coordinate(
                 f"graph edge {(u, v)} geometry[{index}].lon", coordinate[1], -180, 180
             )
+        if "lock_points" in data:
+            lock_points = data["lock_points"]
+            if not isinstance(lock_points, (list, tuple)):
+                raise _invalid(
+                    f"graph edge {(u, v)} attribute lock_points",
+                    lock_points,
+                    "expected a list or tuple of coordinate pairs",
+                )
+            for index, coordinate in enumerate(lock_points):
+                if not isinstance(coordinate, (list, tuple)) or len(coordinate) != 2:
+                    raise _invalid(
+                        f"graph edge {(u, v)} lock_points[{index}]",
+                        coordinate,
+                        "expected a (lat, lon) coordinate pair",
+                    )
+                _finite_coordinate(
+                    f"graph edge {(u, v)} lock_points[{index}].lat", coordinate[0], -90, 90
+                )
+                _finite_coordinate(
+                    f"graph edge {(u, v)} lock_points[{index}].lon", coordinate[1], -180, 180
+                )
     return graph
 
 
@@ -177,9 +196,7 @@ def _validate_attachments(graph: nx.Graph, pois: tuple[PointOfInterest, ...]) ->
             )
         edge_data = graph.edges[u, v]
         if not _routing_eligible(edge_data):
-            raise _invalid(
-                f"pois[{index}].nearest_edge", poi.nearest_edge, "edge is not navigable"
-            )
+            raise _invalid(f"pois[{index}].nearest_edge", poi.nearest_edge, "edge is not navigable")
         edge_bng = _to_bng(_edge_line_wgs84(graph, u, v, edge_data))
         projected_bng = _to_bng(Point(poi.projected_lon, poi.projected_lat))
         offset_m = projected_bng.distance(edge_bng)

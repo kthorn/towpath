@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved design for implementation.
+Implemented and completed on 2026-07-21.
 
 ## Goal
 
@@ -211,3 +211,13 @@ and build commands before completion.
 - No change to route cost calculation or day-budget policy.
 - Future work may add richer lock metadata, clustering, or route-wide POI
   summaries if this bounded layer proves insufficient.
+
+## Verification notes
+
+- Optional graph-edge `lock_points` are validated during artifact load as finite,
+  in-range `(lat, lon)` pairs; valid values survive save/load round-trips and
+  malformed values raise `InvalidArtifactError`.
+- Frontend coverage verifies that selecting the active day again restores the
+  full-route selection (`null`) without replanning.
+- Focused and full Python/frontend tests, `svelte-check`, the production build,
+  and Ruff were run before completion; all passed.

@@ -101,6 +101,36 @@ def test_save_and_load_return_frozen_graph_artifact_with_parsed_pois(tmp_path: P
         artifact.pois = ()
 
 
+def test_save_and_load_round_trips_valid_lock_points(tmp_path: Path):
+    path = tmp_path / "graph.pkl"
+    graph = _graph()
+    graph.edges[0, 1]["lock_points"] = [(51.7520, -1.2568)]
+
+    save_artifact(graph, [_poi()], path, _metadata())
+
+    assert load_artifact(path).graph.edges[0, 1]["lock_points"] == [(51.7520, -1.2568)]
+
+
+@pytest.mark.parametrize(
+    "lock_points",
+    [
+        "bad",
+        ["bad"],
+        [(51.0,)],
+        [(float("nan"), -1.0)],
+        [(91.0, -1.0)],
+        [(51.0, 181.0)],
+    ],
+)
+def test_load_rejects_malformed_lock_points(tmp_path: Path, lock_points):
+    path = tmp_path / "graph.pkl"
+    payload = _valid_payload()
+    payload["graph"].edges[0, 1]["lock_points"] = lock_points
+    _write(path, payload)
+
+    _assert_rebuild_error(path, "lock_points")
+
+
 def test_save_serializes_exact_top_level_keys_and_generates_one_revision(
     tmp_path: Path, monkeypatch
 ):
@@ -195,9 +225,7 @@ def test_load_rejects_directed_or_non_graph_payloads(tmp_path: Path, graph):
     ("where", "attribute"),
     [("node", "lat"), ("node", "lon"), ("node", "osm_node_ids"), ("edge", "geometry")],
 )
-def test_load_rejects_missing_required_graph_attributes(
-    tmp_path: Path, where: str, attribute: str
-):
+def test_load_rejects_missing_required_graph_attributes(tmp_path: Path, where: str, attribute: str):
     path = tmp_path / "graph.pkl"
     payload = _valid_payload()
     data = payload["graph"].nodes[0] if where == "node" else payload["graph"].edges[0, 1]
@@ -282,9 +310,7 @@ def test_load_rejects_poi_distances_over_category_corridor(
         ("nearest_waterway_distance_m", float("nan")),
     ],
 )
-def test_load_rejects_nonfinite_or_out_of_bounds_values(
-    tmp_path: Path, field: str, value: float
-):
+def test_load_rejects_nonfinite_or_out_of_bounds_values(tmp_path: Path, field: str, value: float):
     path = tmp_path / "graph.pkl"
     payload = _valid_payload()
     payload["pois"][0][field] = value
