@@ -17,9 +17,23 @@ def test_normalize_metadata_keeps_safe_user_facing_fields():
     )
 
     assert metadata.name == "The Navigation"
-    assert metadata.links == [NormalizedLink(label="Website", url="https://example.test/contact")]
+    assert metadata.links == [
+        NormalizedLink(label="Website", url="https://example.test/contact"),
+        NormalizedLink(label="Website", url="https://example.test/pub"),
+    ]
     assert metadata.opening_hours == "Mo-Su 11:00-23:00"
-    assert metadata.notes is None
+
+
+def test_normalize_metadata_deduplicates_equivalent_websites():
+    metadata = normalize_metadata(
+        {
+            "website": "https://example.test/contact",
+            "contact:website": "HTTPS://example.test/contact",
+        },
+        kind="pub",
+    )
+
+    assert metadata.links == [NormalizedLink(label="Website", url="https://example.test/contact")]
 
 
 def test_normalize_metadata_keeps_typed_common_fields_and_address():

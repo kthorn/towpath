@@ -55,7 +55,6 @@ class CatalogMetadata(BaseModel):
     description: str | None = Field(default=None, max_length=2_000)
     links: list[NormalizedLink] = Field(default_factory=list)
     kind_details: dict[str, str] = Field(default_factory=dict)
-    notes: str | None = Field(default=None, max_length=2_000)
 
     @field_validator("links")
     @classmethod
@@ -198,10 +197,9 @@ def normalize_metadata(tags: Mapping[str, str], *, kind: str) -> CatalogMetadata
     links: list[NormalizedLink] = []
     contact_website = normalize_external_link("Website", tags.get("contact:website", ""))
     website = normalize_external_link("Website", tags.get("website", ""))
-    # Contact website is the authoritative OSM value; website is a fallback.
     if contact_website is not None:
         links.append(contact_website)
-    elif website is not None:
+    if website is not None and website != contact_website:
         links.append(website)
 
     wikipedia = _canonical_wikipedia(tags.get("wikipedia"))
@@ -226,5 +224,4 @@ def normalize_metadata(tags: Mapping[str, str], *, kind: str) -> CatalogMetadata
         description=_clean_text(tags.get("description"), limit=_MAX_DESCRIPTION_LENGTH),
         links=links,
         kind_details={},
-        notes=None,
     )
