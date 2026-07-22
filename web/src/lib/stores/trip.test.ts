@@ -142,6 +142,32 @@ describe('trip store', () => {
     expect(drawCanal).toHaveBeenCalledWith(canal.geometry);
   });
 
+  it('clears the old route and locks before a failed replan', async () => {
+    const drawCanal = vi.fn();
+    const drawLocks = vi.fn();
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: drawCanal, pois: vi.fn(), locks: drawLocks, day: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const { store, canalRoute } = setup({ map });
+    const lockedRoute: CanalRouteResponse = {
+      ...canal,
+      locks: [{ coordinate: { lat: 51.5, lon: -1.5 }, name: 'Lock', day: 1, approximate: false }],
+    };
+    canalRoute.mockResolvedValueOnce(lockedRoute);
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    await store.planCanalRoute({});
+    expect(get(store).canalRoute).toEqual(lockedRoute);
+    expect(drawLocks).toHaveBeenLastCalledWith(lockedRoute.locks);
+
+    drawCanal.mockClear();
+    drawLocks.mockClear();
+    canalRoute.mockRejectedValueOnce(new Error('route unavailable'));
+    await expect(store.planCanalRoute({})).rejects.toThrow('route unavailable');
+
+    expect(get(store).canalRoute).toBeNull();
+    expect(drawCanal).toHaveBeenCalledWith(null);
+    expect(drawLocks).toHaveBeenCalledWith([]);
+  });
+
   it('keeps POIs opt-in and refreshes selected route/day data', async () => {
     const routePois = vi.fn(async () => ({ pois: [], zoom_in_required: false, matching_count: 0, day: null }));
     const { store } = setup({ routePois });
@@ -182,6 +208,48 @@ describe('trip store', () => {
       day: 2,
       day_geometry: dayGeometry.geometry,
     }));
+  });
+
+  it('clears prior POIs before a failed refresh for a newly selected day', async () => {
+    const drawPois = vi.fn();
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: drawPois, locks: vi.fn(), day: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const fullRoutePois: RoutePoisResponse = {
+      pois: [{ identity: 'node/1/pub', kind: 'pub', name: 'The Pub', coordinate: { lat: 51, lon: -1 }, distance_to_route_m: 10 }],
+      zoom_in_required: false,
+      matching_count: 1,
+      day: null,
+    };
+    const routePois = vi.fn()
+      .mockResolvedValueOnce(fullRoutePois)
+      .mockRejectedValueOnce(new Error('POI refresh unavailable'));
+    const { store, canalRoute } = setup({ map, routePois });
+    canalRoute.mockResolvedValue({
+      ...canal,
+      day_geometries: [{
+        day: 2,
+        geometry: { type: 'LineString', coordinates: [[-1, 51], [-2, 53]] },
+        start: { lat: 51, lon: -1 },
+        end: { lat: 53, lon: -2 },
+      }],
+    });
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    await store.planCanalRoute({});
+
+    const bounds = { south: 50, west: -2, north: 54, east: 0 };
+    store.togglePoiKind('pub');
+    await store.refreshRoutePois(bounds);
+    expect(get(store).routePois).toEqual(fullRoutePois);
+    expect(drawPois).toHaveBeenLastCalledWith(fullRoutePois.pois);
+
+    store.selectDay(2);
+    expect(get(store).routePois).toBeNull();
+    expect(drawPois).toHaveBeenLastCalledWith([]);
+    await store.refreshRoutePois(bounds);
+
+    expect(get(store).routePois).toBeNull();
+    expect(get(store).poiError).toContain('POI refresh unavailable');
+    expect(drawPois).toHaveBeenLastCalledWith([]);
   });
 
   it('coalesces grouped layer toggles and debounces rapid viewport refreshes', async () => {

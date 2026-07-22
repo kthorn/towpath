@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import networkx as nx
 from networkx.exception import NetworkXNoPath
 
-from pound.graph.build import _node_key
+from pound.graph.build import _haversine_m, _node_key
 from pound.route.cost import is_eligible, time_min
 from pound.route.resolve import resolve_place
 from pound.schemas import (
@@ -202,12 +202,24 @@ def _route_locks(
         if not lock_points and edge.get("locks", 0):
             geometry = edge.get("geometry", [])
             if geometry:
-                lock_points = [
-                    (
-                        (geometry[0][0] + geometry[-1][0]) / 2,
-                        (geometry[0][1] + geometry[-1][1]) / 2,
-                    )
-                ]
+                total_length = sum(
+                    _haversine_m(start, end)
+                    for start, end in zip(geometry, geometry[1:], strict=False)
+                )
+                midpoint = total_length / 2
+                distance = 0.0
+                lock_point = geometry[-1]
+                for start, end in zip(geometry, geometry[1:], strict=False):
+                    segment_length = _haversine_m(start, end)
+                    if distance + segment_length >= midpoint:
+                        fraction = (midpoint - distance) / segment_length if segment_length else 0.0
+                        lock_point = (
+                            start[0] + fraction * (end[0] - start[0]),
+                            start[1] + fraction * (end[1] - start[1]),
+                        )
+                        break
+                    distance += segment_length
+                lock_points = [lock_point]
             else:
                 lock_points = [
                     (

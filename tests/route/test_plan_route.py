@@ -1,11 +1,13 @@
 import copy
 import json
 
+import networkx as nx
 import pytest
 
 from pound.graph.build import build_graph
 from pound.graph.gazetteer import attach_node_names, build_gazetteer
 from pound.graph.locks import attach_locks
+from pound.ingest.ir import WayDimensions
 from pound.ingest.overpass import parse
 from pound.route.cost import CRUISE_KMH, LOCK_MINUTES, time_min
 from pound.route.plan import plan_canal_route, plan_route, plan_route_from_constraints
@@ -225,6 +227,26 @@ def test_plan_canal_route_emits_day_geometries_and_route_locks():
     assert [lock.day for lock in response.locks] == [2]
     assert response.locks[0].coordinate == Coordinate(lat=51.754, lon=-1.264)
     assert not response.locks[0].approximate
+
+
+def test_approximate_lock_uses_midpoint_along_curved_geometry():
+    graph = nx.Graph()
+    graph.add_node(1, lat=0, lon=0, name="Start")
+    graph.add_node(2, lat=0, lon=2, name="End")
+    graph.add_edge(
+        1,
+        2,
+        geometry=[(0, 0), (1, 1), (0, 2)],
+        length_m=200_000,
+        locks=1,
+        dimensions=WayDimensions(),
+        osm_way_id=1,
+    )
+
+    response = plan_canal_route(ResolvedConstraints(start_uid=1, end_uid=2), graph=graph)
+
+    assert response.locks[0].coordinate == Coordinate(lat=1, lon=1)
+    assert response.locks[0].approximate
 
 
 def test_plan_route_from_constraints_bridge():

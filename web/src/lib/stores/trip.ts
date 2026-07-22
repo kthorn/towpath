@@ -253,8 +253,10 @@ export function createTripStore(dependencies: {
     };
     const endpointGeneration = routeGeneration;
     const requestSequence = ++routeRequest;
+    const hadCanalRoute = state.canalRoute !== null;
     clearRouteOverlays();
-    inner.update((current) => ({ ...current, routing: true, routeError: null }));
+    inner.update((current) => ({ ...current, canalRoute: null, routing: true, routeError: null }));
+    if (hadCanalRoute) mapCall('origin', () => mapView?.canal(null));
     try {
       const result = await poundApi.canalRoute(request);
       if (endpointGeneration === routeGeneration && requestSequence === routeRequest) {
@@ -319,7 +321,8 @@ export function createTripStore(dependencies: {
   function selectDay(day: number | null): void {
     cancelScheduledPoiRefresh();
     poiRequest += 1;
-    inner.update((current) => ({ ...current, selectedDay: day, poiError: null }));
+    inner.update((current) => ({ ...current, selectedDay: day, routePois: null, poiError: null }));
+    mapCall('origin', () => mapView?.pois?.([]));
     mapCall('origin', () => mapView?.day?.(selectedDayGeometry(day)));
     if (state.enabledPoiKinds.length && lastViewportBounds) schedulePoiRefresh(lastViewportBounds);
   }
