@@ -5,6 +5,7 @@ from pathlib import Path
 import networkx as nx
 import pytest
 
+from pound.catalog.artifact import load_catalog
 from pound.graph.artifact import load_artifact
 from pound.ingest import cli
 from pound.ingest.ir import (
@@ -102,15 +103,11 @@ def test_build_profile_is_silent_by_default(tmp_path: Path, monkeypatch, capsys)
     assert "build_profile" not in capsys.readouterr().err
 
 
-def test_build_profile_emits_completed_phases_as_json_lines(
-    tmp_path: Path, monkeypatch, capsys
-):
+def test_build_profile_emits_completed_phases_as_json_lines(tmp_path: Path, monkeypatch, capsys):
     raw = json.loads(Path(oxford_fixture_path()).read_text())
     monkeypatch.setattr(cli, "fetch_oxford", lambda: parse(raw["elements"], None))
 
-    rc = cli.main(
-        ["build", "oxford", "--out", str(tmp_path / "oxford.pkl"), "--profile"]
-    )
+    rc = cli.main(["build", "oxford", "--out", str(tmp_path / "oxford.pkl"), "--profile"])
 
     records = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
     assert rc == 0
@@ -125,6 +122,85 @@ def test_build_profile_emits_completed_phases_as_json_lines(
     assert all(record["status"] == "completed" for record in records)
     assert all(record["elapsed_s"] >= 0 for record in records)
     assert all(record["peak_rss_bytes"] > 0 for record in records)
+
+
+def test_catalog_england_writes_independent_artifact_and_json_summary(tmp_path, capsys):
+    out = tmp_path / "catalog.pkl"
+    assert (
+        cli.main(
+            [
+                "catalog",
+                "england",
+                "--pbf",
+                str(Path("tests/fixtures/tiny_bulk.osm")),
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["catalog_count"] == 7
+    assert summary["output_bytes"] == out.stat().st_size
+    artifact = load_catalog(out)
+    assert artifact.metadata["source"].endswith("tiny_bulk.osm")
+    assert artifact.metadata["build_summary"]["emitted"] == 7
+    assert artifact.metadata["build_summary"]["inactive"] == 1
+    assert artifact.metadata["build_summary"]["malformed"] == 0
+    assert artifact.metadata["build_summary"]["duplicate"] == 0
+    assert artifact.metadata["build_summary"]["excluded_by_reason"]["transport"] == 2
+    assert set(artifact.metadata) == {
+        "catalog_revision",
+        "source",
+        "fetched_at",
+        "built_at",
+        "inventory_summary",
+        "build_summary",
+    }
+
+
+def test_catalog_england_profile_reports_reader_and_serialization_phases(tmp_path, capsys):
+    out = tmp_path / "catalog.pkl"
+    assert (
+        cli.main(
+            [
+                "catalog",
+                "england",
+                "--pbf",
+                str(Path("tests/fixtures/tiny_bulk.osm")),
+                "--out",
+                str(out),
+                "--profile",
+            ]
+        )
+        == 0
+    )
+    records = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [record["phase"] for record in records] == [
+        "catalog_read",
+        "catalog_artifact_validation",
+        "catalog_artifact_serialization",
+    ]
+    assert all(record["status"] == "completed" for record in records)
+    assert records[0]["counts"]["scanned"] == 54
+    assert records[-1]["counts"]["output_bytes"] == out.stat().st_size
+
+
+def test_catalog_england_requires_original_pbf(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(
+            [
+                "catalog",
+                "england",
+                "--pbf",
+                str(tmp_path / "missing.osm.pbf"),
+                "--out",
+                str(tmp_path / "catalog.pkl"),
+            ]
+        )
+    assert exc_info.value.code != 0
+    assert "original" in capsys.readouterr().out.lower()
 
 
 def test_build_england_missing_pbf_prints_url_and_exits(capsys, monkeypatch, tmp_path):
@@ -211,6 +287,7 @@ def test_build_england_profile_reports_multi_pass_phase_order(monkeypatch, tmp_p
     source.write_bytes(b"source")
     filtered = tmp_path / "england_waterways.osm.pbf"
     filtered.write_bytes(b"filtered")
+
     def prepare(_pbf, profiler):
         with profiler.phase("tags_filter"):
             return filtered
@@ -225,8 +302,7 @@ def test_build_england_profile_reports_multi_pass_phase_order(monkeypatch, tmp_p
     monkeypatch.setattr(cli, "stream_area_pois", lambda *_args: None)
 
     rc = cli.main(
-        ["build", "england", "--pbf", str(source), "--out", str(tmp_path / "out.pkl"),
-         "--profile"]
+        ["build", "england", "--pbf", str(source), "--out", str(tmp_path / "out.pkl"), "--profile"]
     )
 
     records = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
@@ -264,8 +340,15 @@ def test_build_england_stream_failure_reports_failed_phase_and_does_not_write(
 
     with pytest.raises(RuntimeError, match="broken PBF"):
         cli.main(
-            ["build", "england", "--pbf", str(source),
-             "--out", str(tmp_path / "out.pkl"), "--profile"]
+            [
+                "build",
+                "england",
+                "--pbf",
+                str(source),
+                "--out",
+                str(tmp_path / "out.pkl"),
+                "--profile",
+            ]
         )
 
     records = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
@@ -295,6 +378,7 @@ def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_pa
     monkeypatch.setattr(cli, "build_graph", lambda _features: graph)
     monkeypatch.setattr(cli, "attach_node_names", lambda *_args: None)
     monkeypatch.setattr(cli, "build_gazetteer", lambda _features: {})
+
     def fake_attach_locks(actual_graph, _features, *, in_place=False):
         lock_calls.append((actual_graph, in_place))
         return actual_graph, {}
@@ -303,24 +387,24 @@ def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_pa
     monkeypatch.setattr(
         cli,
         "attach_pois",
-        lambda actual_graph, candidates: events.append(("pois", actual_graph, candidates))
-        or poi_result,
+        lambda actual_graph, candidates: (
+            events.append(("pois", actual_graph, candidates)) or poi_result
+        ),
     )
     monkeypatch.setattr(
         cli,
         "validate_graph",
-        lambda actual_graph, lock_report, poi_validation: events.append(
-            ("validate", actual_graph, poi_validation)
-        )
-        or {"derelict_edges": 0, "self_loops": 0, "poi_duplicate_identities": 0},
+        lambda actual_graph, lock_report, poi_validation: (
+            events.append(("validate", actual_graph, poi_validation))
+            or {"derelict_edges": 0, "self_loops": 0, "poi_duplicate_identities": 0}
+        ),
     )
     monkeypatch.setattr(
         cli,
         "_prepare_build_artifact",
-        lambda actual_graph, pois, metadata: events.append(
-            ("prepare", actual_graph, pois, metadata)
-        )
-        or "prepared-artifact",
+        lambda actual_graph, pois, metadata: (
+            events.append(("prepare", actual_graph, pois, metadata)) or "prepared-artifact"
+        ),
     )
     monkeypatch.setattr(
         cli,
@@ -399,9 +483,7 @@ def test_build_releases_feature_ir_before_poi_attachment(tmp_path, monkeypatch):
         return poi_result
 
     monkeypatch.setattr(cli, "fetch_oxford", fetch_features)
-    monkeypatch.setattr(
-        cli, "_build_graph_phases", lambda _features, _profiler: (graph, {})
-    )
+    monkeypatch.setattr(cli, "_build_graph_phases", lambda _features, _profiler: (graph, {}))
     monkeypatch.setattr(cli, "_attach_poi_phase", attach_poi_phase)
     monkeypatch.setattr(
         cli,

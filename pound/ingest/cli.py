@@ -10,9 +10,13 @@ import argparse
 import json
 import os
 import sys
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
+from pound.catalog.artifact import prepare_catalog, write_catalog
+from pound.catalog.reader import read_catalog
 from pound.graph.artifact import _prepare_build_artifact, write_artifact
 from pound.graph.build import build_graph
 from pound.graph.gazetteer import attach_node_names, build_gazetteer
@@ -38,7 +42,7 @@ _POI_BATCH_SIZE = 1024
 
 
 class _BatchingPoiConsumer:
-    def __init__(self, accumulator: PoiBuildAccumulator, *, batch_size: int = _POI_BATCH_SIZE):
+    def __init__(self, accumulator: Any, *, batch_size: int = _POI_BATCH_SIZE):
         self._accumulator = accumulator
         self._batch_size = batch_size
         self._candidates = []
@@ -64,6 +68,66 @@ def _cmd_oxford(args):
         path = Path(args.out)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(features.model_dump_json(indent=2))
+    return 0
+
+
+def _catalog_inventory_summary(places) -> dict:
+    counts_by_kind = Counter(place.kind for place in places)
+    metadata_coverage = Counter()
+    for place in places:
+        for field, value in place.metadata.model_dump().items():
+            if value not in (None, [], {}):
+                metadata_coverage[field] += 1
+    return {
+        "place_count": len(places),
+        "counts_by_kind": dict(sorted(counts_by_kind.items())),
+        "metadata_coverage": dict(sorted(metadata_coverage.items())),
+    }
+
+
+def _cmd_catalog(args):
+    pbf = Path(args.pbf)
+    if not pbf.is_file():
+        print(f"Missing original England PBF at {pbf}.")
+        raise SystemExit(2)
+
+    profiler = BuildProfiler(enabled=args.profile)
+    places = read_catalog(pbf, profiler=profiler)
+    build_summary = dict(getattr(places, "report", {}))
+    metadata = {
+        "source": str(pbf),
+        "fetched_at": datetime.fromtimestamp(pbf.stat().st_mtime, tz=UTC).isoformat(),
+        "built_at": datetime.now(UTC).isoformat(),
+        "inventory_summary": _catalog_inventory_summary(places),
+        "build_summary": build_summary,
+    }
+    out = Path(args.out)
+    validation_counts = {"places": len(places)}
+    with profiler.phase("catalog_artifact_validation", counts=lambda: validation_counts):
+        artifact = prepare_catalog(places, metadata)
+
+    serialization_counts: dict[str, int] = {}
+    with profiler.phase(
+        "catalog_artifact_serialization",
+        counts=lambda: serialization_counts,
+    ):
+        write_catalog(artifact, out)
+        if profiler.enabled:
+            serialization_counts["output_bytes"] = out.stat().st_size
+
+    print(
+        json.dumps(
+            {
+                "catalog_count": len(artifact.places),
+                "inventory_summary": artifact.metadata["inventory_summary"],
+                "build_summary": artifact.metadata["build_summary"],
+                "output_bytes": out.stat().st_size,
+                "catalog_revision": artifact.metadata["catalog_revision"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 
@@ -170,9 +234,7 @@ def _complete_build(
     return 0
 
 
-def _build_england_multipass(
-    pbf_path: Path, args, profiler: BuildProfiler | None = None
-) -> int:
+def _build_england_multipass(pbf_path: Path, args, profiler: BuildProfiler | None = None) -> int:
     profiler = profiler or BuildProfiler()
     filtered = prepare_england_pbf(pbf_path, profiler)
     features = read_england_waterways(filtered, profiler)
@@ -183,9 +245,7 @@ def _build_england_multipass(
 
     # The split readers emit each source identity once. Avoid retaining millions of rejected
     # candidate payloads solely to defend against duplicates that the producer excludes.
-    accumulator = PoiBuildAccumulator(
-        PoiAttachmentIndex(graph), retain_rejected_winners=False
-    )
+    accumulator = PoiBuildAccumulator(PoiAttachmentIndex(graph), retain_rejected_winners=False)
     linear_diagnostics = PoiDiagnostics()
     linear_counts = {}
     with profiler.phase("linear_poi_processing", counts=lambda: linear_counts):
@@ -256,11 +316,24 @@ def _register_build(sub):
     b.set_defaults(func=_cmd_build)
 
 
+def _register_catalog(sub):
+    catalog = sub.add_parser("catalog", help="build an independent OSM place catalog")
+    catalog_sub = catalog.add_subparsers(dest="region", required=True)
+    england = catalog_sub.add_parser("england", help="read an original England PBF")
+    england.add_argument("--out", required=True)
+    england.add_argument("--pbf", required=True, help="original England PBF path")
+    england.add_argument(
+        "--profile", action="store_true", help="emit build phase JSON Lines to stderr"
+    )
+    england.set_defaults(func=_cmd_catalog)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="pound-ingest")
     sub = parser.add_subparsers(dest="command", required=True)
     _register_oxford(sub)
     _register_build(sub)
+    _register_catalog(sub)
     args = parser.parse_args(argv)
     return args.func(args)
 

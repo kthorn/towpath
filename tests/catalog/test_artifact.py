@@ -1,0 +1,87 @@
+import pickle
+from pathlib import Path
+
+import pytest
+from shapely import wkb
+from shapely.geometry import Point
+
+from pound.catalog.artifact import (
+    InvalidCatalogError,
+    load_catalog,
+    prepare_catalog,
+    write_catalog,
+)
+from pound.catalog.metadata import CatalogMetadata
+from pound.catalog.models import CatalogPlace
+from pound.ingest.ir import OsmElementType
+
+
+def _place(*, osm_id: int = 1, kind: str = "pub") -> CatalogPlace:
+    return CatalogPlace(
+        osm_type=OsmElementType.NODE,
+        osm_id=osm_id,
+        kind=kind,
+        name="The Navigation",
+        lat=51.75,
+        lon=-1.25,
+        metadata=CatalogMetadata(name="The Navigation"),
+        geometry_wkb=wkb.dumps(Point(-1.25, 51.75), output_dimension=2),
+        geometry_source="point",
+    )
+
+
+def _metadata() -> dict:
+    return {
+        "source": "tests/fixtures/tiny_bulk.osm",
+        "fetched_at": "2026-07-22T12:00:00+00:00",
+        "built_at": "2026-07-22T12:01:00+00:00",
+        "inventory_summary": {"counts_by_kind": {"pub": 1}},
+        "build_summary": {"scanned": 1, "emitted": 1},
+    }
+
+
+def test_catalog_artifact_has_exact_payload_and_round_trips(tmp_path: Path):
+    artifact = prepare_catalog([_place()], _metadata())
+    path = tmp_path / "catalog.pkl"
+    write_catalog(artifact, path)
+
+    with path.open("rb") as stream:
+        assert set(pickle.load(stream)) == {"places", "metadata"}
+
+    loaded = load_catalog(path)
+    assert loaded == artifact
+    assert loaded.metadata["catalog_revision"] != ""
+    assert loaded.places[0].geometry_wkb == artifact.places[0].geometry_wkb
+    assert loaded.places[0].metadata == artifact.places[0].metadata
+
+
+def test_catalog_artifact_rejects_bad_metadata_records_and_duplicate_identity(tmp_path):
+    metadata = _metadata()
+    metadata["catalog_revision"] = "independent-revision"
+    with pytest.raises(InvalidCatalogError):
+        prepare_catalog([_place(), _place()], metadata)
+
+    bad_metadata = _metadata()
+    bad_metadata["build_summary"] = {"peak_rss": float("nan")}
+    with pytest.raises(InvalidCatalogError):
+        prepare_catalog([_place()], bad_metadata)
+
+    malformed = tmp_path / "malformed.pkl"
+    with malformed.open("wb") as stream:
+        pickle.dump(
+            {
+                "places": [{"kind": "pub"}],
+                "metadata": {"catalog_revision": "x"},
+            },
+            stream,
+        )
+    with pytest.raises(InvalidCatalogError):
+        load_catalog(malformed)
+
+
+def test_catalog_artifact_does_not_require_graph_attachment_fields():
+    artifact = prepare_catalog([_place()], _metadata())
+
+    assert not hasattr(artifact.places[0], "nearest_edge")
+    assert not hasattr(artifact.places[0], "nearest_node_uid")
+    assert not hasattr(artifact.places[0], "projected_lat")
