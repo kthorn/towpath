@@ -23,7 +23,6 @@
         type="button"
         class:active={state.selectedDay === day.day}
         aria-pressed={state.selectedDay === day.day}
-        aria-label={`Day ${day.day}`}
         onclick={() => onDaySelect(state.selectedDay === day.day ? null : day.day)}
       ><strong>Day {day.day}</strong><span>{hours(day.cruising_minutes)}{#if day.end_near} · end near {day.end_near}{/if}</span></button></li>{/each}</ol>{/if}
     {/if}

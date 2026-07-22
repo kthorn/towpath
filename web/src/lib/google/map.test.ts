@@ -112,6 +112,35 @@ describe('Google map adapter', () => {
     expect(facade.fitBounds).toHaveBeenCalled();
   });
 
+  it('fits curved day geometry and restores the full route when deselected', () => {
+    const { view, facade, polylines } = setup();
+    const fullRoute = { type: 'LineString' as const, coordinates: [[-1, 51], [-1.5, 51.5], [-2, 52]] as [number, number][] };
+    const dayGeometry = {
+      day: 1,
+      geometry: { type: 'LineString' as const, coordinates: [[-1, 51], [-1.25, 54], [-1.75, 50], [-2, 52]] as [number, number][] },
+      start: { lat: 51, lon: -1 },
+      end: { lat: 52, lon: -2 },
+    };
+
+    view.canal(fullRoute);
+    vi.mocked(facade.fitBounds).mockClear();
+    view.day(dayGeometry);
+    expect(facade.fitBounds).toHaveBeenLastCalledWith(expect.anything(), [
+      { lat: 51, lng: -1 },
+      { lat: 54, lng: -1.25 },
+      { lat: 50, lng: -1.75 },
+      { lat: 52, lng: -2 },
+    ]);
+
+    view.day(null);
+    expect(polylines.at(-1)?.setMap).toHaveBeenCalledWith(null);
+    expect(facade.fitBounds).toHaveBeenLastCalledWith(expect.anything(), [
+      { lat: 51, lng: -1 },
+      { lat: 51.5, lng: -1.5 },
+      { lat: 52, lng: -2 },
+    ]);
+  });
+
   it('ignores undefined initial bounds and delivers first usable idle bounds', () => {
     const { view, facade, mapListeners } = setup();
     // First getBounds returns undefined (pre-idle), then returns real bounds

@@ -6,6 +6,7 @@ import type {
   CanalRouteRequest,
   CanalRouteResponse,
   LatLon,
+  MapBounds,
   RoutePoisResponse,
 } from '../types';
 import type { LandRoute, MapView, SelectedPlace, TransferResult, TransferRouter } from '../google/contracts';
@@ -21,6 +22,14 @@ const response = (revision: string, uids: number[]): CanalCandidatesResponse => 
 });
 const land: LandRoute = { path: [{ lat: 1, lon: 2 }], durationSeconds: 20, distanceMeters: 30 };
 const canal: CanalRouteResponse = { route: { start: 'a', end: 'b', is_ring: false, legs: [], days: [], total_km: 1, total_locks: 0, total_minutes: 2, amenities: [], warnings: [], graph_source_date: 'today' }, geometry: { type: 'LineString', coordinates: [[-1, 51], [-2, 52]] } };
+
+function viewportMap(setCallback: (callback: (bounds: MapBounds) => void) => void): MapView {
+  return {
+    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+    clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()),
+    onViewportIdle: vi.fn((callback) => { setCallback(callback); return vi.fn(); }),
+  };
+}
 
 function setup(options: {
   matrices?: TransferResult[][];
@@ -147,16 +156,69 @@ describe('trip store', () => {
     expect(routePois).toHaveBeenCalledWith(expect.objectContaining({ kinds: ['pub'] }));
   });
 
-  it('selects a day without replanning', async () => {
-    const { store, canalRoute } = setup();
+  it('selects a day without replanning and sends its geometry to POI refreshes', async () => {
+    const dayGeometry = {
+      day: 2,
+      geometry: { type: 'LineString' as const, coordinates: [[-1, 51], [-1.5, 52], [-2, 53]] as [number, number][] },
+      start: { lat: 51, lon: -1 },
+      end: { lat: 53, lon: -2 },
+    };
+    const routePois = vi.fn(async () => ({ pois: [], zoom_in_required: false, matching_count: 0, day: 2 }));
+    const { store, canalRoute } = setup({ routePois });
+    canalRoute.mockResolvedValue({ ...canal, day_geometries: [dayGeometry] });
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
     await store.planCanalRoute({});
 
+    const bounds = { south: 50, west: -2, north: 54, east: 0 };
+    store.togglePoiKind('pub');
+    await store.refreshRoutePois(bounds);
     store.selectDay(2);
+    await store.refreshRoutePois(bounds);
 
     expect(get(store).selectedDay).toBe(2);
     expect(canalRoute).toHaveBeenCalledTimes(1);
+    expect(routePois).toHaveBeenLastCalledWith(expect.objectContaining({
+      day: 2,
+      day_geometry: dayGeometry.geometry,
+    }));
+  });
+
+  it('coalesces grouped layer toggles and debounces rapid viewport refreshes', async () => {
+    vi.useFakeTimers();
+    try {
+      const routePois = vi.fn(async () => ({ pois: [], zoom_in_required: false, matching_count: 0, day: null }));
+      let onViewportIdle!: (bounds: MapBounds) => void;
+      const map = viewportMap((callback) => { onViewportIdle = callback; });
+      const { store } = setup({ routePois, map });
+      await store.setEndpointCoordinate('origin', place('origin', 51));
+      await store.setEndpointCoordinate('destination', place('destination', 53));
+      await store.planCanalRoute({});
+      store.setMapView(map);
+
+      const firstBounds = { south: 50, west: -2, north: 54, east: 0 };
+      onViewportIdle(firstBounds);
+      store.togglePoiKind('pub');
+      store.togglePoiKind('water_point');
+      expect(routePois).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(routePois).toHaveBeenCalledTimes(1);
+      expect(routePois).toHaveBeenCalledWith(expect.objectContaining({
+        bounds: firstBounds,
+        kinds: ['pub', 'water_point'],
+      }));
+
+      routePois.mockClear();
+      const secondBounds = { south: 51, west: -1.5, north: 53, east: -0.5 };
+      const latestBounds = { south: 51.5, west: -1.25, north: 52.5, east: -0.25 };
+      onViewportIdle(secondBounds);
+      onViewportIdle(latestBounds);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(routePois).toHaveBeenCalledTimes(1);
+      expect(routePois).toHaveBeenCalledWith(expect.objectContaining({ bounds: latestBounds }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects mixed revisions before calling the backend', async () => {

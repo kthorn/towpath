@@ -94,6 +94,22 @@ export function createTripStore(dependencies: {
   let poiRequest = 0;
   let viewportUnsubscribe: (() => void) | undefined;
   let lastViewportBounds: MapBounds | undefined;
+  let poiRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const cancelScheduledPoiRefresh = () => {
+    if (poiRefreshTimer === undefined) return;
+    clearTimeout(poiRefreshTimer);
+    poiRefreshTimer = undefined;
+  };
+  const schedulePoiRefresh = (bounds: MapBounds) => {
+    lastViewportBounds = bounds;
+    cancelScheduledPoiRefresh();
+    if (!state.enabledPoiKinds.length) return;
+    poiRefreshTimer = setTimeout(() => {
+      poiRefreshTimer = undefined;
+      void refreshRoutePois(bounds);
+    }, 100);
+  };
 
   const updateEndpoint = (slot: EndpointSlot, patch: Partial<EndpointState>) => {
     inner.update((current) => ({ ...current, [slot]: { ...current[slot], ...patch } }));
@@ -107,6 +123,7 @@ export function createTripStore(dependencies: {
     try { operation(); } catch (error) { warn(slot, `Map display failed: ${message(error)}`); }
   };
   const clearRouteOverlays = () => {
+    cancelScheduledPoiRefresh();
     poiRequest += 1;
     inner.update((current) => ({
       ...current,
@@ -259,6 +276,7 @@ export function createTripStore(dependencies: {
   }
 
   async function refreshRoutePois(bounds: MapBounds): Promise<void> {
+    cancelScheduledPoiRefresh();
     const route = state.canalRoute;
     const kinds = [...state.enabledPoiKinds];
     const artifactRevision = state.origin.artifactRevision ?? state.destination.artifactRevision;
@@ -287,6 +305,7 @@ export function createTripStore(dependencies: {
   }
 
   function togglePoiKind(kind: string): void {
+    cancelScheduledPoiRefresh();
     const enabled = state.enabledPoiKinds.includes(kind);
     const kinds = enabled
       ? state.enabledPoiKinds.filter((value) => value !== kind)
@@ -294,21 +313,21 @@ export function createTripStore(dependencies: {
     poiRequest += 1;
     inner.update((current) => ({ ...current, enabledPoiKinds: kinds, routePois: null, poiError: null }));
     mapCall('origin', () => mapView?.pois?.([]));
-    if (kinds.length && lastViewportBounds) {
-      void refreshRoutePois(lastViewportBounds);
-    }
+    if (kinds.length && lastViewportBounds) schedulePoiRefresh(lastViewportBounds);
   }
 
   function selectDay(day: number | null): void {
+    cancelScheduledPoiRefresh();
     poiRequest += 1;
     inner.update((current) => ({ ...current, selectedDay: day, poiError: null }));
     mapCall('origin', () => mapView?.day?.(selectedDayGeometry(day)));
-    if (lastViewportBounds) void refreshRoutePois(lastViewportBounds);
+    if (state.enabledPoiKinds.length && lastViewportBounds) schedulePoiRefresh(lastViewportBounds);
   }
 
   return {
     subscribe: inner.subscribe, setEndpointCoordinate, selectCandidate, confirmGeometricFallback,
     planCanalRoute, togglePoiKind, selectDay, refreshRoutePois, setMapView(value) {
+      cancelScheduledPoiRefresh();
       viewportUnsubscribe?.();
       viewportUnsubscribe = undefined;
       lastViewportBounds = undefined;
@@ -328,8 +347,8 @@ export function createTripStore(dependencies: {
       mapCall('origin', () => mapView?.pois?.(state.routePois?.pois ?? []));
       try {
         viewportUnsubscribe = mapView.onViewportIdle?.((bounds) => {
-          lastViewportBounds = bounds;
-          if (state.enabledPoiKinds.length) void refreshRoutePois(bounds);
+          if (state.enabledPoiKinds.length) schedulePoiRefresh(bounds);
+          else lastViewportBounds = bounds;
         });
       } catch (error) {
         warn('origin', `Map display failed: ${message(error)}`);

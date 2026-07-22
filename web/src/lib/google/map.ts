@@ -59,6 +59,7 @@ export function createGoogleMapView(
   const clickListeners: RemovableListener[] = [];
   const viewportListeners: RemovableListener[] = [];
   let canalRoute: PolylineInstance | undefined;
+  let canalPath: GoogleLatLngLiteral[] = [];
   let highlightedDay: PolylineInstance | undefined;
 
   const clearDay = () => {
@@ -112,17 +113,18 @@ export function createGoogleMapView(
     canal(geometry) {
       canalRoute?.setMap(null);
       canalRoute = undefined;
+      canalPath = [];
       element.removeAttribute('data-canal-overlay');
       if (geometry) {
-        const path = geoJsonToGooglePath(geometry);
+        canalPath = geoJsonToGooglePath(geometry);
         canalRoute = facade.createPolyline({
           map,
-          path,
+          path: canalPath,
           strokeColor: '#0891b2',
           strokeWeight: 6,
         });
         element.setAttribute('data-canal-overlay', 'visible');
-        facade.fitBounds(map, path);
+        facade.fitBounds(map, canalPath);
       }
     },
     pois(pois: RoutePoi[]) {
@@ -152,7 +154,10 @@ export function createGoogleMapView(
     },
     day(dayGeometry: RouteDayGeometry | null) {
       clearDay();
-      if (!dayGeometry) return;
+      if (!dayGeometry) {
+        if (canalPath.length) facade.fitBounds(map, canalPath);
+        return;
+      }
 
       const path = geoJsonToGooglePath(dayGeometry.geometry);
       highlightedDay = facade.createPolyline({
@@ -166,7 +171,7 @@ export function createGoogleMapView(
         facade.createMarker({ map, position: points[0], title: `Day ${dayGeometry.day} start` }),
         facade.createMarker({ map, position: points[1], title: `Day ${dayGeometry.day} end` }),
       );
-      facade.fitBounds(map, points);
+      facade.fitBounds(map, path);
     },
     onMapClick(callback: (coordinate: LatLon) => void) {
       const listener = map.addListener('click', (event) => {

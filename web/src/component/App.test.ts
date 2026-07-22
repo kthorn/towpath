@@ -220,6 +220,7 @@ describe('trip planning interface', () => {
     expect(screen.getByText(/7 hr cruising/i)).toBeVisible();
     expect(screen.getByText(/low bridge clearance/i)).toBeVisible();
     expect(screen.getByText(/day 1/i)).toBeVisible();
+    expect(screen.getByRole('button', { name: /day 1.*6 hr.*end near Braunston/i })).toBeVisible();
     expect(screen.getAllByText(/10 min.*2.4 km/i)).toHaveLength(2);
   });
 
