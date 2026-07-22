@@ -30,10 +30,28 @@ PEDESTRIAN_HIGHWAYS = ("footway", "path", "pedestrian")
 PEDESTRIAN_BARRIERS = ("gate", "stile", "kissing_gate", "cycle_barrier")
 IGNORED_AMENITIES = ("parking", "toilets", "shower", "drinking_water")
 UNKNOWN_VALUE_KEYS = ("amenity", "shop", "railway", "waterway", "barrier")
+RETAINED_POI_KINDS = frozenset(
+    {
+        "water_point",
+        "sanitary_disposal",
+        "fuel",
+        "marina",
+        "mooring",
+        *PROVISION_AMENITIES,
+        *PROVISION_SHOPS,
+        "rail_station",
+        "rail_halt",
+        "bus_stop",
+        "taxi_rank",
+        "entrance",
+        "path_connection",
+        "pedestrian_bridge",
+        "steps",
+        *PEDESTRIAN_BARRIERS,
+    }
+)
 
-SkipReason = Literal[
-    "unknown_value", "insufficient_bus_evidence", "explicitly_unavailable"
-]
+SkipReason = Literal["unknown_value", "insufficient_bus_evidence", "explicitly_unavailable"]
 
 
 @dataclass(frozen=True)

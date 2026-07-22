@@ -95,11 +95,17 @@ def test_index_construction_and_queries_do_not_mutate_graph_or_index():
     assert nx.utils.graphs_equal(graph, graph_before)
 
 
-def _poi(kind: str, lat: float, lon: float, osm_id: int = 1) -> PointOfInterest:
+def _poi(
+    kind: str,
+    lat: float,
+    lon: float,
+    osm_id: int = 1,
+    category: PoiCategory = PoiCategory.PROVISIONS,
+) -> PointOfInterest:
     return PointOfInterest(
         osm_type=OsmElementType.NODE,
         osm_id=osm_id,
-        category=PoiCategory.PROVISIONS,
+        category=category,
         kind=kind,
         name=f"{kind} name",
         lat=lat,
@@ -145,3 +151,25 @@ def test_poi_spatial_index_returns_over_cap_without_points():
     assert not result.pois
     assert result.zoom_in_required
     assert result.matching_count == 1001
+
+
+@pytest.mark.parametrize(
+    ("category", "latitude_offset", "expected_match"),
+    [
+        (PoiCategory.CANAL_SERVICE, 0.002, True),
+        (PoiCategory.CANAL_SERVICE, 0.003, False),
+        (PoiCategory.PROVISIONS, 0.008, True),
+        (PoiCategory.PROVISIONS, 0.010, False),
+    ],
+)
+def test_poi_spatial_index_applies_250m_and_1000m_corridors(
+    category: PoiCategory, latitude_offset: float, expected_match: bool
+):
+    index = PoiSpatialIndex((_poi("fuel", 51.0 + latitude_offset, -1.0, category=category),))
+    result = index.query(
+        bounds=MapBounds(south=50.9, west=-1.1, north=51.02, east=-0.9),
+        route_geometry=_line([(51.0, -1.1), (51.0, -0.9)]),
+        kinds=("fuel",),
+    )
+
+    assert bool(result.pois) is expected_match

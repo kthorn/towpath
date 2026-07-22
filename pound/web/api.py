@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from pound.ingest.pois import RETAINED_POI_KINDS
 from pound.route.candidates import nearest_coord_candidates, select_spaced_candidates
 from pound.route.plan import RouteUnavailableError, plan_canal_route
 from pound.schemas import (
@@ -95,8 +96,7 @@ def route_pois(body: RoutePoisRequest, request: Request) -> RoutePoisResponse:
             message="Bounds must be ordered south <= north and west <= east.",
             fields=["bounds"],
         )
-    allowed_kinds = {poi.kind for poi in request.app.state.pois}
-    if set(body.kinds) - allowed_kinds:
+    if set(body.kinds) - RETAINED_POI_KINDS:
         raise _error(
             400,
             code="invalid_poi_kind",

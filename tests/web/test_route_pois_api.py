@@ -125,6 +125,35 @@ def test_route_pois_rejects_empty_route_geometry(web_client: TestClient):
     assert response.status_code == 422
 
 
+def test_route_pois_rejects_route_geometry_over_coordinate_cap(web_client: TestClient):
+    response = web_client.post(
+        "/api/route-pois",
+        json=_request(
+            route_geometry={
+                "type": "LineString",
+                "coordinates": [[-1.0, 51.0]] * 10_001,
+            }
+        ),
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail[0]["loc"] == ["body", "route_geometry"]
+    assert "10,000" in detail[0]["msg"]
+
+
+def test_route_pois_accepts_valid_kind_missing_from_sparse_artifact(web_client: TestClient):
+    response = web_client.post("/api/route-pois", json=_request(kinds=["water_point"]))
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "pois": [],
+        "zoom_in_required": False,
+        "matching_count": 0,
+        "day": None,
+    }
+
+
 def test_route_pois_rejects_extra_fields_and_coercible_types(web_client: TestClient):
     assert web_client.post("/api/route-pois", json=_request(extra=True)).status_code == 422
     assert web_client.post("/api/route-pois", json=_request(kinds=[1])).status_code == 422

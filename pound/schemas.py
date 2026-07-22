@@ -7,7 +7,7 @@ coordinating with labyrinth-core / labyrinth-agent.
 import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class CanalConstraints(BaseModel):
@@ -131,6 +131,9 @@ class RoutePoi(BaseModel):
     distance_to_route_m: float = Field(ge=0)
 
 
+MAX_ROUTE_POI_COORDINATES = 10_000
+
+
 class RoutePoisRequest(BaseModel):
     """Strict, artifact-scoped input for bounded route POI queries."""
 
@@ -149,7 +152,12 @@ class RoutePoisRequest(BaseModel):
         if geometry is None:
             return None
         coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
-        if coordinates is not None:
+        if isinstance(coordinates, (list, tuple)):
+            if len(coordinates) > MAX_ROUTE_POI_COORDINATES:
+                raise ValueError(
+                    "LineString geometry cannot contain more than "
+                    f"{MAX_ROUTE_POI_COORDINATES:,} coordinates"
+                )
             for coordinate in coordinates:
                 if isinstance(coordinate, (list, tuple)) and any(
                     not isinstance(value, (int, float)) or isinstance(value, bool)
@@ -171,6 +179,18 @@ class RoutePoisRequest(BaseModel):
             if not math.isfinite(lat) or not -90 <= lat <= 90:
                 raise ValueError("LineString latitude must be finite and within -90 through 90")
         return geometry
+
+    @model_validator(mode="after")
+    def require_bounded_geometry_request(self):
+        coordinate_count = len(self.route_geometry.coordinates)
+        if self.day_geometry is not None:
+            coordinate_count += len(self.day_geometry.coordinates)
+        if coordinate_count > MAX_ROUTE_POI_COORDINATES:
+            raise ValueError(
+                "Route POI geometry request cannot contain more than "
+                f"{MAX_ROUTE_POI_COORDINATES:,} coordinates in total"
+            )
+        return self
 
 
 class RoutePoisResponse(BaseModel):
