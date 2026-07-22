@@ -107,8 +107,7 @@ function createMapFacade(modules: RuntimeModules): MapFacade {
     },
     getBounds(map) {
       const bounds = (map as unknown as RuntimeMap).getBounds();
-      if (!bounds) throw new Error('Google map has no viewport bounds');
-      return bounds.toJSON();
+      return bounds?.toJSON();
     },
   };
 }

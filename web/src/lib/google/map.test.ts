@@ -112,6 +112,24 @@ describe('Google map adapter', () => {
     expect(facade.fitBounds).toHaveBeenCalled();
   });
 
+  it('ignores undefined initial bounds and delivers first usable idle bounds', () => {
+    const { view, facade, mapListeners } = setup();
+    // First getBounds returns undefined (pre-idle), then returns real bounds
+    facade.getBounds = vi.fn()
+      .mockReturnValueOnce(undefined)
+      .mockReturnValue({ south: 50, west: -2, north: 54, east: 0 });
+    const callback = vi.fn();
+    view.onViewportIdle(callback);
+
+    // Immediate invocation: bounds undefined, callback should NOT fire
+    expect(callback).not.toHaveBeenCalled();
+
+    // Simulate map idle — bounds now available
+    mapListeners[0].callback(undefined as never);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith({ south: 50, west: -2, north: 54, east: 0 });
+  });
+
   it('reports viewport bounds immediately and when the map becomes idle', () => {
     const { view, facade, mapListeners } = setup();
     const callback = vi.fn();

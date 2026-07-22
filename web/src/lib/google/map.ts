@@ -36,7 +36,7 @@ export interface MapFacade {
     strokeWeight: number;
   }): PolylineInstance;
   fitBounds(map: MapInstance, points: GoogleLatLngLiteral[]): void;
-  getBounds(map: MapInstance): MapBounds;
+  getBounds(map: MapInstance): MapBounds | undefined;
 }
 
 function removeMarkers(markers: MarkerInstance[]): void {
@@ -180,9 +180,13 @@ export function createGoogleMapView(
       };
     },
     onViewportIdle(callback) {
-      const listener = map.addListener('idle', () => callback(facade.getBounds(map)));
+      const listener = map.addListener('idle', () => {
+        const bounds = facade.getBounds(map);
+        if (bounds) callback(bounds);
+      });
       viewportListeners.push(listener);
-      callback(facade.getBounds(map));
+      const bounds = facade.getBounds(map);
+      if (bounds) callback(bounds);
       return () => {
         listener.remove();
         const index = viewportListeners.indexOf(listener);
