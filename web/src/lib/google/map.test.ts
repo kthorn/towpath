@@ -36,10 +36,20 @@ function setup() {
     callback: (event: never) => void;
     remove: ReturnType<typeof vi.fn>;
   }> = [];
+  const infoWindowListeners: Array<{
+    event: string;
+    callback: () => void;
+    remove: ReturnType<typeof vi.fn>;
+  }> = [];
   const infoWindow = {
     setContent: vi.fn(),
     open: vi.fn(),
     close: vi.fn(),
+    addListener: vi.fn((event, callback) => {
+      const listener = { event, callback, remove: vi.fn() };
+      infoWindowListeners.push(listener);
+      return listener;
+    }),
   };
   const polylines: Array<{ options: Record<string, unknown>; setMap: ReturnType<typeof vi.fn> }> = [];
   const facade: MapFacade = {
@@ -80,6 +90,7 @@ function setup() {
     markers,
     markerListeners,
     infoWindow,
+    infoWindowListeners,
     polylines,
   };
 }
@@ -327,6 +338,21 @@ describe('Google map adapter', () => {
     click?.callback({} as never);
     expect((vi.mocked(infoWindow.setContent).mock.calls.at(-1)?.[0] as HTMLElement)).toHaveTextContent('Route day: 3');
     expect((vi.mocked(infoWindow.setContent).mock.calls.at(-1)?.[0] as HTMLElement)).not.toHaveTextContent('approximate');
+  });
+
+  it('lets the next background click select an endpoint after native InfoWindow close', () => {
+    const { view, mapListeners, markerListeners, infoWindowListeners } = setup();
+    const endpointClick = vi.fn();
+    view.onMapClick(endpointClick);
+    view.catalogPlaces!([catalogPlace()]);
+    markerListeners.find(({ event }) => event === 'click')?.callback({} as never);
+
+    const closeClick = infoWindowListeners.find(({ event }) => event === 'closeclick');
+    expect(closeClick).toBeDefined();
+    closeClick?.callback();
+    mapListeners[0].callback({ latLng: { lat: () => 53, lng: () => -2 } } as never);
+
+    expect(endpointClick).toHaveBeenCalledWith({ lat: 53, lon: -2 });
   });
 
   it('cleans replaced marker listeners and popup state, consumes the first background click, and closes on escape', () => {

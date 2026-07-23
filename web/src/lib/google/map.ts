@@ -42,6 +42,7 @@ export interface InfoWindowInstance {
   setContent(content: Node | string | null): void;
   open(options: { map: MapInstance; anchor?: MarkerInstance }): void;
   close(): void;
+  addListener(event: 'closeclick', callback: () => void): RemovableListener;
 }
 
 export interface MapFacade {
@@ -306,8 +307,12 @@ export function createGoogleMapView(
   const tooltipElements: HTMLElement[] = [];
   const clickListeners: RemovableListener[] = [];
   const viewportListeners: RemovableListener[] = [];
+  const infoWindowListeners: RemovableListener[] = [];
   const infoWindow = facade.createInfoWindow();
   let infoWindowOpen = false;
+  infoWindowListeners.push(infoWindow.addListener('closeclick', () => {
+    infoWindowOpen = false;
+  }));
   let canalRoute: PolylineInstance | undefined;
   let canalPath: GoogleLatLngLiteral[] = [];
   let highlightedDay: PolylineInstance | undefined;
@@ -534,6 +539,7 @@ export function createGoogleMapView(
       catalogMarkerListeners.length = 0;
       poiMarkerListeners.length = 0;
       lockMarkerListeners.length = 0;
+      removeListeners(infoWindowListeners);
       closeInfoWindow();
       removeTooltips();
       for (const marker of Object.values(placeMarkers)) if (marker) marker.map = null;

@@ -6,7 +6,12 @@ describe('Google SDK production bridge', () => {
   it('wires Maps, Places, and AdvancedMarkerElement constructors', () => {
     const MapCtor = vi.fn(() => ({ addListener: vi.fn(), fitBounds: vi.fn() }));
     const PolylineCtor = vi.fn((options) => ({ ...options, setMap: vi.fn() }));
-    const InfoWindowCtor = vi.fn(() => ({ setContent: vi.fn(), open: vi.fn(), close: vi.fn() }));
+    const InfoWindowCtor = vi.fn(() => ({
+      setContent: vi.fn(),
+      open: vi.fn(),
+      close: vi.fn(),
+      addListener: vi.fn(() => ({ remove: vi.fn() })),
+    }));
     const MarkerCtor = vi.fn((options) => ({ ...options, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
     const AutocompleteCtor = vi.fn(() => ({ addListener: vi.fn(), getPlace: vi.fn() }));
     const adapters = createGoogleAdapters(
@@ -32,7 +37,17 @@ describe('Google SDK production bridge', () => {
     const removeEventListener = vi.fn();
     const MapCtor = vi.fn(() => ({ addListener: vi.fn(), fitBounds: vi.fn() }));
     const MarkerCtor = vi.fn((options) => ({ ...options, addEventListener, removeEventListener }));
-    const InfoWindowCtor = vi.fn(() => ({ setContent: vi.fn(), open: vi.fn(), close: vi.fn() }));
+    const infoWindowEvents: Array<[string, unknown]> = [];
+    const addInfoWindowListener = vi.fn((event, callback) => {
+      infoWindowEvents.push([event, callback]);
+      return { remove: vi.fn() };
+    });
+    const InfoWindowCtor = vi.fn(() => ({
+      setContent: vi.fn(),
+      open: vi.fn(),
+      close: vi.fn(),
+      addListener: addInfoWindowListener,
+    }));
     const adapters = createGoogleAdapters({
       maps: { Map: MapCtor, Polyline: vi.fn(), InfoWindow: InfoWindowCtor },
       marker: { AdvancedMarkerElement: MarkerCtor },
@@ -47,6 +62,7 @@ describe('Google SDK production bridge', () => {
     expect(MarkerCtor).toHaveBeenCalledWith(expect.objectContaining({ anchorLeft: '-50%', anchorTop: '-50%' }));
     expect(markerEvents.map(([event]) => event)).toContain('gmp-click');
     expect(markerEvents.map(([event]) => event)).toContain('mouseenter');
+    expect(infoWindowEvents.map(([event]) => event)).toContain('closeclick');
   });
 
   it('uses the Maps JavaScript Routes static APIs with field masks', async () => {

@@ -31,6 +31,7 @@ interface RuntimeInfoWindow {
   setContent(content: Node | string | null): void;
   open(options: { map: unknown; anchor?: unknown }): void;
   close(): void;
+  addListener(event: 'closeclick', callback: () => void): { remove(): void };
 }
 
 interface PlacesModule {
@@ -115,7 +116,8 @@ function createMapFacade(modules: RuntimeModules): MapFacade {
       };
     },
     createInfoWindow() {
-      return new modules.maps.InfoWindow() as ReturnType<MapFacade['createInfoWindow']>;
+      const infoWindow = new modules.maps.InfoWindow() as RuntimeInfoWindow;
+      return infoWindow as ReturnType<MapFacade['createInfoWindow']>;
     },
     createPolyline(options) {
       return new modules.maps.Polyline(options) as ReturnType<MapFacade['createPolyline']>;
