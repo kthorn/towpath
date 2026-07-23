@@ -34,8 +34,6 @@ interface PoundApi {
   catalogPlaces?: (request: CatalogPlacesRequest) => Promise<CatalogPlacesResponse>;
 }
 
-type CatalogMapView = MapView & { catalogPlaces?: (places: CatalogPlace[]) => void };
-
 export interface EndpointState {
   place: SelectedPlace | null;
   candidates: RankedCandidate[];
@@ -175,7 +173,7 @@ export function createTripStore(dependencies: {
       catalogMatchingCount: 0,
       catalogOverCap: false,
     }));
-    mapCall('origin', () => (mapView as CatalogMapView | undefined)?.catalogPlaces?.([]));
+    mapCall('origin', () => mapView?.catalogPlaces([]));
   };
   const clearRouteOverlays = () => {
     cancelScheduledPoiRefresh();
@@ -374,7 +372,7 @@ export function createTripStore(dependencies: {
       catalogMatchingCount: 0,
       catalogOverCap: false,
     }));
-    mapCall('origin', () => (mapView as CatalogMapView | undefined)?.catalogPlaces?.([]));
+    mapCall('origin', () => mapView?.catalogPlaces([]));
 
     let health: HealthResponse;
     try {
@@ -462,7 +460,7 @@ export function createTripStore(dependencies: {
         catalogMatchingCount: matchingCount,
         catalogOverCap: overCap,
       }));
-      mapCall('origin', () => (mapView as CatalogMapView | undefined)?.catalogPlaces?.(places));
+      mapCall('origin', () => mapView?.catalogPlaces(places));
     }
 
     await queryCatalog(health, true);
@@ -570,7 +568,7 @@ export function createTripStore(dependencies: {
       mapCall('origin', () => mapView?.locks?.(state.canalRoute?.locks ?? []));
       mapCall('origin', () => mapView?.day?.(selectedDayGeometry(state.selectedDay)));
       mapCall('origin', () => mapView?.pois?.(state.routePois?.pois ?? []));
-      mapCall('origin', () => (mapView as CatalogMapView | undefined)?.catalogPlaces?.(state.catalog.places));
+      mapCall('origin', () => mapView?.catalogPlaces(state.catalog.places));
       try {
         viewportUnsubscribe = mapView.onViewportIdle?.((bounds) => {
           if (state.enabledPoiKinds.length) schedulePoiRefresh(bounds);

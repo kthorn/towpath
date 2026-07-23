@@ -61,8 +61,8 @@ function setup(overrides: { unavailable?: boolean; mapReject?: boolean; sameNode
   const selects: Array<(place: SelectedPlace) => void> = [];
   const mapClick = { callback: (_coordinate: { lat: number; lon: number }) => {} };
   const map: MapView = {
-    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
-    clearLand: vi.fn(), destroy: vi.fn(),
+    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), catalogPlaces: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+    clearLand: vi.fn(), closeInfoWindow: vi.fn(), destroy: vi.fn(),
     onMapClick: vi.fn((callback) => { mapClick.callback = callback; return vi.fn(); }),
     onViewportIdle: vi.fn(() => vi.fn()),
   };
@@ -308,12 +308,12 @@ describe('trip planning interface', () => {
 
   it('tears down and recreates the map across settings round trip', async () => {
     const firstMap: MapView = {
-      marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
-      clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onViewportIdle: vi.fn(() => vi.fn()),
+      marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), catalogPlaces: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+      clearLand: vi.fn(), closeInfoWindow: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onViewportIdle: vi.fn(() => vi.fn()),
     };
     const secondMap: MapView = {
-      marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
-      clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onViewportIdle: vi.fn(() => vi.fn()),
+      marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), catalogPlaces: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+      clearLand: vi.fn(), closeInfoWindow: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onViewportIdle: vi.fn(() => vi.fn()),
     };
     let loadCount = 0;
     const loadMapView = vi.fn(async () => {

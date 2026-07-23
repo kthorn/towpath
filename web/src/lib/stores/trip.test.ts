@@ -33,8 +33,8 @@ const catalogPlace = (identity: string, kind: string) => ({
 
 function viewportMap(setCallback: (callback: (bounds: MapBounds) => void) => void): MapView {
   return {
-    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
-    clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()),
+    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), catalogPlaces: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+    clearLand: vi.fn(), closeInfoWindow: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()),
     onViewportIdle: vi.fn((callback) => { setCallback(callback); return vi.fn(); }),
   };
 }
