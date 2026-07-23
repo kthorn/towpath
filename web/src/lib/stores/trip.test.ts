@@ -1,6 +1,7 @@
 import { get } from 'svelte/store';
 import { describe, expect, it, vi } from 'vitest';
 
+import { PoundApiError } from '../api';
 import type {
   CanalCandidatesResponse,
   CanalRouteRequest,
@@ -327,6 +328,31 @@ describe('trip store', () => {
     expect(catalogPlaces).toHaveBeenCalledTimes(2);
     expect(catalogPlaces).toHaveBeenCalledWith(expect.objectContaining({ kinds: ['museum'], policy: { basis: 'route', radius_m: 2_000 } }));
     expect(catalogPlaces).toHaveBeenCalledWith(expect.objectContaining({ kinds: ['marina'], policy: { basis: 'waterway', radius_m: 500 } }));
+  });
+
+  it('refetches catalog health and retries once after a revision mismatch', async () => {
+    const catalogPlaces = vi.fn()
+      .mockRejectedValueOnce(new PoundApiError(409, {
+        code: 'catalog_revision_mismatch', message: 'Refresh catalog health.', fields: ['catalog_revision'],
+      }))
+      .mockResolvedValue({ catalog_revision: 'c2', places: [], matching_count: 0, over_cap: false, day: null });
+    const catalogHealth = vi.fn()
+      .mockResolvedValueOnce({ status: 'healthy', artifact_revision: 'r1', catalog_revision: 'c1', catalog_status: 'available' as const })
+      .mockResolvedValueOnce({ status: 'healthy', artifact_revision: 'r1', catalog_revision: 'c2', catalog_status: 'available' as const });
+    const { store } = setup({ catalogPlaces, catalogHealth });
+    await vi.waitFor(() => expect(catalogHealth).toHaveBeenCalledTimes(1));
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    await store.planCanalRoute({});
+    store.toggleCatalogKind('museum', { basis: 'route', radius_m: 2_000 });
+
+    await store.refreshCatalogPlaces({ south: 50, west: -2, north: 54, east: 0 });
+
+    expect(catalogHealth).toHaveBeenCalledTimes(2);
+    expect(catalogPlaces).toHaveBeenCalledTimes(2);
+    expect(catalogPlaces).toHaveBeenNthCalledWith(1, expect.objectContaining({ catalog_revision: 'c1' }));
+    expect(catalogPlaces).toHaveBeenNthCalledWith(2, expect.objectContaining({ catalog_revision: 'c2' }));
+    expect(get(store).catalogRevision).toBe('c2');
   });
 
   it('merges catalog groups once and ignores stale responses', async () => {

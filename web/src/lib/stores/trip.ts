@@ -367,6 +367,7 @@ export function createTripStore(dependencies: {
     if (!route || !kinds.length || !poundApi.catalogPlaces) return;
 
     const requestSequence = ++catalogRequest;
+    const routeGeometry = route.geometry;
     inner.update((current) => ({
       ...current,
       catalog: { ...current.catalog, places: [], loading: true, error: null },
@@ -403,37 +404,68 @@ export function createTripStore(dependencies: {
       if (group) group.kinds.push(kind);
       else groups.set(key, { kinds: [kind], policy });
     }
-    const requests = [...groups.values()].map(({ kinds: groupKinds, policy }) => ({
-      catalog_revision: health.catalog_revision!,
-      kinds: groupKinds,
-      bounds,
-      route_geometry: route.geometry,
-      ...(dayGeometry ? { day_geometry: dayGeometry.geometry } : {}),
-      day,
-      policy,
-    } satisfies CatalogPlacesRequest));
-    const responses = await Promise.allSettled(requests.map((request) => poundApi.catalogPlaces!(request)));
-    if (requestSequence !== catalogRequest || route !== state.canalRoute) return;
 
-    const failures = responses.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-    const placesByIdentity = new Map<string, CatalogPlace>();
-    let matchingCount = 0;
-    let overCap = false;
-    for (const result of responses) {
-      if (result.status !== 'fulfilled') continue;
-      matchingCount += result.value.matching_count;
-      overCap ||= result.value.over_cap;
-      for (const place of result.value.places) placesByIdentity.set(place.identity, place);
+    async function queryCatalog(health: HealthResponse, canRetry: boolean): Promise<void> {
+      if (requestSequence !== catalogRequest || route !== state.canalRoute) return;
+      if (health.catalog_status !== 'available' || !health.catalog_revision) {
+        inner.update((current) => ({
+          ...current,
+          catalog: { ...current.catalog, loading: false, error: 'Catalog unavailable' },
+        }));
+        return;
+      }
+      const requests = [...groups.values()].map(({ kinds: groupKinds, policy }) => ({
+        catalog_revision: health.catalog_revision!,
+        kinds: groupKinds,
+        bounds,
+        route_geometry: routeGeometry,
+        ...(dayGeometry ? { day_geometry: dayGeometry.geometry } : {}),
+        day,
+        policy,
+      } satisfies CatalogPlacesRequest));
+      const responses = await Promise.allSettled(requests.map((request) => poundApi.catalogPlaces!(request)));
+      if (requestSequence !== catalogRequest || route !== state.canalRoute) return;
+
+      const failures = responses.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+      const revisionMismatch = canRetry && failures.some(({ reason }) => {
+        if (typeof reason !== 'object' || reason === null) return false;
+        const error = reason as { status?: unknown; code?: unknown };
+        return error.status === 409 && error.code === 'catalog_revision_mismatch';
+      });
+      if (revisionMismatch) {
+        catalogHealthPromise = undefined;
+        inner.update((current) => ({ ...current, catalogRevision: null, catalogStatus: 'unknown' }));
+        try {
+          await queryCatalog(await catalogHealth(), false);
+        } catch {
+          if (requestSequence === catalogRequest && route === state.canalRoute) {
+            inner.update((current) => ({ ...current, catalog: { ...current.catalog, loading: false } }));
+          }
+        }
+        return;
+      }
+
+      const placesByIdentity = new Map<string, CatalogPlace>();
+      let matchingCount = 0;
+      let overCap = false;
+      for (const result of responses) {
+        if (result.status !== 'fulfilled') continue;
+        matchingCount += result.value.matching_count;
+        overCap ||= result.value.over_cap;
+        for (const place of result.value.places) placesByIdentity.set(place.identity, place);
+      }
+      const error = failures.length ? message(failures[0].reason) : null;
+      const places = [...placesByIdentity.values()];
+      inner.update((current) => ({
+        ...current,
+        catalog: { ...current.catalog, places, loading: false, error },
+        catalogMatchingCount: matchingCount,
+        catalogOverCap: overCap,
+      }));
+      mapCall('origin', () => (mapView as CatalogMapView | undefined)?.catalogPlaces?.(places));
     }
-    const error = failures.length ? message(failures[0].reason) : null;
-    const places = [...placesByIdentity.values()];
-    inner.update((current) => ({
-      ...current,
-      catalog: { ...current.catalog, places, loading: false, error },
-      catalogMatchingCount: matchingCount,
-      catalogOverCap: overCap,
-    }));
-    mapCall('origin', () => (mapView as CatalogMapView | undefined)?.catalogPlaces?.(places));
+
+    await queryCatalog(health, true);
   }
 
   async function refreshRoutePois(bounds: MapBounds): Promise<void> {
