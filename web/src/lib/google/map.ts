@@ -1,5 +1,6 @@
 import type {
   CanalCandidate,
+  CatalogPlace,
   LatLon,
   MapBounds,
   RouteDayGeometry,
@@ -13,22 +14,52 @@ export interface RemovableListener {
   remove(): void;
 }
 
-interface MapInstance {
-  addListener(event: 'click', callback: (event: { latLng?: { lat(): number; lng(): number } }) => void): RemovableListener;
+export interface MapClickEvent {
+  latLng?: { lat(): number; lng(): number };
+}
+
+export interface MarkerEvent {
+  stopPropagation?: () => void;
+  domEvent?: { stopPropagation?: () => void };
+}
+
+export type MarkerEventName = 'click' | 'mouseenter' | 'mouseleave';
+
+export interface MapInstance {
+  addListener(event: 'click', callback: (event: MapClickEvent) => void): RemovableListener;
   addListener(event: 'idle', callback: () => void): RemovableListener;
 }
 
-interface MarkerInstance {
+export interface MarkerInstance {
   map: MapInstance | null;
 }
 
-interface PolylineInstance {
+export interface PolylineInstance {
   setMap(map: MapInstance | null): void;
+}
+
+export interface InfoWindowInstance {
+  setContent(content: Node | string | null): void;
+  open(options: { map: MapInstance; anchor?: MarkerInstance }): void;
+  close(): void;
 }
 
 export interface MapFacade {
   createMap(element: HTMLElement, options: Record<string, unknown>): MapInstance;
-  createMarker(options: { map: MapInstance; position: GoogleLatLngLiteral; title?: string }): MarkerInstance;
+  createMarker(options: {
+    map: MapInstance;
+    position: GoogleLatLngLiteral;
+    title?: string;
+    content?: Node;
+    anchorLeft?: string;
+    anchorTop?: string;
+  }): MarkerInstance;
+  addMarkerListener(
+    marker: MarkerInstance,
+    event: MarkerEventName,
+    callback: (event: MarkerEvent) => void,
+  ): RemovableListener;
+  createInfoWindow(): InfoWindowInstance;
   createPolyline(options: {
     map: MapInstance;
     path: GoogleLatLngLiteral[];
@@ -39,9 +70,219 @@ export interface MapFacade {
   getBounds(map: MapInstance): MapBounds | undefined;
 }
 
+const GROUP_STYLES = {
+  attractions: { color: '#7c3aed' },
+  hospitality: { color: '#d97706' },
+  shops: { color: '#16a34a' },
+  utilities: { color: '#2563eb' },
+} as const;
+
+const KIND_GROUPS: Record<string, keyof typeof GROUP_STYLES> = {
+  museum: 'attractions',
+  gallery: 'attractions',
+  historic_site: 'attractions',
+  garden: 'attractions',
+  wildlife_attraction: 'attractions',
+  landmark: 'attractions',
+  pub: 'hospitality',
+  cafe: 'hospitality',
+  restaurant: 'hospitality',
+  supermarket: 'shops',
+  convenience: 'shops',
+  bakery: 'shops',
+  greengrocer: 'shops',
+  butcher: 'shops',
+  deli: 'shops',
+  general: 'shops',
+  marina: 'utilities',
+  mooring: 'utilities',
+  fuel: 'utilities',
+  water_point: 'utilities',
+  sanitary_disposal: 'utilities',
+};
+
+const KIND_GLYPHS: Record<string, string> = {
+  museum: 'M',
+  gallery: 'G',
+  historic_site: 'H',
+  garden: 'G',
+  wildlife_attraction: 'W',
+  landmark: 'L',
+  pub: 'P',
+  cafe: 'C',
+  restaurant: 'R',
+  supermarket: 'S',
+  convenience: 'C',
+  bakery: 'B',
+  greengrocer: 'G',
+  butcher: 'B',
+  deli: 'D',
+  general: 'G',
+  marina: '⚓',
+  mooring: '⚓',
+  fuel: 'F',
+  water_point: 'W',
+  sanitary_disposal: 'S',
+};
+
 function removeMarkers(markers: MarkerInstance[]): void {
   for (const marker of markers) marker.map = null;
   markers.length = 0;
+}
+
+function removeListeners(listeners: RemovableListener[]): void {
+  for (const listener of listeners) listener.remove();
+  listeners.length = 0;
+}
+
+function markerContent(documentRef: Document, kind: string, label: string): HTMLElement {
+  const group = KIND_GROUPS[kind] ?? 'attractions';
+  const content = documentRef.createElement('span');
+  content.className = 'pound-catalog-marker';
+  content.dataset.group = group;
+  content.dataset.kind = kind;
+  content.setAttribute('role', 'img');
+  content.setAttribute('aria-label', label);
+  content.textContent = KIND_GLYPHS[kind] ?? kind.slice(0, 1).toUpperCase();
+  content.style.backgroundColor = GROUP_STYLES[group].color;
+  content.style.color = '#ffffff';
+  content.style.display = 'grid';
+  content.style.placeItems = 'center';
+  content.style.borderRadius = '50%';
+  content.style.width = '28px';
+  content.style.height = '28px';
+  content.style.fontWeight = '700';
+  return content;
+}
+
+function lockContent(documentRef: Document, label: string): HTMLElement {
+  const content = documentRef.createElement('span');
+  content.className = 'pound-lock-marker';
+  content.dataset.group = 'locks';
+  content.setAttribute('role', 'img');
+  content.setAttribute('aria-label', label);
+  content.textContent = '⌄';
+  content.style.color = '#4b5563';
+  content.style.fontSize = '28px';
+  content.style.fontWeight = '700';
+  content.style.lineHeight = '28px';
+  return content;
+}
+
+function addInfoField(documentRef: Document, root: HTMLElement, label: string, value: string): void {
+  const row = documentRef.createElement('div');
+  const name = documentRef.createElement('strong');
+  name.textContent = `${label}: `;
+  row.append(name, documentRef.createTextNode(value));
+  root.append(row);
+}
+
+function distance(meters: number): string {
+  return `${Math.round(meters)} m`;
+}
+
+function safeExternalUrl(value: string): URL | undefined {
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return undefined;
+    return url;
+  } catch {
+    return undefined;
+  }
+}
+
+function osmUrl(identity: string): string | undefined {
+  const [type, id] = identity.split('/');
+  if (!['node', 'way', 'relation'].includes(type ?? '') || !/^\d+$/.test(id ?? '')) return undefined;
+  return `https://www.openstreetmap.org/${type}/${id}`;
+}
+
+function addCloseButton(documentRef: Document, root: HTMLElement, close: () => void): void {
+  const button = documentRef.createElement('button');
+  button.type = 'button';
+  button.textContent = 'Close';
+  button.addEventListener('click', close);
+  root.prepend(button);
+}
+
+function catalogInfoContent(documentRef: Document, place: CatalogPlace, close: () => void): HTMLElement {
+  const root = documentRef.createElement('article');
+  root.className = 'pound-info-window';
+  addCloseButton(documentRef, root, close);
+  const heading = documentRef.createElement('h3');
+  heading.textContent = place.name ?? place.kind;
+  root.append(heading);
+  addInfoField(documentRef, root, 'Kind', place.kind);
+  if (place.distance_to_full_route_m !== null)
+    addInfoField(documentRef, root, 'Distance to route', distance(place.distance_to_full_route_m));
+  if (place.distance_to_selected_geometry_m !== null)
+    addInfoField(documentRef, root, 'Distance to selected day', distance(place.distance_to_selected_geometry_m));
+  if (place.waterway_distance_m !== null)
+    addInfoField(documentRef, root, 'Distance to waterway', distance(place.waterway_distance_m));
+
+  const metadata = place.metadata;
+  if (metadata.alt_name) addInfoField(documentRef, root, 'Also known as', metadata.alt_name);
+  if (metadata.brand) addInfoField(documentRef, root, 'Brand', metadata.brand);
+  if (metadata.operator) addInfoField(documentRef, root, 'Operator', metadata.operator);
+  if (metadata.address) {
+    const address = [
+      metadata.address.house_number,
+      metadata.address.street,
+      metadata.address.place,
+      metadata.address.city,
+      metadata.address.postcode,
+    ].filter(Boolean).join(', ');
+    if (address) addInfoField(documentRef, root, 'Address', address);
+  }
+  if (metadata.opening_hours) addInfoField(documentRef, root, 'Opening hours', metadata.opening_hours);
+  if (metadata.access) addInfoField(documentRef, root, 'Access', metadata.access);
+  if (metadata.fee) addInfoField(documentRef, root, 'Fee', metadata.fee);
+  if (metadata.wheelchair) addInfoField(documentRef, root, 'Wheelchair access', metadata.wheelchair);
+  if (metadata.phone) addInfoField(documentRef, root, 'Phone', metadata.phone);
+  if (metadata.email) addInfoField(documentRef, root, 'Email', metadata.email);
+  if (metadata.description) addInfoField(documentRef, root, 'Description', metadata.description);
+  for (const [key, value] of Object.entries(metadata.kind_details)) addInfoField(documentRef, root, key, value);
+
+  const links = documentRef.createElement('div');
+  for (const link of [...(osmUrl(place.identity) ? [{ label: 'OpenStreetMap', url: osmUrl(place.identity)! }] : []), ...metadata.links]) {
+    const url = safeExternalUrl(link.url);
+    if (!url) continue;
+    const anchor = documentRef.createElement('a');
+    anchor.href = url.href;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.textContent = link.label;
+    links.append(anchor);
+  }
+  if (links.childElementCount) root.append(links);
+  addInfoField(documentRef, root, 'Source', '© OpenStreetMap contributors');
+  return root;
+}
+
+function poiInfoContent(documentRef: Document, poi: RoutePoi, close: () => void): HTMLElement {
+  const root = documentRef.createElement('article');
+  root.className = 'pound-info-window';
+  addCloseButton(documentRef, root, close);
+  const heading = documentRef.createElement('h3');
+  heading.textContent = poi.name ?? poi.kind;
+  root.append(heading);
+  addInfoField(documentRef, root, 'Kind', poi.kind);
+  addInfoField(documentRef, root, 'Distance to route', distance(poi.distance_to_route_m));
+  addInfoField(documentRef, root, 'Source', '© OpenStreetMap contributors');
+  return root;
+}
+
+function lockInfoContent(documentRef: Document, lock: RouteLock, close: () => void): HTMLElement {
+  const root = documentRef.createElement('article');
+  root.className = 'pound-info-window';
+  addCloseButton(documentRef, root, close);
+  const heading = documentRef.createElement('h3');
+  heading.textContent = lock.name ?? 'Lock';
+  root.append(heading);
+  addInfoField(documentRef, root, 'Kind', 'lock');
+  addInfoField(documentRef, root, 'Route day', String(lock.day));
+  if (lock.approximate) addInfoField(documentRef, root, 'Position', 'Approximate');
+  return root;
 }
 
 export function createGoogleMapView(
@@ -50,29 +291,106 @@ export function createGoogleMapView(
   options: Record<string, unknown> = {},
 ): MapView {
   const map = facade.createMap(element, options);
+  const documentRef = element.ownerDocument;
   const placeMarkers: Partial<Record<EndpointSlot, MarkerInstance>> = {};
   const candidateMarkers: Record<EndpointSlot, MarkerInstance[]> = { origin: [], destination: [] };
   const landRoutes: Partial<Record<EndpointSlot, PolylineInstance>> = {};
+  const catalogMarkers: MarkerInstance[] = [];
   const poiMarkers: MarkerInstance[] = [];
   const lockMarkers: MarkerInstance[] = [];
   const dayWaypointMarkers: MarkerInstance[] = [];
+  const markerListeners: RemovableListener[] = [];
+  const catalogMarkerListeners: RemovableListener[] = [];
+  const poiMarkerListeners: RemovableListener[] = [];
+  const lockMarkerListeners: RemovableListener[] = [];
+  const tooltipElements: HTMLElement[] = [];
   const clickListeners: RemovableListener[] = [];
   const viewportListeners: RemovableListener[] = [];
+  const infoWindow = facade.createInfoWindow();
+  let infoWindowOpen = false;
   let canalRoute: PolylineInstance | undefined;
   let canalPath: GoogleLatLngLiteral[] = [];
   let highlightedDay: PolylineInstance | undefined;
 
+  const removeTooltip = (tooltip: HTMLElement) => {
+    tooltip.remove();
+    const index = tooltipElements.indexOf(tooltip);
+    if (index >= 0) tooltipElements.splice(index, 1);
+  };
+  const removeTooltips = () => {
+    for (const tooltip of tooltipElements.splice(0)) tooltip.remove();
+  };
+  const showTooltip = (label: string) => {
+    removeTooltips();
+    const tooltip = documentRef.createElement('div');
+    tooltip.className = 'pound-marker-tooltip';
+    tooltip.setAttribute('role', 'tooltip');
+    tooltip.textContent = label;
+    tooltip.style.position = 'absolute';
+    tooltip.style.zIndex = '1';
+    element.append(tooltip);
+    tooltipElements.push(tooltip);
+    return tooltip;
+  };
+  const closeInfoWindow = () => {
+    infoWindow.close();
+    infoWindow.setContent(null);
+    infoWindowOpen = false;
+  };
+  const openInfoWindow = (content: HTMLElement, marker: MarkerInstance) => {
+    infoWindow.setContent(content);
+    infoWindow.open({ map, anchor: marker });
+    infoWindowOpen = true;
+  };
+  const stopMarkerPropagation = (event: MarkerEvent) => {
+    if (event.stopPropagation) event.stopPropagation();
+    else event.domEvent?.stopPropagation?.();
+  };
+  const bindMarker = (
+    marker: MarkerInstance,
+    label: string,
+    content: () => HTMLElement,
+    listeners: RemovableListener[],
+  ) => {
+    const enter = facade.addMarkerListener(marker, 'mouseenter', () => { showTooltip(label); });
+    const leave = facade.addMarkerListener(marker, 'mouseleave', () => {
+      const tooltip = tooltipElements.at(-1);
+      if (tooltip) removeTooltip(tooltip);
+    });
+    const click = facade.addMarkerListener(marker, 'click', (event) => {
+      stopMarkerPropagation(event);
+      openInfoWindow(content(), marker);
+    });
+    listeners.push(enter, leave, click);
+    markerListeners.push(enter, leave, click);
+  };
+  const removeMarkerGroup = (
+    markers: MarkerInstance[],
+    listeners: RemovableListener[],
+  ) => {
+    for (const listener of listeners) {
+      listener.remove();
+      const index = markerListeners.indexOf(listener);
+      if (index >= 0) markerListeners.splice(index, 1);
+    }
+    listeners.length = 0;
+    removeMarkers(markers);
+    removeTooltips();
+  };
   const clearDay = () => {
     highlightedDay?.setMap(null);
     highlightedDay = undefined;
     removeMarkers(dayWaypointMarkers);
   };
-
   const clearLandSlot = (slot: EndpointSlot) => {
     landRoutes[slot]?.setMap(null);
     delete landRoutes[slot];
     element.removeAttribute(`data-${slot}-land-overlay`);
   };
+  const escapeListener = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && infoWindowOpen) closeInfoWindow();
+  };
+  documentRef.addEventListener('keydown', escapeListener);
 
   return {
     marker(slot, coordinate) {
@@ -100,12 +418,7 @@ export function createGoogleMapView(
       clearLandSlot(slot);
       if (route) {
         const path = route.path.map(toGoogleLatLng);
-        landRoutes[slot] = facade.createPolyline({
-          map,
-          path,
-          strokeColor: '#2563eb',
-          strokeWeight: 5,
-        });
+        landRoutes[slot] = facade.createPolyline({ map, path, strokeColor: '#2563eb', strokeWeight: 5 });
         element.setAttribute(`data-${slot}-land-overlay`, 'visible');
         facade.fitBounds(map, path);
       }
@@ -117,39 +430,52 @@ export function createGoogleMapView(
       element.removeAttribute('data-canal-overlay');
       if (geometry) {
         canalPath = geoJsonToGooglePath(geometry);
-        canalRoute = facade.createPolyline({
-          map,
-          path: canalPath,
-          strokeColor: '#0891b2',
-          strokeWeight: 6,
-        });
+        canalRoute = facade.createPolyline({ map, path: canalPath, strokeColor: '#0891b2', strokeWeight: 6 });
         element.setAttribute('data-canal-overlay', 'visible');
         facade.fitBounds(map, canalPath);
       }
     },
+    catalogPlaces(places: CatalogPlace[]) {
+      closeInfoWindow();
+      removeMarkerGroup(catalogMarkers, catalogMarkerListeners);
+      for (const place of places) {
+        const label = `${place.name ?? place.kind} — ${place.kind}`;
+        const marker = facade.createMarker({
+          map,
+          position: toGoogleLatLng(place.coordinate),
+          title: label,
+          content: markerContent(documentRef, place.kind, label),
+        });
+        catalogMarkers.push(marker);
+        bindMarker(marker, label, () => catalogInfoContent(documentRef, place, closeInfoWindow), catalogMarkerListeners);
+      }
+    },
     pois(pois: RoutePoi[]) {
-      removeMarkers(poiMarkers);
+      closeInfoWindow();
+      removeMarkerGroup(poiMarkers, poiMarkerListeners);
       for (const poi of pois) {
-        poiMarkers.push(
-          facade.createMarker({
-            map,
-            position: toGoogleLatLng(poi.coordinate),
-            title: poi.name ?? poi.kind,
-          }),
-        );
+        const label = `${poi.name ?? poi.kind} — ${poi.kind}`;
+        const marker = facade.createMarker({ map, position: toGoogleLatLng(poi.coordinate), title: poi.name ?? poi.kind });
+        poiMarkers.push(marker);
+        bindMarker(marker, label, () => poiInfoContent(documentRef, poi, closeInfoWindow), poiMarkerListeners);
       }
     },
     locks(locks: RouteLock[]) {
-      removeMarkers(lockMarkers);
+      closeInfoWindow();
+      removeMarkerGroup(lockMarkers, lockMarkerListeners);
       for (const lock of locks) {
         const approximation = lock.approximate ? ' (approximate)' : '';
-        lockMarkers.push(
-          facade.createMarker({
-            map,
-            position: toGoogleLatLng(lock.coordinate),
-            title: `${lock.name ?? 'Lock'}${approximation} — day ${lock.day}`,
-          }),
-        );
+        const title = `${lock.name ?? 'Lock'}${approximation} — day ${lock.day}`;
+        const marker = facade.createMarker({
+          map,
+          position: toGoogleLatLng(lock.coordinate),
+          title,
+          content: lockContent(documentRef, title),
+          anchorLeft: '-50%',
+          anchorTop: '-50%',
+        });
+        lockMarkers.push(marker);
+        bindMarker(marker, `${lock.name ?? 'Lock'} — lock`, () => lockInfoContent(documentRef, lock, closeInfoWindow), lockMarkerListeners);
       }
     },
     day(dayGeometry: RouteDayGeometry | null) {
@@ -158,14 +484,8 @@ export function createGoogleMapView(
         if (canalPath.length) facade.fitBounds(map, canalPath);
         return;
       }
-
       const path = geoJsonToGooglePath(dayGeometry.geometry);
-      highlightedDay = facade.createPolyline({
-        map,
-        path,
-        strokeColor: '#0891b2',
-        strokeWeight: 8,
-      });
+      highlightedDay = facade.createPolyline({ map, path, strokeColor: '#0891b2', strokeWeight: 8 });
       const points = [toGoogleLatLng(dayGeometry.start), toGoogleLatLng(dayGeometry.end)];
       dayWaypointMarkers.push(
         facade.createMarker({ map, position: points[0], title: `Day ${dayGeometry.day} start` }),
@@ -175,6 +495,10 @@ export function createGoogleMapView(
     },
     onMapClick(callback: (coordinate: LatLon) => void) {
       const listener = map.addListener('click', (event) => {
+        if (infoWindowOpen) {
+          closeInfoWindow();
+          return;
+        }
         if (event.latLng) callback({ lat: event.latLng.lat(), lon: event.latLng.lng() });
       });
       clickListeners.push(listener);
@@ -201,14 +525,23 @@ export function createGoogleMapView(
     clearLand(slot) {
       clearLandSlot(slot);
     },
+    closeInfoWindow,
     destroy() {
       for (const listener of clickListeners.splice(0)) listener.remove();
       for (const listener of viewportListeners.splice(0)) listener.remove();
+      documentRef.removeEventListener('keydown', escapeListener);
+      removeListeners(markerListeners);
+      catalogMarkerListeners.length = 0;
+      poiMarkerListeners.length = 0;
+      lockMarkerListeners.length = 0;
+      closeInfoWindow();
+      removeTooltips();
       for (const marker of Object.values(placeMarkers)) if (marker) marker.map = null;
       removeMarkers(candidateMarkers.origin);
       removeMarkers(candidateMarkers.destination);
-      removeMarkers(poiMarkers);
-      removeMarkers(lockMarkers);
+      removeMarkerGroup(catalogMarkers, []);
+      removeMarkerGroup(poiMarkers, []);
+      removeMarkerGroup(lockMarkers, []);
       clearDay();
       clearLandSlot('origin');
       clearLandSlot('destination');

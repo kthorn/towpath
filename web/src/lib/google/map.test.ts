@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { CanalCandidate } from '../types';
+import type { CanalCandidate, CatalogPlace } from '../types';
 import { createGoogleMapView, type MapFacade } from './map';
 
 function candidate(uid: number): CanalCandidate {
@@ -22,15 +22,46 @@ function setup() {
       return listener;
     }),
   };
-  const markers: Array<{ map: typeof map | null; position: unknown; title?: string }> = [];
+  const markers: Array<{
+    map: typeof map | null;
+    position: unknown;
+    title?: string;
+    content?: Node;
+    anchorLeft?: string;
+    anchorTop?: string;
+  }> = [];
+  const markerListeners: Array<{
+    marker: (typeof markers)[number];
+    event: string;
+    callback: (event: never) => void;
+    remove: ReturnType<typeof vi.fn>;
+  }> = [];
+  const infoWindow = {
+    setContent: vi.fn(),
+    open: vi.fn(),
+    close: vi.fn(),
+  };
   const polylines: Array<{ options: Record<string, unknown>; setMap: ReturnType<typeof vi.fn> }> = [];
   const facade: MapFacade = {
     createMap: vi.fn(() => map),
     createMarker: vi.fn((options) => {
-      const marker = { map, position: options.position, title: options.title };
+      const marker = {
+        map,
+        position: options.position,
+        title: options.title,
+        content: options.content,
+        anchorLeft: options.anchorLeft,
+        anchorTop: options.anchorTop,
+      };
       markers.push(marker);
       return marker;
     }),
+    addMarkerListener: vi.fn((marker, event, callback) => {
+      const listener = { marker, event, callback, remove: vi.fn() };
+      markerListeners.push(listener);
+      return listener;
+    }),
+    createInfoWindow: vi.fn(() => infoWindow),
     createPolyline: vi.fn((options) => {
       const polyline = { options, setMap: vi.fn() };
       polylines.push(polyline);
@@ -40,7 +71,49 @@ function setup() {
     getBounds: vi.fn(() => ({ south: 50, west: -2, north: 54, east: 0 })),
   };
   const element = document.createElement('div');
-  return { view: createGoogleMapView(facade, element), element, facade, map, mapListeners, markers, polylines };
+  return {
+    view: createGoogleMapView(facade, element),
+    element,
+    facade,
+    map,
+    mapListeners,
+    markers,
+    markerListeners,
+    infoWindow,
+    polylines,
+  };
+}
+
+function catalogPlace(overrides: Partial<CatalogPlace> = {}): CatalogPlace {
+  return {
+    identity: 'node/1/museum',
+    kind: 'museum',
+    name: 'Canal Museum',
+    coordinate: { lat: 51, lon: -1 },
+    waterway_distance_m: 120,
+    distance_to_full_route_m: 450,
+    distance_to_selected_geometry_m: null,
+    metadata: {
+      name: 'Canal Museum',
+      alt_name: null,
+      brand: null,
+      operator: null,
+      address: { house_number: '1', street: 'Canal Road', place: null, city: 'Oxford', postcode: 'OX1' },
+      opening_hours: 'Mo-Su 10:00-17:00',
+      access: null,
+      fee: 'yes',
+      wheelchair: 'yes',
+      phone: null,
+      email: null,
+      description: 'A museum beside the water.',
+      links: [
+        { label: 'Website', url: 'https://example.test/museum' },
+        { label: 'Unsafe', url: 'javascript:alert(1)' },
+      ],
+      kind_details: {},
+    },
+    ...overrides,
+  };
 }
 
 describe('Google map adapter', () => {
@@ -186,4 +259,108 @@ describe('Google map adapter', () => {
     expect(mapListeners[0].remove).toHaveBeenCalledOnce();
     expect(mapListeners[1].remove).toHaveBeenCalledOnce();
   });
+
+  it('assigns grouped catalog glyphs, titles, and name/kind hover tooltips', () => {
+    const { view, element, facade, markerListeners } = setup();
+    view.catalogPlaces!([
+      catalogPlace(),
+      catalogPlace({ identity: 'node/2/pub', kind: 'pub', name: 'The Navigation' }),
+      catalogPlace({ identity: 'node/3/supermarket', kind: 'supermarket', name: 'Market' }),
+      catalogPlace({ identity: 'node/4/marina', kind: 'marina', name: 'Marina' }),
+    ]);
+
+    const markerCalls = vi.mocked(facade.createMarker).mock.calls;
+    expect(markerCalls[0][0].title).toBe('Canal Museum — museum');
+    expect(markerCalls[0][0].content?.textContent).toBe('M');
+    expect(markerCalls[0][0].content).toHaveAttribute('data-group', 'attractions');
+    expect(markerCalls[1][0].content?.textContent).toBe('P');
+    expect(markerCalls[1][0].content).toHaveAttribute('data-group', 'hospitality');
+    expect(markerCalls[2][0].content?.textContent).toBe('S');
+    expect(markerCalls[2][0].content).toHaveAttribute('data-group', 'shops');
+    expect(markerCalls[3][0].content?.textContent).toBe('⚓');
+    expect(markerCalls[3][0].content).toHaveAttribute('data-group', 'utilities');
+
+    const enter = markerListeners.find(({ event }) => event === 'mouseenter');
+    enter?.callback({} as never);
+    expect(element).toHaveTextContent('Canal Museum — museum');
+    expect(element).not.toHaveTextContent('Opening hours');
+    const leave = markerListeners.find(({ event }) => event === 'mouseleave');
+    leave?.callback({} as never);
+    expect(element.querySelector('[role="tooltip"]')).toBeNull();
+  });
+
+  it('opens safe catalog metadata links in the shared info window and stops marker clicks', () => {
+    const { view, facade, markerListeners, infoWindow } = setup();
+    view.catalogPlaces!([catalogPlace()]);
+    const click = markerListeners.find(({ event }) => event === 'click');
+    const stopPropagation = vi.fn();
+    click?.callback({ stopPropagation } as never);
+
+    const content = vi.mocked(infoWindow.setContent).mock.calls.find(([value]) => value !== null)?.[0] as HTMLElement;
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    expect(content).toHaveTextContent('Canal Museum');
+    expect(content).toHaveTextContent('museum');
+    expect(content).toHaveTextContent('Opening hours: Mo-Su 10:00-17:00');
+    expect(content).toHaveTextContent('Distance to route: 450 m');
+    expect(content.querySelector('a[href="https://example.test/museum"]')).toHaveAttribute('target', '_blank');
+    expect(content.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(infoWindow.open).toHaveBeenCalledWith(expect.objectContaining({ anchor: markersAt(facade, 0) }));
+  });
+
+  it('switches POI and lock content through one info window and centers lock chevrons', () => {
+    const { view, facade, markerListeners, infoWindow } = setup();
+    view.pois([{ identity: 'node/1/pub', kind: 'pub', name: 'The Pub', coordinate: { lat: 51, lon: -1 }, distance_to_route_m: 12 }]);
+    let click = markerListeners.find(({ event }) => event === 'click');
+    click?.callback({} as never);
+    expect((vi.mocked(infoWindow.setContent).mock.calls.at(-1)?.[0] as HTMLElement)).toHaveTextContent('The Pub');
+
+    view.locks([
+      { coordinate: { lat: 51, lon: -1 }, name: 'Town Lock', day: 2, approximate: true },
+      { coordinate: { lat: 51.1, lon: -1.1 }, name: 'Source Lock', day: 3, approximate: false },
+    ]);
+    const lockCalls = vi.mocked(facade.createMarker).mock.calls.slice(-2);
+    expect(lockCalls[0][0].anchorLeft).toBe('-50%');
+    expect(lockCalls[0][0].anchorTop).toBe('-50%');
+    expect(lockCalls[0][0].title).toContain('(approximate)');
+    expect(lockCalls[1][0].title).not.toContain('approximate');
+    click = markerListeners.filter(({ event }) => event === 'click').at(-1);
+    click?.callback({} as never);
+    expect((vi.mocked(infoWindow.setContent).mock.calls.at(-1)?.[0] as HTMLElement)).toHaveTextContent('Route day: 3');
+    expect((vi.mocked(infoWindow.setContent).mock.calls.at(-1)?.[0] as HTMLElement)).not.toHaveTextContent('approximate');
+  });
+
+  it('cleans replaced marker listeners and popup state, consumes the first background click, and closes on escape', () => {
+    const { view, element, mapListeners, markerListeners, markers, infoWindow } = setup();
+    const endpointClick = vi.fn();
+    view.onMapClick(endpointClick);
+    view.catalogPlaces!([catalogPlace()]);
+    const oldMarker = markers[0];
+    const oldListener = markerListeners[0];
+    markerListeners.find(({ event }) => event === 'click')?.callback({} as never);
+    view.catalogPlaces!([catalogPlace({ identity: 'node/2/pub', kind: 'pub', name: 'Pub' })]);
+    expect(oldMarker.map).toBeNull();
+    expect(oldListener.remove).toHaveBeenCalled();
+    expect(infoWindow.close).toHaveBeenCalled();
+    infoWindow.close.mockClear();
+
+    markerListeners.filter(({ event }) => event === 'click').at(-1)?.callback({} as never);
+    mapListeners[0].callback({} as never);
+    expect(infoWindow.close).toHaveBeenCalledTimes(1);
+    expect(endpointClick).not.toHaveBeenCalled();
+    mapListeners[0].callback({ latLng: { lat: () => 53, lng: () => -2 } } as never);
+    expect(endpointClick).toHaveBeenCalledWith({ lat: 53, lon: -2 });
+
+    markerListeners.filter(({ event }) => event === 'click').at(-1)?.callback({} as never);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(infoWindow.close).toHaveBeenCalledTimes(2);
+    view.closeInfoWindow!();
+    view.destroy();
+    expect(infoWindow.close).toHaveBeenCalledTimes(4);
+    expect(element.querySelector('[role="tooltip"]')).toBeNull();
+    expect(markers.every(({ map }) => map === null)).toBe(true);
+  });
 });
+
+function markersAt(facade: MapFacade, index: number) {
+  return vi.mocked(facade.createMarker).mock.results[index]?.value;
+}

@@ -1,5 +1,6 @@
 import type {
   CanalCandidate,
+  CatalogPlace,
   GeoJSONLineString,
   LatLon,
   MapBounds,
@@ -50,9 +51,11 @@ export interface MapView {
   candidates(slot: EndpointSlot, candidates: CanalCandidate[], selectedUid?: number): void;
   land(slot: EndpointSlot, route: LandRoute | null): void;
   canal(geometry: GeoJSONLineString | null): void;
+  catalogPlaces?(places: CatalogPlace[]): void;
   pois(pois: RoutePoi[]): void;
   locks(locks: RouteLock[]): void;
   day(dayGeometry: RouteDayGeometry | null): void;
+  closeInfoWindow?(): void;
   onMapClick(callback: (coordinate: LatLon) => void): () => void;
   onViewportIdle(callback: (bounds: MapBounds) => void): () => void;
   clearLand(slot: EndpointSlot): void;

@@ -4,12 +4,13 @@ import { createGoogleAdapters } from './sdk';
 
 describe('Google SDK production bridge', () => {
   it('wires Maps, Places, and AdvancedMarkerElement constructors', () => {
-    const MapCtor = vi.fn(function () { return { addListener: vi.fn(), fitBounds: vi.fn() }; });
-    const PolylineCtor = vi.fn(function (options) { return { ...options, setMap: vi.fn() }; });
-    const MarkerCtor = vi.fn(function (options) { return { ...options }; });
-    const AutocompleteCtor = vi.fn(function () { return { addListener: vi.fn(), getPlace: vi.fn() }; });
+    const MapCtor = vi.fn(() => ({ addListener: vi.fn(), fitBounds: vi.fn() }));
+    const PolylineCtor = vi.fn((options) => ({ ...options, setMap: vi.fn() }));
+    const InfoWindowCtor = vi.fn(() => ({ setContent: vi.fn(), open: vi.fn(), close: vi.fn() }));
+    const MarkerCtor = vi.fn((options) => ({ ...options, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    const AutocompleteCtor = vi.fn(() => ({ addListener: vi.fn(), getPlace: vi.fn() }));
     const adapters = createGoogleAdapters(
-      { maps: { Map: MapCtor, Polyline: PolylineCtor }, marker: { AdvancedMarkerElement: MarkerCtor }, places: { Autocomplete: AutocompleteCtor }, routes: { Route: { computeRoutes: vi.fn() }, RouteMatrix: { computeRouteMatrix: vi.fn() } } },
+      { maps: { Map: MapCtor, Polyline: PolylineCtor, InfoWindow: InfoWindowCtor }, marker: { AdvancedMarkerElement: MarkerCtor }, places: { Autocomplete: AutocompleteCtor }, routes: { Route: { computeRoutes: vi.fn() }, RouteMatrix: { computeRouteMatrix: vi.fn() } } },
       { mapId: 'pound-map' },
     );
 
@@ -21,7 +22,31 @@ describe('Google SDK production bridge', () => {
     expect(AutocompleteCtor).toHaveBeenCalledOnce();
     expect(MapCtor).toHaveBeenCalledWith(expect.any(HTMLElement), { mapId: 'pound-map', center: { lat: 52.7, lng: -1.5 }, zoom: 6 });
     expect(MarkerCtor).toHaveBeenCalledOnce();
+    expect(InfoWindowCtor).toHaveBeenCalledOnce();
     expect(PolylineCtor).toHaveBeenCalledOnce();
+  });
+
+  it('bridges Advanced Marker events and centered lock content to Maps primitives', () => {
+    const markerEvents: Array<[string, unknown]> = [];
+    const addEventListener = vi.fn((event, callback) => markerEvents.push([event, callback]));
+    const removeEventListener = vi.fn();
+    const MapCtor = vi.fn(() => ({ addListener: vi.fn(), fitBounds: vi.fn() }));
+    const MarkerCtor = vi.fn((options) => ({ ...options, addEventListener, removeEventListener }));
+    const InfoWindowCtor = vi.fn(() => ({ setContent: vi.fn(), open: vi.fn(), close: vi.fn() }));
+    const adapters = createGoogleAdapters({
+      maps: { Map: MapCtor, Polyline: vi.fn(), InfoWindow: InfoWindowCtor },
+      marker: { AdvancedMarkerElement: MarkerCtor },
+      places: {},
+      routes: {},
+    });
+
+    adapters.createMapView(document.createElement('div')).locks([
+      { coordinate: { lat: 51, lon: -1 }, name: 'Lock', day: 1, approximate: false },
+    ]);
+
+    expect(MarkerCtor).toHaveBeenCalledWith(expect.objectContaining({ anchorLeft: '-50%', anchorTop: '-50%' }));
+    expect(markerEvents.map(([event]) => event)).toContain('gmp-click');
+    expect(markerEvents.map(([event]) => event)).toContain('mouseenter');
   });
 
   it('uses the Maps JavaScript Routes static APIs with field masks', async () => {
