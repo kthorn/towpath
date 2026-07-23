@@ -546,7 +546,7 @@ export function createTripStore(dependencies: {
     if (state.catalog.enabledKinds.length && lastViewportBounds) scheduleCatalogRefresh(lastViewportBounds);
   }
 
-  if (poundApi.health) void catalogHealth();
+  if (poundApi.health) void catalogHealth().catch(() => {});
 
   return {
     subscribe: inner.subscribe, setEndpointCoordinate, selectCandidate, confirmGeometricFallback,

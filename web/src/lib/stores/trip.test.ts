@@ -330,6 +330,30 @@ describe('trip store', () => {
     expect(catalogPlaces).toHaveBeenCalledWith(expect.objectContaining({ kinds: ['marina'], policy: { basis: 'waterway', radius_m: 500 } }));
   });
 
+  it('consumes initial catalog health failures without an unhandled rejection', async () => {
+    const healthError = new PoundApiError(503, {
+      code: 'catalog_unavailable',
+      message: 'Catalog is unavailable.',
+      fields: [],
+    });
+    const catalogHealth = vi.fn().mockRejectedValue(healthError);
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    try {
+      const { store } = setup({ catalogHealth });
+      await vi.waitFor(() => expect(catalogHealth).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(get(store).catalogStatus).toBe('unavailable');
+      expect(get(store).catalog.error).toContain('Catalog is unavailable.');
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+  });
+
   it('refetches catalog health and retries once after a revision mismatch', async () => {
     const catalogPlaces = vi.fn()
       .mockRejectedValueOnce(new PoundApiError(409, {
