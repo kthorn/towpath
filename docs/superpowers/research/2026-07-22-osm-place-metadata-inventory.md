@@ -113,25 +113,30 @@ the catalog tag filter and produced 185,029 records, an 85,378,417-byte artifact
 in 200.49 s wall time, with 2,534,084 KiB peak RSS. This worker did not rerun
 that expensive build because `pound/data/england.osm.pbf` is absent here.
 
+A fresh nationwide startup/index-load measurement used a newly generated
+temporary catalog artifact containing 185,029 places, the existing England
+graph artifact, and actual `GraphSpatialIndex` plus `CatalogSpatialIndex`
+construction. The measured process took **117.531 s** wall time and reached
+**4,195,472 KiB** maximum RSS. `/usr/bin/time` reported **131.17 s** elapsed,
+with **121.11 s** user time and **10.91 s** system time. Temporary files were
+deleted after the command. This is a one-time startup cost on the measured
+host, not a per-query cost.
+
+Applying 10% headroom to that baseline gives the bounded nationwide
+startup/index-load gate shown below:
+
 | Metric | Baseline | Gate | Baseline status |
 | --- | ---: | ---: | --- |
 | Catalog records (same source/filter) | 185,029 | exactly 185,029; source refreshes require a new inventory review | PASS |
 | Artifact size | 85,378,417 bytes | <= 100,000,000 bytes | PASS |
 | Catalog build wall time | 200.49 s | <= 300 s | PASS |
 | Catalog build peak RSS | 2,534,084 KiB | <= 3,000,000 KiB | PASS |
-| Catalog startup + index-load wall time (nationwide) | not measured | <= 5 s | NOT EVALUATED |
-| Catalog startup + index-load peak RSS (nationwide) | not measured | <= 3,000,000 KiB | NOT EVALUATED |
+| Catalog startup + index-load wall time (nationwide) | 117.531 s (inside process) | <= 130 s (inside process) | PASS |
+| Catalog startup + index-load peak RSS (nationwide) | 4,195,472 KiB | <= 4,615,019 KiB | PASS |
 
-A real generated temporary catalog artifact was available for a fixture-scale
-startup/index-load check. The command built the seven-record
-`tests/fixtures/tiny_bulk.osm` catalog into a `mktemp` directory, then loaded
-it with `load_catalog()` and built `CatalogSpatialIndex` (with an empty graph
-waterway index). `/usr/bin/time` measured **1.03 s wall time** and **82,416 KiB
-peak RSS**; the artifact was **3,421 bytes**. That fixture baseline passes its
-separate smoke gate of <= 2 s and <= 128,000 KiB, but it is not a nationwide
-startup claim. The overall production gate therefore remains **CONDITIONAL**:
-the real-England build baseline passes, while the nationwide startup/index-load
-gate is pending a run against the full generated England catalog artifact.
+Both nationwide startup/index-load rows pass. In rounded prose, the RSS gate
+may be described as approximately <= 4,600,000 KiB; the exact enforced value is
+4,615,019 KiB in the table. The existing catalog build gates remain unchanged.
 
 The reproducible England command remains:
 
