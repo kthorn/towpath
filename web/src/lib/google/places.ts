@@ -44,10 +44,13 @@ export function createGooglePlaceSearch(places: PlacesFacade): PlaceSearch {
       autocomplete.placeholder = 'Search for a place';
       container.append(autocomplete);
       let disposed = false;
+      let selectionToken = 0;
       const onError = (_event: Event) => {
+        selectionToken += 1;
         if (!disposed) onUnavailable?.(new Error('Google Places autocomplete failed'));
       };
       const onSelectEvent = async ({ placePrediction }: PlaceSelectEvent) => {
+        const token = ++selectionToken;
         if (!placePrediction || disposed) return;
         let selected: SelectedPlace;
         try {
@@ -61,10 +64,10 @@ export function createGooglePlaceSearch(places: PlacesFacade): PlaceSearch {
             coordinate: { lat: valueOf(location.lat), lon: valueOf(location.lng) },
           };
         } catch (error) {
-          if (!disposed) onUnavailable?.(error);
+          if (!disposed && token === selectionToken) onUnavailable?.(error);
           return;
         }
-        if (!disposed) onSelect(selected);
+        if (!disposed && token === selectionToken) onSelect(selected);
       };
       autocomplete.addEventListener('gmp-select', onSelectEvent);
       autocomplete.addEventListener('gmp-error', onError);

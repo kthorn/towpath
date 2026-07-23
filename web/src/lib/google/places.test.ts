@@ -85,6 +85,34 @@ describe('Google places adapter', () => {
     cleanup();
   });
 
+  it('only selects the latest place when field fetches resolve out of order', async () => {
+    const harness = createAutocompleteHarness();
+    let resolveFirst!: () => void;
+    let resolveSecond!: () => void;
+    const firstPlace = createPlace({
+      displayName: 'First place',
+      fetchFields: vi.fn(() => new Promise<void>((resolve) => { resolveFirst = resolve; })),
+    });
+    const secondPlace = createPlace({
+      displayName: 'Second place',
+      fetchFields: vi.fn(() => new Promise<void>((resolve) => { resolveSecond = resolve; })),
+    });
+    const onSelect = vi.fn();
+    const search = createGooglePlaceSearch({ createAutocomplete: () => harness.element });
+    const cleanup = search.attach(document.createElement('div'), onSelect);
+
+    const firstSelection = harness.select({ placePrediction: { toPlace: () => firstPlace } });
+    const secondSelection = harness.select({ placePrediction: { toPlace: () => secondPlace } });
+    resolveSecond();
+    await secondSelection;
+    resolveFirst();
+    await firstSelection;
+
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: 'Second place' }));
+    cleanup();
+  });
+
   it('reports a failed field fetch as unavailable', async () => {
     const harness = createAutocompleteHarness();
     const failure = new Error('fetch failed');

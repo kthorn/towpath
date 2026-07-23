@@ -5,7 +5,10 @@
   let { label, search, onselect }: { label: string; search: PlaceSearch; onselect: (place: SelectedPlace) => void } = $props();
   let container: HTMLElement;
   let error = $state('');
-  onMount(() => search.attach(container, onselect, (cause) => {
+  onMount(() => search.attach(container, (place) => {
+    error = '';
+    onselect(place);
+  }, (cause) => {
     error = cause instanceof Error ? cause.message : String(cause);
   }));
 </script>
