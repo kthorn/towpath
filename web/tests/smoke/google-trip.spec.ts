@@ -5,12 +5,11 @@ const prerequisitesPresent = process.env.GOOGLE_MAPS_SMOKE === '1'
   && Boolean(process.env.POUND_ARTIFACT_PATH);
 
 async function selectPlace(page: import('@playwright/test').Page, label: RegExp, query: string) {
-  const input = page.getByLabel(label);
+  const field = page.locator('.place-search-field').filter({ hasText: label });
+  const widget = field.locator('gmp-place-autocomplete');
+  const input = widget.locator('input');
   await input.fill(query);
-  await page.getByRole('option').first().waitFor({
-    state: 'visible',
-    timeout: 20_000,
-  });
+  await page.getByRole('option').first().waitFor({ state: 'visible', timeout: 20_000 });
   await input.press('ArrowDown');
   await input.press('Enter');
 }

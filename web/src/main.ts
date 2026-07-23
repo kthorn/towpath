@@ -14,9 +14,9 @@ if (!target) throw new Error('Missing #app mount target');
 const adapters = googleMapsLoader.load(config.googleMapsApiKey)
   .then((modules) => createGoogleAdapters(modules, { mapId: config.googleMapId }));
 const placeSearch: PlaceSearch = {
-  attach(input, onSelect, onUnavailable) {
+  attach(container, onSelect, onUnavailable) {
     let detach: (() => void) | undefined; let disposed = false;
-    adapters.then((loaded) => { if (!disposed) detach = loaded.placeSearch.attach(input, onSelect, onUnavailable); })
+    adapters.then((loaded) => { if (!disposed) detach = loaded.placeSearch.attach(container, onSelect, onUnavailable); })
       .catch((error) => { if (!disposed) onUnavailable?.(error); });
     return () => { disposed = true; detach?.(); };
   },
