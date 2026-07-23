@@ -76,6 +76,12 @@ FastAPI supports these environment variables:
 - `POUND_GOOGLE_DESTINATION_LIMIT` (default `10`): candidates returned for the
   browser's Google route matrix request.
 - `POUND_MINIMUM_CANDIDATE_SPACING_M` (default `250`): candidate separation.
+- `POUND_CATALOG_PATH` (optional): independent OSM catalog artifact. If unset,
+  routing still starts and `/api/health` reports `catalog_status: unavailable`.
+- `POUND_CATALOG_MAX_KINDS` (default `16`), `POUND_CATALOG_MAX_RADIUS_M`
+  (default `2000`), `POUND_CATALOG_MAX_VIEWPORT_SPAN_DEG` (default `10`),
+  `POUND_CATALOG_MAX_ROUTE_VERTICES` (default `10000`), and
+  `POUND_CATALOG_QUERY_WORK_BUDGET` (default `100000`) bound catalog queries.
 
 Candidate UIDs are valid only for their artifact revision. If the backend
 reports `artifact_revision_mismatch`, ensure the rebuilt artifact is deployed,
@@ -91,11 +97,25 @@ plans a canal route; Google land-transfer overlays may remain unavailable.
 
 ### Google Maps safety and operations
 
-Enable Maps JavaScript API, Places API, and Routes API. Restrict the browser key
-by HTTP referrer to the exact local and production origins and restrict it to
-those APIs. Use a project map ID. Set conservative per-API quotas, billing
-budgets and alerts, and monitor request/error dashboards before sharing a
-deployment. Google requests are made by the browser and may be billable.
+Enable Maps JavaScript API and Routes API. Enable the Places library only when
+endpoint autocomplete is part of the deployment; the catalog does not call the
+Places Web Service or Place Details. Restrict the browser key by HTTP referrer
+to the exact local and production origins and restrict it to the APIs actually
+used. Use a project map ID. Set conservative per-API quotas, billing budgets
+and alerts, and monitor request/error dashboards before sharing a deployment.
+Google map, autocomplete, and route-matrix requests are made by the browser and
+may be billable.
+
+**Catalog Google-link policy (URL-only MVP):** catalog markers expose an
+external `Search on Google Maps` link built as a URL-encoded
+`https://www.google.com/maps/search/?api=1&query=...` using the OSM name plus
+address/locality, or the OSM name plus coordinates when locality is absent. It
+needs no API key or Places quota. Do not add Place Details, Google-derived
+names/addresses/phones/ratings/reviews/photos, Place IDs, response caches, or
+bulk/background enrichment. Google's current terms prohibit displaying Places
+content with or near a non-Google/OSM map; any API enrichment is blocked pending
+Google support/legal review. The OSM-only marker and metadata remain the
+fallback.
 
 Pound's canal geometry is derived from OpenStreetMap. Preserve visible
 “© OpenStreetMap contributors” attribution and comply with the ODbL when
@@ -271,6 +291,49 @@ Bulk tests are skipped by default; run them explicitly:
 uv run pytest --run-bulk
 ```
 
+### Separate OSM place catalog
+
+The place catalog is an independent artifact built from the **original England
+PBF**, not from the filtered waterway build and not from the routing graph
+artifact. Build it only when catalog marker layers are needed:
+
+```bash
+uv run pound-ingest catalog england \
+  --pbf pound/data/england.osm.pbf \
+  --out /tmp/england-catalog.pkl \
+  --profile
+```
+
+A real measured England build produced **185,029 records**, an artifact of
+approximately **82 MB**, in **3m20s**, with **2.53 GB peak RSS**. Treat these as
+the current resource baseline; keep the output outside version control and do
+not commit the PBF, catalog artifact, profiler output, or temporary Google
+spike data. The catalog revision is independent of `artifact_revision`, so
+rebuild and deploy the two artifacts separately.
+
+Configure the optional catalog alongside the routing artifact when starting
+FastAPI:
+
+```bash
+POUND_ARTIFACT_PATH=/absolute/path/to/pound/artifacts/england.pkl \
+POUND_CATALOG_PATH=/absolute/path/to/england-catalog.pkl \
+POUND_STATIC_DIR=web/dist \
+uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000
+```
+
+Without `POUND_CATALOG_PATH`, routing remains available and catalog layers are
+unavailable by design. With a configured but missing or invalid catalog,
+`/api/health` reports degraded `catalog_status: unavailable`; route planning,
+locks, and day overlays remain usable. Catalog requests are bounded by the
+`POUND_CATALOG_*` settings listed above and are separate from
+`/api/route-pois`.
+
+Catalog records are OSM-derived. Keep the visible linked
+“© OpenStreetMap contributors” attribution in every catalog view and comply
+with ODbL share-alike and attribution requirements when distributing derived
+catalog data. Catalog metadata contains no Google enrichment; the only Google
+action is the URL-only external search link described above.
+
 ## Planning a route (`pound-plan`)
 
 Minimal, eyeballing-only surface over the loaded artifact:
@@ -328,5 +391,8 @@ wraps.
 
 ## Data attribution
 
-OSM data is © OpenStreetMap contributors, licensed ODbL. Derived artifacts
-inherit ODbL share-alike + attribution requirements.
+OSM data is © OpenStreetMap contributors, licensed ODbL. The routing graph and
+separate place catalog are derived artifacts and inherit ODbL share-alike and
+attribution requirements. Google Maps attribution does not replace OSM
+attribution. Google Places content is not stored or displayed in the catalog;
+see the URL-only policy under **Google Maps safety and operations**.
