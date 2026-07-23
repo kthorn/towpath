@@ -312,7 +312,10 @@ A successful real-England build produced **185,029 records**, an
 peak RSS**. The explicit build gates are: exactly 185,029 records for the same
 source/filter (a source refresh requires a new inventory review), artifact size
 <= **100,000,000 bytes**, build wall time <= **300 s**, and build peak RSS <=
-**3,000,000 KiB**. The real build baseline passes all four build gates.
+**3,000,000 KiB**. The real build baseline passes all four build gates. The
+benchmark run rebuilt the catalog from `/home/kurtt/towpath/pound/data/england.osm.pbf`
+into a temporary artifact; `/usr/bin/time` measured **211.32 s** wall time and
+**2,527,792 KiB** peak RSS, also passing the build gates.
 
 A fresh nationwide startup/index-load measurement used a newly generated
 temporary **185,029-place** catalog artifact, the existing England graph
@@ -325,6 +328,40 @@ process** and <= **4,615,019 KiB** peak RSS (approximately <= **4,600,000 KiB**
 in rounded prose). The baseline passes both gates. This is a one-time startup
 cost on the measured host, not a per-query cost. Temporary files were deleted
 after the command.
+
+Run the reproducible nationwide query benchmark against the generated catalog
+and the routing artifact (all paths stay outside version control):
+
+```bash
+uv run python scripts/catalog_query_benchmark.py \
+  --catalog-artifact "$catalog_tmp/england-catalog.pkl" \
+  --routing-artifact /absolute/path/to/pound/artifacts/england.pkl \
+  --warmups 2 --iterations 5
+```
+
+The benchmark loads both artifacts, builds `GraphSpatialIndex` and
+`CatalogSpatialIndex`, warms every request, and times only the public
+`CatalogPlacesRequest`/`CatalogSpatialIndex.query` path. Its fixed cases are
+locality/no-policy, route+day, waterway, and the densest predefined viewport
+whose display-point candidate count is within the **100,000-candidate** work
+budget. A real England run (185,029 records; 695,932 routing nodes; 695,510
+routing edges) produced these query measurements:
+
+| Case (viewport) | Candidates | Matching / over-cap | p50 ms | p95 ms | Max ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| densest predefined (London) | 35,874 | 1,001 / true | 43.688 | 44.437 | 44.604 |
+| locality/no-policy (Oxford) | 1,334 | 1,001 / true | 38.462 | 39.829 | 39.838 |
+| route+day (Milton Keynes) | 802 | 73 / false | 27.919 | 28.524 | 28.555 |
+| waterway (Milton Keynes) | 802 | 39 / false | 2.651 | 3.079 | 3.172 |
+
+The measured query-latency gate is **p95 and max <= 50 ms for every case**.
+The worst measured p95 was **44.437 ms** and worst measured max was **44.604
+ms**, so the gate has **12.1% headroom over the worst max** on this host; this
+nationwide gate passes. The benchmark process reported **4,090,568 KiB** RSS
+(including artifact load/index construction) and took **104.23 s** wall time;
+RSS and query timing are host-specific. The benchmark JSON is sorted and records
+candidate count, matching count, over-cap state, p50, p95, max, and RSS. Keep
+its output outside the repository with the temporary artifact.
 
 Keep the output outside version control and do not commit the PBF, catalog
 artifact, profiler output, or temporary Google spike data. The catalog revision

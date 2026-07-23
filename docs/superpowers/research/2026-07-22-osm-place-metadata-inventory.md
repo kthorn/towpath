@@ -110,8 +110,12 @@ and commercial provider content are excluded.
 The successful real-England catalog build evidence from the Task 3/4 reports is
 kept as the nationwide build baseline. It used the original England PBF after
 the catalog tag filter and produced 185,029 records, an 85,378,417-byte artifact,
-in 200.49 s wall time, with 2,534,084 KiB peak RSS. This worker did not rerun
-that expensive build because `pound/data/england.osm.pbf` is absent here.
+in 200.49 s wall time, with 2,534,084 KiB peak RSS. The checked-out worktree
+still has no `pound/data/england.osm.pbf`, so the final-fix wave used the supplied
+absolute source path `/home/kurtt/towpath/pound/data/england.osm.pbf` and a
+`mktemp` artifact. That fresh build produced the same 185,029 records and
+85,378,417 bytes; `/usr/bin/time` measured **211.32 s** wall time and
+**2,527,792 KiB** peak RSS, passing the existing build gates.
 
 A fresh nationwide startup/index-load measurement used a newly generated
 temporary catalog artifact containing 185,029 places, the existing England
@@ -137,6 +141,49 @@ startup/index-load gate shown below:
 Both nationwide startup/index-load rows pass. In rounded prose, the RSS gate
 may be described as approximately <= 4,600,000 KiB; the exact enforced value is
 4,615,019 KiB in the table. The existing catalog build gates remain unchanged.
+
+## Nationwide catalog query-latency evidence and gate
+
+The reproducible benchmark command is:
+
+```bash
+benchmark_tmp=$(mktemp -d)
+trap 'rm -rf "$benchmark_tmp"' EXIT
+uv run pound-ingest catalog england \
+  --pbf /home/kurtt/towpath/pound/data/england.osm.pbf \
+  --out "$benchmark_tmp/england-catalog.pkl"
+uv run python scripts/catalog_query_benchmark.py \
+  --catalog-artifact "$benchmark_tmp/england-catalog.pkl" \
+  --routing-artifact /home/kurtt/towpath/pound/artifacts/england.pkl \
+  --warmups 2 --iterations 5
+```
+
+The benchmark loads the independent catalog and routing artifacts, builds the
+real `GraphSpatialIndex` and `CatalogSpatialIndex`, warms each case, and times
+only `CatalogSpatialIndex.query` with validated `CatalogPlacesRequest` values.
+It does not call an internal distance helper or bypass the public query path.
+The fixed request set includes locality/no-policy, route+selected-day geometry,
+waterway, and the densest predefined viewport whose display-point candidates
+remain within the 100,000-candidate work budget. The final-fix run used a
+185,029-record catalog, 695,932 routing nodes, and 695,510 routing edges. Its
+sorted JSON reported:
+
+| Case (viewport) | Candidates | Matching / over-cap | p50 ms | p95 ms | Max ms | RSS KiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| densest predefined (London) | 35,874 | 1,001 / true | 43.688 | 44.437 | 44.604 | 4,090,568 |
+| locality/no-policy (Oxford) | 1,334 | 1,001 / true | 38.462 | 39.829 | 39.838 | 4,090,568 |
+| route+day (Milton Keynes) | 802 | 73 / false | 27.919 | 28.524 | 28.555 | 4,090,568 |
+| waterway (Milton Keynes) | 802 | 39 / false | 2.651 | 3.079 | 3.172 | 4,090,568 |
+
+The explicit latency gate is **p95 <= 50 ms and max <= 50 ms for every fixed
+case**. The worst measured p95 was **44.437 ms** and the worst measured max was
+**44.604 ms**, so the gate has **12.1% measured headroom over the worst max**
+and passes. The benchmark process took **104.23 s** wall time and reached
+**4,090,568 KiB** RSS, including artifact loading and index construction. The
+RSS and timings are host-specific; rerun the command after source or index
+changes. The 5 timed iterations followed 2 warmups per case; candidate counts
+were checked before query execution and every selected viewport was within the
+100,000-candidate work budget.
 
 The reproducible England command remains:
 
