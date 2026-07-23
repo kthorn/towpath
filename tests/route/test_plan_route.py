@@ -229,6 +229,28 @@ def test_plan_canal_route_emits_day_geometries_and_route_locks():
     assert not response.locks[0].approximate
 
 
+def test_far_source_lock_point_falls_back_to_approximate_midpoint():
+    graph = nx.Graph()
+    graph.add_node(1, lat=51.0, lon=-1.0, name="Start")
+    graph.add_node(2, lat=51.0, lon=-0.98, name="End")
+    graph.add_edge(
+        1,
+        2,
+        geometry=[(51.0, -1.0), (51.0, -0.98)],
+        length_m=1400.0,
+        locks=1,
+        lock_points=[(52.0, -1.0)],
+        dimensions=WayDimensions(),
+        osm_way_id=1,
+    )
+
+    response = plan_canal_route(ResolvedConstraints(start_uid=1, end_uid=2), graph=graph)
+
+    assert response.locks[0].coordinate.lat == pytest.approx(51.0, abs=1e-7)
+    assert response.locks[0].coordinate.lon == pytest.approx(-0.99, abs=1e-7)
+    assert response.locks[0].approximate
+
+
 def test_approximate_lock_uses_midpoint_along_curved_geometry():
     graph = nx.Graph()
     graph.add_node(1, lat=0, lon=0, name="Start")

@@ -298,18 +298,35 @@ PBF**, not from the filtered waterway build and not from the routing graph
 artifact. Build it only when catalog marker layers are needed:
 
 ```bash
+catalog_tmp=$(mktemp -d)
+trap 'rm -rf "$catalog_tmp"' EXIT
 uv run pound-ingest catalog england \
   --pbf pound/data/england.osm.pbf \
-  --out /tmp/england-catalog.pkl \
+  --out "$catalog_tmp/england-catalog.pkl" \
   --profile
 ```
 
-A real measured England build produced **185,029 records**, an artifact of
-approximately **82 MB**, in **3m20s**, with **2.53 GB peak RSS**. Treat these as
-the current resource baseline; keep the output outside version control and do
-not commit the PBF, catalog artifact, profiler output, or temporary Google
-spike data. The catalog revision is independent of `artifact_revision`, so
-rebuild and deploy the two artifacts separately.
+A successful real-England build produced **185,029 records**, an
+**85,378,417-byte** artifact, in **200.49 s wall time**, with **2,534,084 KiB
+peak RSS**. The explicit resource gates are: exactly 185,029 records for the
+same source/filter (a source refresh requires a new inventory review), artifact
+size <= **100,000,000 bytes**, build wall time <= **300 s**, and build peak RSS
+<= **3,000,000 KiB**. The real build baseline passes all four build gates.
+
+A separate generated temporary seven-record catalog artifact was loaded and
+indexed with `load_catalog()`/`CatalogSpatialIndex`: **1.03 s wall time** and
+**82,416 KiB peak RSS** for **3,421 bytes**. That fixture smoke gate is <= **2 s**
+and <= **128,000 KiB** (PASS for the fixture only). A nationwide startup/index
+load against the full England artifact was not run because the source PBF and
+artifact are unavailable in this checkout; its production gates are <= **5 s**
+and <= **3,000,000 KiB**, so the overall catalog gate remains **conditional**
+until that measurement is run. Do not treat the fixture result as a nationwide
+claim.
+
+Keep the output outside version control and do not commit the PBF, catalog
+artifact, profiler output, or temporary Google spike data. The catalog revision
+is independent of `artifact_revision`, so rebuild and deploy the two artifacts
+separately.
 
 Configure the optional catalog alongside the routing artifact when starting
 FastAPI:

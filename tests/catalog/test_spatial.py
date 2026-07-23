@@ -56,6 +56,15 @@ def _request(**changes) -> CatalogPlacesRequest:
     return CatalogPlacesRequest.model_validate(payload)
 
 
+def test_catalog_index_does_not_build_unused_geometry_tree():
+    index = CatalogSpatialIndex(
+        (_place("pub", osm_id=1, lat=51.0, lon=-1.0),),
+        GraphSpatialIndex(_graph()),
+    )
+
+    assert not hasattr(index, "geometry_tree")
+
+
 def test_catalog_query_filters_kinds_viewport_and_keeps_deterministic_order():
     index = CatalogSpatialIndex(
         (

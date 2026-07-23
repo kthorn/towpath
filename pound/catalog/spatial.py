@@ -74,7 +74,6 @@ class CatalogSpatialIndex:
 
     places: tuple[CatalogPlace, ...]
     geometries: tuple[BaseGeometry, ...]
-    geometry_tree: STRtree | None
     display_points: tuple[Point, ...]
     display_tree: STRtree | None
     waterway_index: GraphSpatialIndex
@@ -87,7 +86,6 @@ class CatalogSpatialIndex:
         display_points = tuple(Point(place.lon, place.lat) for place in ordered_places)
         object.__setattr__(self, "places", ordered_places)
         object.__setattr__(self, "geometries", geometries)
-        object.__setattr__(self, "geometry_tree", STRtree(geometries) if geometries else None)
         object.__setattr__(self, "display_points", display_points)
         object.__setattr__(
             self, "display_tree", STRtree(display_points) if display_points else None

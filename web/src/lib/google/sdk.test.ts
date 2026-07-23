@@ -59,7 +59,11 @@ describe('Google SDK production bridge', () => {
       { coordinate: { lat: 51, lon: -1 }, name: 'Lock', day: 1, approximate: false },
     ]);
 
-    expect(MarkerCtor).toHaveBeenCalledWith(expect.objectContaining({ anchorLeft: '-50%', anchorTop: '-50%' }));
+    expect(MarkerCtor).toHaveBeenCalledWith(expect.objectContaining({
+      anchorLeft: '-50%',
+      anchorTop: '-50%',
+      gmpClickable: true,
+    }));
     expect(markerEvents.map(([event]) => event)).toContain('gmp-click');
     expect(markerEvents.map(([event]) => event)).toContain('mouseenter');
     expect(infoWindowEvents.map(([event]) => event)).toContain('closeclick');

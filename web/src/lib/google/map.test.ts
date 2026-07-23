@@ -118,6 +118,7 @@ function catalogPlace(overrides: Partial<CatalogPlace> = {}): CatalogPlace {
       email: null,
       description: 'A museum beside the water.',
       links: [
+        { label: 'OpenStreetMap', url: 'https://www.openstreetmap.org/node/1' },
         { label: 'Website', url: 'https://example.test/museum' },
         { label: 'Unsafe', url: 'javascript:alert(1)' },
       ],
@@ -313,7 +314,11 @@ describe('Google map adapter', () => {
     expect(content).toHaveTextContent('museum');
     expect(content).toHaveTextContent('Opening hours: Mo-Su 10:00-17:00');
     expect(content).toHaveTextContent('Distance to route: 450 m');
+    expect(content.querySelector('a[href^="https://www.google.com/maps/search/?api=1&query="]')).toHaveTextContent('Search on Google Maps');
+    expect(content.querySelector('a[href^="https://www.google.com/maps/search/?api=1&query="]')).toHaveAttribute('target', '_blank');
+    expect(content.querySelector('a[href^="https://www.google.com/maps/search/?api=1&query="]')).toHaveAttribute('rel', 'noopener noreferrer');
     expect(content.querySelector('a[href="https://example.test/museum"]')).toHaveAttribute('target', '_blank');
+    expect(content.querySelectorAll('a[href="https://www.openstreetmap.org/node/1"]')).toHaveLength(1);
     expect(content.querySelector('a[href^="javascript:"]')).toBeNull();
     expect(infoWindow.open).toHaveBeenCalledWith(expect.objectContaining({ anchor: markersAt(facade, 0) }));
   });

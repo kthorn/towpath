@@ -9,9 +9,11 @@ waterway PBF, construct geometry, or attach records to the routing graph.
 The reproducible command is:
 
 ```bash
+inventory_tmp=$(mktemp -d)
+trap 'rm -rf "$inventory_tmp"' EXIT
 uv run python scripts/catalog_inventory.py \
   --pbf pound/data/england.osm.pbf \
-  --out /tmp/catalog-inventory.json
+  --out "$inventory_tmp/catalog-inventory.json"
 ```
 
 The checked-out worktree does not contain `pound/data/england.osm.pbf`, so the
@@ -103,10 +105,44 @@ or ratings. Those remain out of the manifest until a measured source inventory
 supports them. Raw mapper notes, `fixme`, stale-history tags, arbitrary tags,
 and commercial provider content are excluded.
 
-## Resource measurements
+## Resource measurements and production gate
 
-The parent supplied the nationwide England PBF scan evidence from the original
-source. This worker intentionally did not repeat that expensive scan. The
-fixture inventory completes in approximately 0.04 s in the focused test run;
-process peak RSS and a nationwide artifact-size estimate belong to the parent's
-full-scan evidence and are not regenerated here.
+The successful real-England catalog build evidence from the Task 3/4 reports is
+kept as the nationwide build baseline. It used the original England PBF after
+the catalog tag filter and produced 185,029 records, an 85,378,417-byte artifact,
+in 200.49 s wall time, with 2,534,084 KiB peak RSS. This worker did not rerun
+that expensive build because `pound/data/england.osm.pbf` is absent here.
+
+| Metric | Baseline | Gate | Baseline status |
+| --- | ---: | ---: | --- |
+| Catalog records (same source/filter) | 185,029 | exactly 185,029; source refreshes require a new inventory review | PASS |
+| Artifact size | 85,378,417 bytes | <= 100,000,000 bytes | PASS |
+| Catalog build wall time | 200.49 s | <= 300 s | PASS |
+| Catalog build peak RSS | 2,534,084 KiB | <= 3,000,000 KiB | PASS |
+| Catalog startup + index-load wall time (nationwide) | not measured | <= 5 s | NOT EVALUATED |
+| Catalog startup + index-load peak RSS (nationwide) | not measured | <= 3,000,000 KiB | NOT EVALUATED |
+
+A real generated temporary catalog artifact was available for a fixture-scale
+startup/index-load check. The command built the seven-record
+`tests/fixtures/tiny_bulk.osm` catalog into a `mktemp` directory, then loaded
+it with `load_catalog()` and built `CatalogSpatialIndex` (with an empty graph
+waterway index). `/usr/bin/time` measured **1.03 s wall time** and **82,416 KiB
+peak RSS**; the artifact was **3,421 bytes**. That fixture baseline passes its
+separate smoke gate of <= 2 s and <= 128,000 KiB, but it is not a nationwide
+startup claim. The overall production gate therefore remains **CONDITIONAL**:
+the real-England build baseline passes, while the nationwide startup/index-load
+gate is pending a run against the full generated England catalog artifact.
+
+The reproducible England command remains:
+
+```bash
+uv run pound-ingest catalog england \
+  --pbf pound/data/england.osm.pbf \
+  --out "$(mktemp -d)/england-catalog.pkl" \
+  --profile
+```
+
+Keep temporary PBFs, catalogs, profiler output, and spike data outside the
+repository and delete them after measurement. The fixture inventory completes
+in approximately 0.04 s in the focused test run; it is behavioral evidence,
+not a substitute for the nationwide gate.

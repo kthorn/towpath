@@ -14,21 +14,71 @@ import copy
 import math
 
 import networkx as nx
+from pyproj import Transformer
+from shapely import transform
+from shapely.geometry import LineString, Point
 
-from pound.graph.build import _haversine_m
 from pound.ingest.ir import NodeKind, WaterwayFeatures, WaterwayKind
 
+LOCK_SOURCE_TOLERANCE_M = 25.0
+_TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
+_TO_WGS84 = Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
 
-def _edge_point_dist_m(edge_geom: list[tuple[float, float]], lat: float, lon: float) -> float:
-    """Min distance from (lat, lon) to any point on the edge geometry."""
-    p = (lat, lon)
-    return min(_haversine_m(p, pt) for pt in edge_geom) if edge_geom else math.inf
+
+def project_point_to_edge(
+    edge_geom: object, lat: object, lon: object
+) -> tuple[tuple[float, float], float] | None:
+    """Project a finite WGS84 source point onto an edge line and return metric distance."""
+    if (
+        isinstance(lat, bool)
+        or isinstance(lon, bool)
+        or not isinstance(lat, (int, float))
+        or not isinstance(lon, (int, float))
+        or not isinstance(edge_geom, (tuple, list))
+    ):
+        return None
+    try:
+        source_lat = float(lat)
+        source_lon = float(lon)
+        if not math.isfinite(source_lat) or not math.isfinite(source_lon):
+            return None
+        coordinates = []
+        for point in edge_geom:
+            if not isinstance(point, (tuple, list)) or len(point) != 2:
+                return None
+            point_lat, point_lon = point
+            if (
+                isinstance(point_lat, bool)
+                or isinstance(point_lon, bool)
+                or not isinstance(point_lat, (int, float))
+                or not isinstance(point_lon, (int, float))
+            ):
+                return None
+            point_lat = float(point_lat)
+            point_lon = float(point_lon)
+            if not math.isfinite(point_lat) or not math.isfinite(point_lon):
+                return None
+            coordinates.append((point_lon, point_lat))
+        if len(coordinates) < 2:
+            return None
+        edge = transform(LineString(coordinates), _TO_BNG.transform, interleaved=False)
+        source = Point(*_TO_BNG.transform(source_lon, source_lat))
+        if edge.is_empty or edge.length == 0:
+            return None
+        distance_m = float(source.distance(edge))
+        projected = edge.interpolate(edge.project(source))
+        if distance_m <= 1e-6:
+            return (source_lat, source_lon), distance_m
+        projected_wgs84 = transform(projected, _TO_WGS84.transform, interleaved=False)
+        return (float(projected_wgs84.y), float(projected_wgs84.x)), distance_m
+    except (TypeError, ValueError, RuntimeError, OverflowError):
+        return None
 
 
 def attach_locks(
     graph: nx.Graph,
     features: WaterwayFeatures,
-    tolerance_m: float = 25.0,
+    tolerance_m: float = LOCK_SOURCE_TOLERANCE_M,
     *,
     in_place: bool = False,
 ) -> tuple[nx.Graph, dict]:
@@ -132,9 +182,11 @@ def attach_locks(
             if down_ref is not None and down_ref in gate_ids:
                 d["locks"] = max(d.get("locks", 0), 1)
                 lock_points = d.setdefault("lock_points", [])
-                point = gate_points[down_ref]
-                if point not in lock_points:
-                    lock_points.append(point)
+                projection = project_point_to_edge(d.get("geometry", []), *gate_points[down_ref])
+                if projection is not None and projection[1] <= tolerance_m:
+                    point = projection[0]
+                    if point not in lock_points:
+                        lock_points.append(point)
                 lock_segments.append((w.osm_id, u, v, d))
         # Floor: gateless flight -> 1 lock on the first segment of the first way.
         if not lock_segments and way_segments:
@@ -166,19 +218,20 @@ def attach_locks(
         best_edge = None
         best_key = None
         for u, v, d in g.edges(data=True):
-            dist = _edge_point_dist_m(d.get("geometry", []), node.lat, node.lon)
-            if dist > tolerance_m:
+            projection = project_point_to_edge(d.get("geometry", []), node.lat, node.lon)
+            if projection is None or projection[1] > tolerance_m:
                 continue
+            dist = projection[1]
             is_lock = d.get("kind") == WaterwayKind.LOCK
             key = (dist, 0 if is_lock else 1, d.get("length_m", math.inf))
             if best_key is None or key < best_key:
                 best_key = key
-                best_edge = (u, v, d)
+                best_edge = (u, v, d, projection[0])
         if best_edge is not None:
             edge_data = best_edge[2]
             edge_data["locks"] = max(edge_data.get("locks", 0), 1)
             lock_points = edge_data.setdefault("lock_points", [])
-            point = (node.lat, node.lon)
+            point = best_edge[3]
             if point not in lock_points:
                 lock_points.append(point)
             report["lock_nodes_attached"] += 1

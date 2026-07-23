@@ -17,6 +17,7 @@ import networkx as nx
 from networkx.exception import NetworkXNoPath
 
 from pound.graph.build import _haversine_m, _node_key
+from pound.graph.locks import LOCK_SOURCE_TOLERANCE_M, project_point_to_edge
 from pound.route.cost import is_eligible, time_min
 from pound.route.resolve import resolve_place
 from pound.schemas import (
@@ -197,10 +198,18 @@ def _route_locks(
     route_locks: list[RouteLock] = []
     for edge_index, (u, v) in enumerate(zip(path, path[1:], strict=False)):
         edge = graph.edges[u, v]
-        lock_points = edge.get("lock_points", [])
+        geometry = edge.get("geometry", [])
+        lock_points = []
+        for source_point in edge.get("lock_points", []):
+            try:
+                source_lat, source_lon = source_point
+            except (TypeError, ValueError):
+                continue
+            projection = project_point_to_edge(geometry, source_lat, source_lon)
+            if projection is not None and projection[1] <= LOCK_SOURCE_TOLERANCE_M:
+                lock_points.append(projection[0])
         approximate = not lock_points
         if not lock_points and edge.get("locks", 0):
-            geometry = edge.get("geometry", [])
             if geometry:
                 total_length = sum(
                     _haversine_m(start, end)

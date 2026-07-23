@@ -102,7 +102,10 @@ function createMapFacade(modules: RuntimeModules): MapFacade {
       return new modules.maps.Map(element, options) as ReturnType<MapFacade['createMap']>;
     },
     createMarker(options) {
-      return new modules.marker.AdvancedMarkerElement(options) as ReturnType<MapFacade['createMarker']>;
+      return new modules.marker.AdvancedMarkerElement({
+        ...options,
+        gmpClickable: options.gmpClickable ?? true,
+      }) as ReturnType<MapFacade['createMarker']>;
     },
     addMarkerListener(marker, event, callback) {
       const runtimeMarker = marker as unknown as RuntimeMarker;

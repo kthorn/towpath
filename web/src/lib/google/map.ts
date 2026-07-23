@@ -9,6 +9,7 @@ import type {
 } from '../types';
 import type { EndpointSlot, LandRoute, MapView } from './contracts';
 import { geoJsonToGooglePath, toGoogleLatLng, type GoogleLatLngLiteral } from './routes';
+import { buildGoogleMapsSearchUrl } from './searchUrl';
 
 export interface RemovableListener {
   remove(): void;
@@ -54,6 +55,7 @@ export interface MapFacade {
     content?: Node;
     anchorLeft?: string;
     anchorTop?: string;
+    gmpClickable?: boolean;
   }): MarkerInstance;
   addMarkerListener(
     marker: MarkerInstance,
@@ -245,9 +247,17 @@ function catalogInfoContent(documentRef: Document, place: CatalogPlace, close: (
   for (const [key, value] of Object.entries(metadata.kind_details)) addInfoField(documentRef, root, key, value);
 
   const links = documentRef.createElement('div');
-  for (const link of [...(osmUrl(place.identity) ? [{ label: 'OpenStreetMap', url: osmUrl(place.identity)! }] : []), ...metadata.links]) {
+  const derivedOsmUrl = osmUrl(place.identity);
+  const candidateLinks = [
+    { label: 'Search on Google Maps', url: buildGoogleMapsSearchUrl(place) },
+    ...(derivedOsmUrl ? [{ label: 'OpenStreetMap', url: derivedOsmUrl }] : []),
+    ...metadata.links,
+  ];
+  const seenUrls = new Set<string>();
+  for (const link of candidateLinks) {
     const url = safeExternalUrl(link.url);
-    if (!url) continue;
+    if (!url || seenUrls.has(url.href)) continue;
+    seenUrls.add(url.href);
     const anchor = documentRef.createElement('a');
     anchor.href = url.href;
     anchor.target = '_blank';
@@ -450,6 +460,7 @@ export function createGoogleMapView(
           position: toGoogleLatLng(place.coordinate),
           title: label,
           content: markerContent(documentRef, place.kind, label),
+          gmpClickable: true,
         });
         catalogMarkers.push(marker);
         bindMarker(marker, label, () => catalogInfoContent(documentRef, place, closeInfoWindow), catalogMarkerListeners);
@@ -460,7 +471,7 @@ export function createGoogleMapView(
       removeMarkerGroup(poiMarkers, poiMarkerListeners);
       for (const poi of pois) {
         const label = `${poi.name ?? poi.kind} — ${poi.kind}`;
-        const marker = facade.createMarker({ map, position: toGoogleLatLng(poi.coordinate), title: poi.name ?? poi.kind });
+        const marker = facade.createMarker({ map, position: toGoogleLatLng(poi.coordinate), title: poi.name ?? poi.kind, gmpClickable: true });
         poiMarkers.push(marker);
         bindMarker(marker, label, () => poiInfoContent(documentRef, poi, closeInfoWindow), poiMarkerListeners);
       }
@@ -478,6 +489,7 @@ export function createGoogleMapView(
           content: lockContent(documentRef, title),
           anchorLeft: '-50%',
           anchorTop: '-50%',
+          gmpClickable: true,
         });
         lockMarkers.push(marker);
         bindMarker(marker, `${lock.name ?? 'Lock'} — lock`, () => lockInfoContent(documentRef, lock, closeInfoWindow), lockMarkerListeners);
