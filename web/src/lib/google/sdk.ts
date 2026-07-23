@@ -20,7 +20,7 @@ interface MarkerModule {
 }
 
 interface PlacesModule {
-  Autocomplete: Constructor<unknown, [HTMLInputElement, Record<string, unknown>]>;
+  PlaceAutocompleteElement: Constructor<unknown, []>;
 }
 
 interface RoutesModule {
@@ -75,8 +75,8 @@ function createRoutesFacade(modules: RuntimeModules): RoutesFacade {
 
 function createPlacesFacade(modules: RuntimeModules): PlacesFacade {
   return {
-    createAutocomplete(input, options) {
-      return new modules.places.Autocomplete(input, options) as ReturnType<PlacesFacade['createAutocomplete']>;
+    createAutocomplete() {
+      return new modules.places.PlaceAutocompleteElement() as ReturnType<PlacesFacade['createAutocomplete']>;
     },
   };
 }
