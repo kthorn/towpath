@@ -61,7 +61,7 @@ describe('Google SDK production bridge', () => {
 
     expect(MarkerCtor).toHaveBeenCalledWith(expect.objectContaining({
       anchorLeft: '-50%',
-      anchorTop: '-50%',
+      anchorTop: '-100%',
       gmpClickable: true,
     }));
     expect(markerEvents.map(([event]) => event)).toContain('gmp-click');

@@ -488,7 +488,7 @@ export function createGoogleMapView(
           title,
           content: lockContent(documentRef, title),
           anchorLeft: '-50%',
-          anchorTop: '-50%',
+          anchorTop: '-100%',
           gmpClickable: true,
         });
         lockMarkers.push(marker);

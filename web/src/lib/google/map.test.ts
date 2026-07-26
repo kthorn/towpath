@@ -336,7 +336,7 @@ describe('Google map adapter', () => {
     ]);
     const lockCalls = vi.mocked(facade.createMarker).mock.calls.slice(-2);
     expect(lockCalls[0][0].anchorLeft).toBe('-50%');
-    expect(lockCalls[0][0].anchorTop).toBe('-50%');
+    expect(lockCalls[0][0].anchorTop).toBe('-100%');
     expect(lockCalls[0][0].title).toContain('(approximate)');
     expect(lockCalls[1][0].title).not.toContain('approximate');
     click = markerListeners.filter(({ event }) => event === 'click').at(-1);
