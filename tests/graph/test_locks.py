@@ -1,7 +1,11 @@
 import json
 
+import networkx as nx
+import pytest
+
 from pound.graph.build import build_graph
 from pound.graph.locks import attach_locks
+from pound.ingest.ir import NodeKind, WaterwayFeatures, WaterwayNode
 from pound.ingest.overpass import parse
 from tests.fixtures import oxford_fixture_path, staircase_fixture_path
 
@@ -43,6 +47,43 @@ def test_attach_locks_retains_source_lock_point():
     assert lock_edges
     assert len(lock_edges[0]["lock_points"]) == 1
     assert lock_edges[0]["lock_points"][0] == expected_point
+
+
+def test_lock_node_in_middle_of_segment_projects_onto_edge_line():
+    graph = nx.Graph()
+    graph.add_node(1, lat=51.0, lon=-1.0)
+    graph.add_node(2, lat=51.0, lon=-0.99)
+    graph.add_edge(
+        1,
+        2,
+        geometry=[(51.0, -1.0), (51.0, -0.99)],
+        kind="canal",
+        length_m=700.0,
+        locks=0,
+        osm_way_id=1,
+    )
+    features = WaterwayFeatures(
+        ways=[],
+        nodes=[
+            WaterwayNode(
+                osm_id=999,
+                lat=51.0001,
+                lon=-0.995,
+                tags={"lock": "yes"},
+                kind=NodeKind.LOCK,
+            )
+        ],
+        source="overpass",
+        fetched_at="",
+        bbox=None,
+    )
+
+    attached, report = attach_locks(graph, features, in_place=True)
+
+    point = attached.edges[1, 2]["lock_points"][0]
+    assert report["lock_nodes_attached"] == 1
+    assert point[0] == pytest.approx(51.0, abs=2e-7)
+    assert point[1] == pytest.approx(-0.995, abs=1e-7)
 
 
 def test_lock_node_at_endpoint_attaches_to_edge():

@@ -76,6 +76,13 @@ FastAPI supports these environment variables:
 - `POUND_GOOGLE_DESTINATION_LIMIT` (default `10`): candidates returned for the
   browser's Google route matrix request.
 - `POUND_MINIMUM_CANDIDATE_SPACING_M` (default `250`): candidate separation.
+- `POUND_CATALOG_PATH` (optional): independent OSM catalog artifact. If unset,
+  routing still starts and `/api/health` reports `catalog_status: unavailable`.
+- `POUND_CATALOG_MAX_KINDS` (default `16`), `POUND_CATALOG_MAX_RADIUS_M`
+  (default `2000`), `POUND_CATALOG_MAX_VIEWPORT_SPAN_DEG` (default `10`),
+  `POUND_CATALOG_MAX_ROUTE_VERTICES` (default `10000`), and
+  `POUND_CATALOG_QUERY_WORK_BUDGET` (default `100000` candidate checks) bound
+  catalog queries.
 
 Candidate UIDs are valid only for their artifact revision. If the backend
 reports `artifact_revision_mismatch`, ensure the rebuilt artifact is deployed,
@@ -91,11 +98,25 @@ plans a canal route; Google land-transfer overlays may remain unavailable.
 
 ### Google Maps safety and operations
 
-Enable Maps JavaScript API, Places API (New), and Routes API. Restrict the browser key
-by HTTP referrer to the exact local and production origins and restrict it to
-those APIs. Use a project map ID. Set conservative per-API quotas, billing
-budgets and alerts, and monitor request/error dashboards before sharing a
-deployment. Google requests are made by the browser and may be billable.
+Enable Maps JavaScript API and Routes API. Enable Places API (New) and its
+Places library only when endpoint autocomplete is part of the deployment; the
+catalog does not call the Places Web Service or Place Details. Restrict the browser key
+to the exact local and production origins and restrict it to the APIs actually
+used. Use a project map ID. Set conservative per-API quotas, billing budgets
+and alerts, and monitor request/error dashboards before sharing a deployment.
+Google map, autocomplete, and route-matrix requests are made by the browser and
+may be billable.
+
+**Catalog Google-link policy (URL-only MVP):** catalog markers expose an
+external `Search on Google Maps` link built as a URL-encoded
+`https://www.google.com/maps/search/?api=1&query=...` using the OSM name plus
+address/locality, or the OSM name plus coordinates when locality is absent. It
+needs no API key or Places quota. Do not add Place Details, Google-derived
+names/addresses/phones/ratings/reviews/photos, Place IDs, response caches, or
+bulk/background enrichment. Google's current terms prohibit displaying Places
+content with or near a non-Google/OSM map; any API enrichment is blocked pending
+Google support/legal review. The OSM-only marker and metadata remain the
+fallback.
 
 Pound's canal geometry is derived from OpenStreetMap. Preserve visible
 “© OpenStreetMap contributors” attribution and comply with the ODbL when
@@ -271,6 +292,105 @@ Bulk tests are skipped by default; run them explicitly:
 uv run pytest --run-bulk
 ```
 
+### Separate OSM place catalog
+
+The place catalog is an independent artifact built from the **original England
+PBF**, not from the filtered waterway build and not from the routing graph
+artifact. Build it only when catalog marker layers are needed:
+
+```bash
+catalog_tmp=$(mktemp -d)
+trap 'rm -rf "$catalog_tmp"' EXIT
+uv run pound-ingest catalog england \
+  --pbf pound/data/england.osm.pbf \
+  --out "$catalog_tmp/england-catalog.pkl" \
+  --profile
+```
+
+A successful real-England build produced **185,029 records**, an
+**85,378,417-byte** artifact, in **200.49 s wall time**, with **2,534,084 KiB
+peak RSS**. The explicit build gates are: exactly 185,029 records for the same
+source/filter (a source refresh requires a new inventory review), artifact size
+<= **100,000,000 bytes**, build wall time <= **300 s**, and build peak RSS <=
+**3,000,000 KiB**. The real build baseline passes all four build gates. The
+benchmark run rebuilt the catalog from `/home/kurtt/towpath/pound/data/england.osm.pbf`
+into a temporary artifact; `/usr/bin/time` measured **211.32 s** wall time and
+**2,527,792 KiB** peak RSS, also passing the build gates.
+
+A fresh nationwide startup/index-load measurement used a newly generated
+temporary **185,029-place** catalog artifact, the existing England graph
+artifact, and actual `GraphSpatialIndex` plus `CatalogSpatialIndex`
+construction. The measured process took **117.531 s** wall time and reached
+**4,195,472 KiB** maximum RSS. `/usr/bin/time` reported **131.17 s** elapsed,
+with **121.11 s** user time and **10.91 s** system time. Applying 10% headroom,
+the nationwide startup/index-load gates are <= **130 s measured inside the
+process** and <= **4,615,019 KiB** peak RSS (approximately <= **4,600,000 KiB**
+in rounded prose). The baseline passes both gates. This is a one-time startup
+cost on the measured host, not a per-query cost. Temporary files were deleted
+after the command.
+
+Run the reproducible nationwide query benchmark against the generated catalog
+and the routing artifact (all paths stay outside version control):
+
+```bash
+uv run python scripts/catalog_query_benchmark.py \
+  --catalog-artifact "$catalog_tmp/england-catalog.pkl" \
+  --routing-artifact /absolute/path/to/pound/artifacts/england.pkl \
+  --warmups 2 --iterations 5
+```
+
+The benchmark loads both artifacts, builds `GraphSpatialIndex` and
+`CatalogSpatialIndex`, warms every request, and times only the public
+`CatalogPlacesRequest`/`CatalogSpatialIndex.query` path. Its fixed cases are
+locality/no-policy, route+day, waterway, and the densest predefined viewport
+whose display-point candidate count is within the **100,000-candidate** work
+budget. A real England run (185,029 records; 695,932 routing nodes; 695,510
+routing edges) produced these query measurements:
+
+| Case (viewport) | Candidates | Matching / over-cap | p50 ms | p95 ms | Max ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| densest predefined (London) | 35,874 | 1,001 / true | 43.688 | 44.437 | 44.604 |
+| locality/no-policy (Oxford) | 1,334 | 1,001 / true | 38.462 | 39.829 | 39.838 |
+| route+day (Milton Keynes) | 802 | 73 / false | 27.919 | 28.524 | 28.555 |
+| waterway (Milton Keynes) | 802 | 39 / false | 2.651 | 3.079 | 3.172 |
+
+The measured query-latency gate is **p95 and max <= 50 ms for every case**.
+The worst measured p95 was **44.437 ms** and worst measured max was **44.604
+ms**, so the gate has **12.1% headroom over the worst max** on this host; this
+nationwide gate passes. The benchmark process reported **4,090,568 KiB** RSS
+(including artifact load/index construction) and took **104.23 s** wall time;
+RSS and query timing are host-specific. The benchmark JSON is sorted and records
+candidate count, matching count, over-cap state, p50, p95, max, and RSS. Keep
+its output outside the repository with the temporary artifact.
+
+Keep the output outside version control and do not commit the PBF, catalog
+artifact, profiler output, or temporary Google spike data. The catalog revision
+is independent of `artifact_revision`, so rebuild and deploy the two artifacts
+separately.
+
+Configure the optional catalog alongside the routing artifact when starting
+FastAPI:
+
+```bash
+POUND_ARTIFACT_PATH=/absolute/path/to/pound/artifacts/england.pkl \
+POUND_CATALOG_PATH=/absolute/path/to/england-catalog.pkl \
+POUND_STATIC_DIR=web/dist \
+uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000
+```
+
+Without `POUND_CATALOG_PATH`, routing remains available and catalog layers are
+unavailable by design. With a configured but missing or invalid catalog,
+`/api/health` reports degraded `catalog_status: unavailable`; route planning,
+locks, and day overlays remain usable. Catalog requests are bounded by the
+`POUND_CATALOG_*` settings listed above and are separate from
+`/api/route-pois`.
+
+Catalog records are OSM-derived. Keep the visible linked
+“© OpenStreetMap contributors” attribution in every catalog view and comply
+with ODbL share-alike and attribution requirements when distributing derived
+catalog data. Catalog metadata contains no Google enrichment; the only Google
+action is the URL-only external search link described above.
+
 ## Planning a route (`pound-plan`)
 
 Minimal, eyeballing-only surface over the loaded artifact:
@@ -328,5 +448,8 @@ wraps.
 
 ## Data attribution
 
-OSM data is © OpenStreetMap contributors, licensed ODbL. Derived artifacts
-inherit ODbL share-alike + attribution requirements.
+OSM data is © OpenStreetMap contributors, licensed ODbL. The routing graph and
+separate place catalog are derived artifacts and inherit ODbL share-alike and
+attribution requirements. Google Maps attribution does not replace OSM
+attribution. Google Places content is not stored or displayed in the catalog;
+see the URL-only policy under **Google Maps safety and operations**.

@@ -6,8 +6,9 @@ from typing import Any
 
 import networkx as nx
 from pyproj import Transformer
-from shapely import transform
+from shapely import transform, wkb
 from shapely.geometry import LineString, Point, box
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points
 from shapely.strtree import STRtree
 
@@ -178,6 +179,24 @@ class GraphSpatialIndex:
             int(position) for envelope in envelopes for position in self.node_tree.query(envelope)
         }
         return tuple(self.node_uids[position] for position in sorted(positions))
+
+    def distance_to_waterway(self, geometry: BaseGeometry | bytes) -> float | None:
+        """Return metric distance from normalized catalog geometry to a navigable edge."""
+        if self.edge_tree is None:
+            return None
+        if isinstance(geometry, bytes):
+            geometry = wkb.loads(geometry)
+        if not isinstance(geometry, BaseGeometry):
+            raise TypeError("geometry must be a Shapely geometry or WKB bytes")
+        if geometry.is_empty:
+            return None
+        geometry_bng = transform(geometry, _TO_BNG.transform, interleaved=False)
+        _positions, distances = self.edge_tree.query_nearest(
+            geometry_bng, all_matches=True, return_distance=True
+        )
+        if len(distances) == 0:
+            return None
+        return float(min(distances))
 
     def project_to_nearest_edge(
         self, lat: float, lon: float

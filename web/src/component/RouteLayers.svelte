@@ -1,29 +1,29 @@
 <script lang="ts">
+  import type { CatalogQueryPolicy } from '../lib/types';
   import type { TripStore } from '../lib/stores/trip';
 
   let { store }: { store: TripStore } = $props();
-  const layers = [
-    { label: 'Pubs', kinds: ['pub'] },
-    { label: 'Water points', kinds: ['water_point'] },
-    { label: 'Marinas and moorings', kinds: ['marina', 'mooring'] },
-    { label: 'Fuel and sanitary', kinds: ['fuel', 'sanitary_disposal'] },
+  const layers: Array<{ label: string; kinds: string[]; policy: CatalogQueryPolicy }> = [
+    {
+      label: 'Attractions',
+      kinds: ['museum', 'gallery', 'historic_site', 'garden', 'wildlife_attraction', 'landmark'],
+      policy: { basis: 'waterway', radius_m: 2_000 },
+    },
+    { label: 'Hospitality', kinds: ['pub', 'cafe', 'restaurant'], policy: { basis: 'route', radius_m: 2_000 } },
     {
       label: 'Shops and provisions',
-      kinds: ['bakery', 'butcher', 'cafe', 'convenience', 'deli', 'greengrocer', 'restaurant', 'supermarket'],
+      kinds: ['supermarket', 'convenience', 'bakery', 'greengrocer', 'butcher', 'deli', 'general'],
+      policy: { basis: 'route', radius_m: 2_000 },
     },
-    { label: 'Transport', kinds: ['bus_stop', 'rail_station', 'taxi_rank'] },
     {
-      label: 'Pedestrian access',
-      kinds: ['entrance', 'path_connection', 'pedestrian_bridge', 'steps', 'stile', 'gate', 'cycle_barrier', 'kissing_gate'],
+      label: 'Canal utilities',
+      kinds: ['marina', 'mooring', 'fuel', 'water_point', 'sanitary_disposal'],
+      policy: { basis: 'waterway', radius_m: 500 },
     },
   ];
 
-  function toggleLayer(kinds: string[]) {
-    const enabled = new Set($store.enabledPoiKinds);
-    const allEnabled = kinds.every((kind) => enabled.has(kind));
-    for (const kind of kinds) {
-      if (allEnabled || !enabled.has(kind)) store.togglePoiKind(kind);
-    }
+  function toggleLayer(layer: typeof layers[number]) {
+    store.toggleCatalogKinds(layer.kinds, layer.policy);
   }
 </script>
 
@@ -34,13 +34,24 @@
       <label>
         <input
           type="checkbox"
-          checked={layer.kinds.every((kind) => $store.enabledPoiKinds.includes(kind))}
-          onchange={() => toggleLayer(layer.kinds)}
+          disabled={$store.catalogStatus === 'unavailable'}
+          checked={layer.kinds.every((kind) => $store.catalog.enabledKinds.includes(kind))}
+          onchange={() => toggleLayer(layer)}
         />
         {layer.label}
       </label>
     {/each}
   </div>
+  {#if $store.catalogStatus === 'unavailable'}
+    <p class="layer-status" role="status">Catalog unavailable. Route planning remains available.</p>
+  {:else if $store.catalog.loading}
+    <p class="layer-status" role="status">Loading catalog places…</p>
+  {:else if $store.catalogOverCap}
+    <p class="layer-status" role="status">Zoom in to see more catalog places.</p>
+  {:else if $store.catalog.enabledKinds.length && !$store.catalog.places.length && !$store.catalog.error}
+    <p class="layer-status" role="status">No catalog places found in this view.</p>
+  {/if}
+  {#if $store.catalog.error}<p class="layer-error" role="alert">Catalog layer unavailable: {$store.catalog.error}</p>{/if}
   {#if $store.routePois?.zoom_in_required}<p class="layer-status" role="status">Zoom in to see route points.</p>{/if}
   {#if $store.poiError}<p class="layer-error" role="alert">Route layer unavailable: {$store.poiError}</p>{/if}
 </section>

@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from pound.catalog.metadata import CatalogMetadata
+
 
 class CanalConstraints(BaseModel):
     start: str
@@ -132,6 +134,96 @@ class RoutePoi(BaseModel):
 
 
 MAX_ROUTE_POI_COORDINATES = 10_000
+MAX_CATALOG_ROUTE_COORDINATES = MAX_ROUTE_POI_COORDINATES
+
+
+class CatalogQueryPolicyModel(BaseModel):
+    """Explicit proximity basis for a bounded catalog query."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    basis: Literal["route", "waterway", "none"]
+    radius_m: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_radius_for_basis(self):
+        if self.basis == "none" and self.radius_m is not None:
+            raise ValueError("none policy must not specify a radius")
+        if self.basis != "none" and self.radius_m is None:
+            raise ValueError(f"{self.basis} policy requires a radius")
+        return self
+
+
+class CatalogPlacesRequest(BaseModel):
+    """Strict, bounded input for independent OSM catalog queries."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    catalog_revision: str = Field(min_length=1)
+    kinds: list[str]
+    bounds: MapBounds
+    route_geometry: GeoJSONLineString | None = None
+    day_geometry: GeoJSONLineString | None = None
+    day: int | None = Field(gt=0, default=None)
+    policy: CatalogQueryPolicyModel
+
+    @field_validator("route_geometry", "day_geometry", mode="before")
+    @classmethod
+    def require_numeric_line_coordinates(cls, geometry):
+        if geometry is None:
+            return None
+        coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+        if isinstance(coordinates, (list, tuple)):
+            for coordinate in coordinates:
+                if not isinstance(coordinate, (list, tuple)) or len(coordinate) != 2:
+                    continue
+                if any(
+                    not isinstance(value, (int, float)) or isinstance(value, bool)
+                    for value in coordinate
+                ):
+                    raise ValueError("LineString coordinates must contain numbers")
+        return geometry
+
+    @field_validator("route_geometry", "day_geometry")
+    @classmethod
+    def require_line_coordinates(cls, geometry: GeoJSONLineString | None):
+        if geometry is None:
+            return None
+        if len(geometry.coordinates) < 2:
+            raise ValueError("LineString geometry must contain at least two coordinates")
+        for lon, lat in geometry.coordinates:
+            if not math.isfinite(lon) or not -180 <= lon <= 180:
+                raise ValueError("LineString longitude must be finite and within -180 through 180")
+            if not math.isfinite(lat) or not -90 <= lat <= 90:
+                raise ValueError("LineString latitude must be finite and within -90 through 90")
+        return geometry
+
+
+class CatalogPlaceResponse(BaseModel):
+    """A catalog place with request-scoped metric distances."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    identity: str
+    kind: str
+    name: str | None
+    coordinate: Coordinate
+    waterway_distance_m: float | None = Field(default=None, ge=0)
+    distance_to_full_route_m: float | None = Field(default=None, ge=0)
+    distance_to_selected_geometry_m: float | None = Field(default=None, ge=0)
+    metadata: CatalogMetadata
+
+
+class CatalogPlacesResponse(BaseModel):
+    """Bounded catalog results and selected-day query context."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    catalog_revision: str
+    places: list[CatalogPlaceResponse]
+    matching_count: int = Field(ge=0)
+    over_cap: bool
+    day: int | None = Field(gt=0, default=None)
 
 
 class RoutePoisRequest(BaseModel):

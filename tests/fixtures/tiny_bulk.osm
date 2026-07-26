@@ -26,6 +26,7 @@
   <node id="2010" lat="51.7509000" lon="-1.2609000" version="1"><tag k="amenity" v="drinking_water"/></node>
   <node id="2011" lat="51.7510000" lon="-1.2610000" version="1"><tag k="amenity" v="toilets"/></node>
   <node id="2012" lat="51.7511000" lon="-1.2611000" version="1"><tag k="amenity" v="shower"/></node>
+  <node id="2013" lat="51.7512000" lon="-1.2612000" version="1"><tag k="tourism" v="museum"/><tag k="name" v="Canal Museum"/></node>
   <node id="3001" lat="51.7520000" lon="-1.2630000" version="1"/><node id="3002" lat="51.7520000" lon="-1.2620000" version="1"/><node id="3003" lat="51.7530000" lon="-1.2620000" version="1"/><node id="3004" lat="51.7530000" lon="-1.2630000" version="1"/>
   <node id="3011" lat="51.7540000" lon="-1.2640000" version="1"/><node id="3012" lat="51.7540000" lon="-1.2620000" version="1"/><node id="3013" lat="51.7550000" lon="-1.2630000" version="1"/><node id="3014" lat="51.7560000" lon="-1.2620000" version="1"/><node id="3015" lat="51.7560000" lon="-1.2640000" version="1"/>
   <node id="3021" lat="51.7500000" lon="-1.2650000" version="1"/><node id="3022" lat="51.7510000" lon="-1.2640000" version="1"/>
@@ -53,6 +54,7 @@
   <way id="2103" version="1"><nd ref="3021"/><nd ref="3022"/><tag k="highway" v="footway"/><tag k="name" v="Access Path"/></way>
   <way id="2104" version="1"><nd ref="3021"/><tag k="shop" v="bakery"/></way>
   <way id="2105" version="1"><nd ref="3021"/><nd ref="3022"/><tag k="amenity" v="restaurant"/></way>
+  <way id="2106" version="1"><nd ref="3021"/><nd ref="3022"/><tag k="disused:amenity" v="pub"/><tag k="name" v="Closed Arms"/></way>
   <way id="2201" version="1"><nd ref="3031"/><nd ref="3032"/><nd ref="3033"/><nd ref="3034"/><nd ref="3031"/></way>
   <way id="2202" version="1"><nd ref="3041"/><nd ref="3042"/><nd ref="3043"/><nd ref="3044"/><nd ref="3041"/></way>
   <relation id="2301" version="1"><member type="way" ref="2201" role="outer"/><member type="way" ref="2202" role="inner"/><tag k="type" v="multipolygon"/><tag k="amenity" v="fuel"/><tag k="name" v="Fuel Island"/></relation>

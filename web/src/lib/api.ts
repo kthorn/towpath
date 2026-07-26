@@ -3,6 +3,9 @@ import type {
   CanalCandidatesResponse,
   CanalRouteRequest,
   CanalRouteResponse,
+  CatalogPlacesRequest,
+  CatalogPlacesResponse,
+  HealthResponse,
   PoundApiErrorDetail,
   RoutePoisRequest,
   RoutePoisResponse,
@@ -50,6 +53,12 @@ async function errorFromResponse(response: Response): Promise<PoundApiError> {
   });
 }
 
+async function getJson<T>(fetchFn: typeof fetch, url: string): Promise<T> {
+  const response = await fetchFn(url, { method: 'GET' });
+  if (!response.ok) throw await errorFromResponse(response);
+  return (await response.json()) as T;
+}
+
 async function postJson<T>(fetchFn: typeof fetch, url: string, body: unknown): Promise<T> {
   const response = await fetchFn(url, {
     method: 'POST',
@@ -63,6 +72,9 @@ async function postJson<T>(fetchFn: typeof fetch, url: string, body: unknown): P
 
 export function createPoundApi(fetchFn: typeof fetch = fetch) {
   return {
+    health(): Promise<HealthResponse> {
+      return getJson(fetchFn, '/api/health');
+    },
     canalCandidates(request: CanalCandidatesRequest): Promise<CanalCandidatesResponse> {
       return postJson(fetchFn, '/api/canal-candidates', request);
     },
@@ -71,6 +83,9 @@ export function createPoundApi(fetchFn: typeof fetch = fetch) {
     },
     routePois(request: RoutePoisRequest): Promise<RoutePoisResponse> {
       return postJson(fetchFn, '/api/route-pois', request);
+    },
+    catalogPlaces(request: CatalogPlacesRequest): Promise<CatalogPlacesResponse> {
+      return postJson(fetchFn, '/api/catalog-places', request);
     },
   };
 }

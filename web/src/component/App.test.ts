@@ -42,6 +42,11 @@ function setup(overrides: { unavailable?: boolean; mapReject?: boolean; sameNode
     enabledPoiKinds: [],
     routePois: null,
     poiError: null,
+    catalog: { enabledKinds: [], places: [], loading: false, error: null },
+    catalogRevision: null,
+    catalogStatus: 'unknown',
+    catalogMatchingCount: 0,
+    catalogOverCap: false,
   };
   const inner = writable(state);
   const calls: Array<{ slot: EndpointSlot; place: SelectedPlace | { lat: number; lon: number } }> = [];
@@ -50,13 +55,14 @@ function setup(overrides: { unavailable?: boolean; mapReject?: boolean; sameNode
     setEndpointCoordinate: vi.fn(async (slot, place) => { calls.push({ slot, place }); }),
     selectCandidate: vi.fn(async () => {}), confirmGeometricFallback: vi.fn(),
     planCanalRoute: vi.fn(async () => route),
-    togglePoiKind: vi.fn(), selectDay: vi.fn(), refreshRoutePois: vi.fn(async () => {}), setMapView: vi.fn(),
+    togglePoiKind: vi.fn(), selectDay: vi.fn(), refreshRoutePois: vi.fn(async () => {}),
+    toggleCatalogKind: vi.fn(), toggleCatalogKinds: vi.fn(), refreshCatalogPlaces: vi.fn(async () => {}), setMapView: vi.fn(),
   };
   const selects: Array<(place: SelectedPlace) => void> = [];
   const mapClick = { callback: (_coordinate: { lat: number; lon: number }) => {} };
   const map: MapView = {
-    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
-    clearLand: vi.fn(), destroy: vi.fn(),
+    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), catalogPlaces: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+    clearLand: vi.fn(), closeInfoWindow: vi.fn(), destroy: vi.fn(),
     onMapClick: vi.fn((callback) => { mapClick.callback = callback; return vi.fn(); }),
     onViewportIdle: vi.fn(() => vi.fn()),
   };
@@ -224,7 +230,7 @@ describe('trip planning interface', () => {
     expect(screen.getAllByText(/10 min.*2.4 km/i)).toHaveLength(2);
   });
 
-  it('toggles POI layers and selects a route day without replanning', async () => {
+  it('toggles catalog layers and selects a route day without replanning', async () => {
     const fixture = setup();
     const inner = writable(get(fixture.store));
     const selectDay = vi.fn((day: number | null) => {
@@ -233,12 +239,12 @@ describe('trip planning interface', () => {
     const store: TripStore = { ...fixture.store, subscribe: inner.subscribe, selectDay };
     render(App, { props: { dependencies: { ...fixture.dependencies, store } } });
 
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Pubs' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Hospitality' }));
     const dayButton = screen.getByRole('button', { name: /Day 1/i });
     await fireEvent.click(dayButton);
     await fireEvent.click(dayButton);
 
-    expect(store.togglePoiKind).toHaveBeenCalledWith('pub');
+    expect(store.toggleCatalogKinds).toHaveBeenCalledWith(['pub', 'cafe', 'restaurant'], { basis: 'route', radius_m: 2_000 });
     expect(store.selectDay).toHaveBeenNthCalledWith(1, 1);
     expect(store.selectDay).toHaveBeenNthCalledWith(2, null);
     expect(store.planCanalRoute).not.toHaveBeenCalled();
@@ -302,12 +308,12 @@ describe('trip planning interface', () => {
 
   it('tears down and recreates the map across settings round trip', async () => {
     const firstMap: MapView = {
-      marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
-      clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onViewportIdle: vi.fn(() => vi.fn()),
+      marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), catalogPlaces: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+      clearLand: vi.fn(), closeInfoWindow: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onViewportIdle: vi.fn(() => vi.fn()),
     };
     const secondMap: MapView = {
-      marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
-      clearLand: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onViewportIdle: vi.fn(() => vi.fn()),
+      marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), catalogPlaces: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+      clearLand: vi.fn(), closeInfoWindow: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onViewportIdle: vi.fn(() => vi.fn()),
     };
     let loadCount = 0;
     const loadMapView = vi.fn(async () => {

@@ -1,17 +1,24 @@
 import pickle
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import networkx as nx
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from pound.catalog.artifact import prepare_catalog, write_catalog
+from pound.catalog.spatial import (
+    MAX_CATALOG_QUERY_WORK,
+    MAX_CATALOG_VIEWPORT_SPAN_DEGREES,
+    CatalogSpatialIndex,
+)
 from pound.graph.artifact import InvalidArtifactError, load_artifact, save_artifact
 from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.app import _load_web_artifact, create_app
 from pound.web.config import WebSettings
-from tests.web.conftest import artifact_metadata
+from tests.web.conftest import artifact_metadata, catalog_place
 
 
 def _settings(artifact_path: Path, static_dir: Path) -> WebSettings:
@@ -36,15 +43,27 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("POUND_CANDIDATE_POOL_SIZE", "30")
     monkeypatch.setenv("POUND_GOOGLE_DESTINATION_LIMIT", "12")
     monkeypatch.setenv("POUND_MINIMUM_CANDIDATE_SPACING_M", "125.5")
+    monkeypatch.setenv("POUND_CATALOG_PATH", "/tmp/catalog.pkl")
+    monkeypatch.setenv("POUND_CATALOG_MAX_KINDS", "4")
+    monkeypatch.setenv("POUND_CATALOG_MAX_VIEWPORT_SPAN_DEG", "3.5")
+    monkeypatch.setenv("POUND_CATALOG_MAX_RADIUS_M", "1500")
+    monkeypatch.setenv("POUND_CATALOG_MAX_ROUTE_VERTICES", "2000")
+    monkeypatch.setenv("POUND_CATALOG_QUERY_WORK_BUDGET", "5000")
 
     settings = WebSettings.from_env()
 
     assert settings == WebSettings(
         artifact_path=Path("/tmp/graph.pkl"),
         static_dir=Path("/tmp/client"),
+        catalog_path=Path("/tmp/catalog.pkl"),
         candidate_pool_size=30,
         google_destination_limit=12,
         minimum_candidate_spacing_m=125.5,
+        catalog_max_kinds=4,
+        catalog_max_viewport_span_deg=3.5,
+        catalog_max_radius_m=1500,
+        catalog_max_route_vertices=2000,
+        catalog_query_work_budget=5000,
     )
 
 
@@ -54,6 +73,13 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
         ("candidate_pool_size", 0),
         ("google_destination_limit", -1),
         ("minimum_candidate_spacing_m", -0.1),
+        ("catalog_max_kinds", 0),
+        ("catalog_max_viewport_span_deg", 0),
+        ("catalog_max_viewport_span_deg", MAX_CATALOG_VIEWPORT_SPAN_DEGREES + 0.1),
+        ("catalog_max_radius_m", -1),
+        ("catalog_max_route_vertices", 0),
+        ("catalog_query_work_budget", 0),
+        ("catalog_query_work_budget", MAX_CATALOG_QUERY_WORK + 1),
     ],
 )
 def test_settings_reject_invalid_tuning(field: str, value: int | float, tmp_path: Path):
@@ -152,12 +178,90 @@ def test_startup_attaches_artifact_state_and_loads_once(tmp_path: Path):
             assert client.get("/api/health").json() == {
                 "status": "healthy",
                 "artifact_revision": "revision-7",
+                "catalog_revision": None,
+                "catalog_status": "unavailable",
             }
             client.get("/api/health")
 
     load.assert_called_once_with(artifact)
     build_index.assert_called_once_with(app.state.graph)
     build_poi_index.assert_called_once_with(app.state.pois)
+    assert app.state.catalog_status == "unavailable"
+    assert app.state.catalog_revision is None
+    assert app.state.catalog_spatial_index is None
+
+
+def test_startup_loads_catalog_after_routing_artifact(tmp_path: Path):
+    artifact_path = tmp_path / "graph.pkl"
+    catalog_path = tmp_path / "catalog.pkl"
+    save_artifact(nx.Graph(), [], artifact_path, artifact_metadata("route-revision"))
+    catalog = prepare_catalog(
+        (catalog_place("pub", 1, 51.0, -1.0),),
+        {
+            "source": "catalog-test",
+            "fetched_at": "2026-07-11T00:00:00Z",
+            "built_at": "2026-07-12T00:00:00Z",
+            "inventory_summary": {},
+            "build_summary": {},
+        },
+    )
+    write_catalog(catalog, catalog_path)
+    settings = WebSettings(
+        artifact_path=artifact_path,
+        static_dir=tmp_path / "static",
+        catalog_path=catalog_path,
+    )
+
+    with TestClient(create_app(settings)) as client:
+        app = cast(FastAPI, client.app)
+        assert app.state.catalog_status == "available"
+        assert app.state.catalog_revision == catalog.metadata["catalog_revision"]
+        assert isinstance(app.state.catalog_spatial_index, CatalogSpatialIndex)
+        assert client.get("/api/health").json() == {
+            "status": "healthy",
+            "artifact_revision": "route-revision",
+            "catalog_revision": catalog.metadata["catalog_revision"],
+            "catalog_status": "available",
+        }
+
+
+def test_corrupt_catalog_degrades_health_without_breaking_routing_startup(tmp_path: Path):
+    artifact_path = tmp_path / "graph.pkl"
+    catalog_path = tmp_path / "catalog.pkl"
+    save_artifact(nx.Graph(), [], artifact_path, artifact_metadata("route-revision"))
+    catalog_path.write_text("not a catalog")
+    settings = WebSettings(
+        artifact_path=artifact_path,
+        static_dir=tmp_path / "static",
+        catalog_path=catalog_path,
+    )
+
+    with TestClient(create_app(settings)) as client:
+        app = cast(FastAPI, client.app)
+        assert app.state.artifact_revision == "route-revision"
+        assert app.state.catalog_status == "unavailable"
+        assert app.state.catalog_revision is None
+        assert client.get("/api/health").json() == {
+            "status": "degraded",
+            "artifact_revision": "route-revision",
+            "catalog_revision": None,
+            "catalog_status": "unavailable",
+        }
+
+
+def test_missing_catalog_degrades_health_without_breaking_routing_startup(tmp_path: Path):
+    artifact_path = tmp_path / "graph.pkl"
+    catalog_path = tmp_path / "missing-catalog.pkl"
+    save_artifact(nx.Graph(), [], artifact_path, artifact_metadata("route-revision"))
+    settings = WebSettings(
+        artifact_path=artifact_path,
+        static_dir=tmp_path / "static",
+        catalog_path=catalog_path,
+    )
+
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/health").json()["status"] == "degraded"
+        assert client.get("/api/health").json()["catalog_status"] == "unavailable"
 
 
 def test_startup_does_not_mutate_loaded_artifact_fields(tmp_path: Path):

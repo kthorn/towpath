@@ -1,7 +1,7 @@
 import type { MapBounds } from '../types';
 import type { MapView, PlaceSearch, TransferRouter } from './contracts';
 import type { GoogleMapsModules } from './loader';
-import { createGoogleMapView, type MapFacade } from './map';
+import { createGoogleMapView, type MapFacade, type MarkerEvent } from './map';
 import { createGooglePlaceSearch, type PlacesFacade } from './places';
 import { createGoogleTransferRouter, type RoutesFacade } from './routes';
 
@@ -10,6 +10,7 @@ type Constructor<T, A extends unknown[] = [Record<string, unknown>]> = new (...a
 interface MapsModule {
   Map: Constructor<unknown, [HTMLElement, Record<string, unknown>]>;
   Polyline: Constructor<unknown>;
+  InfoWindow: Constructor<unknown, []>;
 }
 
 interface RuntimeMap {
@@ -19,6 +20,18 @@ interface RuntimeMap {
 
 interface MarkerModule {
   AdvancedMarkerElement: Constructor<unknown>;
+}
+
+interface RuntimeMarker {
+  addEventListener(event: string, callback: (event: unknown) => void): void;
+  removeEventListener(event: string, callback: (event: unknown) => void): void;
+}
+
+interface RuntimeInfoWindow {
+  setContent(content: Node | string | null): void;
+  open(options: { map: unknown; anchor?: unknown }): void;
+  close(): void;
+  addListener(event: 'closeclick', callback: () => void): { remove(): void };
 }
 
 interface PlacesModule {
@@ -89,7 +102,25 @@ function createMapFacade(modules: RuntimeModules): MapFacade {
       return new modules.maps.Map(element, options) as ReturnType<MapFacade['createMap']>;
     },
     createMarker(options) {
-      return new modules.marker.AdvancedMarkerElement(options) as ReturnType<MapFacade['createMarker']>;
+      return new modules.marker.AdvancedMarkerElement({
+        ...options,
+        gmpClickable: options.gmpClickable ?? true,
+      }) as ReturnType<MapFacade['createMarker']>;
+    },
+    addMarkerListener(marker, event, callback) {
+      const runtimeMarker = marker as unknown as RuntimeMarker;
+      const runtimeEvent = event === 'click' ? 'gmp-click' : event;
+      const runtimeCallback = (eventValue: unknown) => callback(eventValue as MarkerEvent);
+      runtimeMarker.addEventListener(runtimeEvent, runtimeCallback);
+      return {
+        remove() {
+          runtimeMarker.removeEventListener(runtimeEvent, runtimeCallback);
+        },
+      };
+    },
+    createInfoWindow() {
+      const infoWindow = new modules.maps.InfoWindow() as RuntimeInfoWindow;
+      return infoWindow as ReturnType<MapFacade['createInfoWindow']>;
     },
     createPolyline(options) {
       return new modules.maps.Polyline(options) as ReturnType<MapFacade['createPolyline']>;
