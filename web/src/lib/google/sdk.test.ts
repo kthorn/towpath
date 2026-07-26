@@ -4,21 +4,22 @@ import { createGoogleAdapters } from './sdk';
 
 describe('Google SDK production bridge', () => {
   it('wires Maps, Places, and AdvancedMarkerElement constructors', () => {
-    const MapCtor = vi.fn(function () { return { addListener: vi.fn(), fitBounds: vi.fn() }; });
-    const PolylineCtor = vi.fn(function (options) { return { ...options, setMap: vi.fn() }; });
-    const MarkerCtor = vi.fn(function (options) { return { ...options }; });
-    const AutocompleteCtor = vi.fn(function () { return { addListener: vi.fn(), getPlace: vi.fn() }; });
+    const MapCtor = vi.fn(() => ({ addListener: vi.fn(), fitBounds: vi.fn() }));
+    const PolylineCtor = vi.fn((options) => ({ ...options, setMap: vi.fn() }));
+    const MarkerCtor = vi.fn((options) => ({ ...options }));
+    const PlaceAutocompleteElementCtor = vi.fn(() => ({ addEventListener: vi.fn(), removeEventListener: vi.fn(), remove: vi.fn() }));
     const adapters = createGoogleAdapters(
-      { maps: { Map: MapCtor, Polyline: PolylineCtor }, marker: { AdvancedMarkerElement: MarkerCtor }, places: { Autocomplete: AutocompleteCtor }, routes: { Route: { computeRoutes: vi.fn() }, RouteMatrix: { computeRouteMatrix: vi.fn() } } },
+      { maps: { Map: MapCtor, Polyline: PolylineCtor }, marker: { AdvancedMarkerElement: MarkerCtor }, places: { PlaceAutocompleteElement: PlaceAutocompleteElementCtor }, routes: { Route: { computeRoutes: vi.fn() }, RouteMatrix: { computeRouteMatrix: vi.fn() } } },
       { mapId: 'pound-map' },
     );
 
-    adapters.placeSearch.attach(document.createElement('input'), vi.fn());
+    adapters.placeSearch.attach(document.createElement('div'), vi.fn());
     const view = adapters.createMapView(document.createElement('div'));
     view.marker('origin', { lat: 51, lon: -1 });
     view.land('origin', { path: [{ lat: 51, lon: -1 }], durationSeconds: 1, distanceMeters: 2 });
 
-    expect(AutocompleteCtor).toHaveBeenCalledOnce();
+    expect(PlaceAutocompleteElementCtor).toHaveBeenCalledOnce();
+    expect(PlaceAutocompleteElementCtor).toHaveBeenCalledWith();
     expect(MapCtor).toHaveBeenCalledWith(expect.any(HTMLElement), { mapId: 'pound-map', center: { lat: 52.7, lng: -1.5 }, zoom: 6 });
     expect(MarkerCtor).toHaveBeenCalledOnce();
     expect(PolylineCtor).toHaveBeenCalledOnce();

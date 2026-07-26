@@ -91,7 +91,7 @@ plans a canal route; Google land-transfer overlays may remain unavailable.
 
 ### Google Maps safety and operations
 
-Enable Maps JavaScript API, Places API, and Routes API. Restrict the browser key
+Enable Maps JavaScript API, Places API (New), and Routes API. Restrict the browser key
 by HTTP referrer to the exact local and production origins and restrict it to
 those APIs. Use a project map ID. Set conservative per-API quotas, billing
 budgets and alerts, and monitor request/error dashboards before sharing a

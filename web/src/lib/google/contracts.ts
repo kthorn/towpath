@@ -37,7 +37,7 @@ export interface LandRoute {
 }
 
 export interface PlaceSearch {
-  attach(input: HTMLInputElement, onSelect: (place: SelectedPlace) => void, onUnavailable?: (error: unknown) => void): () => void;
+  attach(container: HTMLElement, onSelect: (place: SelectedPlace) => void, onUnavailable?: (error: unknown) => void): () => void;
 }
 
 export interface TransferRouter {

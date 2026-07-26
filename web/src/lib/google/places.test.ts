@@ -1,100 +1,190 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createGooglePlaceSearch } from './places';
+import { createGooglePlaceSearch, type PlacesFacade } from './places';
+
+type PlacePrediction = { toPlace: () => unknown };
+type SelectListener = (event: { placePrediction?: PlacePrediction }) => Promise<void>;
+
+function createAutocompleteHarness() {
+  const element = document.createElement('div') as unknown as ReturnType<PlacesFacade['createAutocomplete']>;
+  let select!: SelectListener;
+  let error!: (event: Event) => void;
+  const addEventListener = vi.fn((event: string, listener: unknown) => {
+    if (event === 'gmp-select') select = listener as SelectListener;
+    if (event === 'gmp-error') error = listener as (event: Event) => void;
+  });
+  const removeEventListener = vi.fn();
+  element.addEventListener = addEventListener as typeof element.addEventListener;
+  element.removeEventListener = removeEventListener as typeof element.removeEventListener;
+  element.remove = vi.fn();
+  return {
+    element,
+    addEventListener,
+    removeEventListener,
+    remove: element.remove as ReturnType<typeof vi.fn>,
+    select: (event: { placePrediction?: PlacePrediction }) => select(event),
+    error: (event: Event) => error(event),
+  };
+}
+
+const fields = ['displayName', 'formattedAddress', 'location'];
+
+function createPlace(overrides: Record<string, unknown> = {}) {
+  return {
+    displayName: 'Bletchley Park',
+    formattedAddress: 'Sherwood Drive',
+    location: { lat: () => 51.997, lng: () => -0.74 },
+    fetchFields: vi.fn(async ({ fields: requested }: { fields: string[] }) => {
+      expect(requested).toEqual(fields);
+    }),
+    ...overrides,
+  };
+}
 
 describe('Google places adapter', () => {
-  it('converts a selected place and removes its listener on cleanup', () => {
-    let select!: () => void;
-    const remove = vi.fn();
+  it('fetches fields and converts a selected place with placeholder and label', async () => {
+    const harness = createAutocompleteHarness();
+    const place = createPlace();
+    const prediction = { toPlace: vi.fn(() => place) };
     const onSelect = vi.fn();
-    const search = createGooglePlaceSearch({
-      createAutocomplete(_input, options) {
-        expect(options.fields).toEqual(['name', 'formatted_address', 'geometry.location']);
-        return {
-          addListener(_event, callback) {
-            select = callback;
-            return { remove };
-          },
-          getPlace: () => ({
-            name: 'Bletchley Park',
-            formatted_address: 'Sherwood Drive',
-            geometry: { location: { lat: () => 51.997, lng: () => -0.74 } },
-          }),
-        };
-      },
-    });
+    const onUnavailable = vi.fn();
+    const search = createGooglePlaceSearch({ createAutocomplete: () => harness.element });
+    const container = document.createElement('div');
+    container.setAttribute('aria-label', 'Search for a place');
 
-    const cleanup = search.attach(document.createElement('input'), onSelect);
-    select();
-    cleanup();
+    const cleanup = search.attach(container, onSelect, onUnavailable);
+    await harness.select({ placePrediction: prediction });
 
+    expect(container.firstChild).toBe(harness.element);
+    expect(harness.element.placeholder).toBe('Search for a place');
+    expect(harness.element).toHaveAttribute('aria-label', 'Search for a place');
+    expect(prediction.toPlace).toHaveBeenCalledOnce();
+    expect(place.fetchFields).toHaveBeenCalledWith({ fields });
     expect(onSelect).toHaveBeenCalledWith({
       name: 'Bletchley Park',
       address: 'Sherwood Drive',
       coordinate: { lat: 51.997, lon: -0.74 },
     });
-    expect(remove).toHaveBeenCalledOnce();
+    expect(onUnavailable).not.toHaveBeenCalled();
+    cleanup();
   });
 
-  it('ignores a place without geometry safely', () => {
-    let select!: () => void;
+  it('ignores selections without a prediction or location', async () => {
+    const harness = createAutocompleteHarness();
+    const place = createPlace({ location: undefined });
+    const prediction = { toPlace: vi.fn(() => place) };
     const onSelect = vi.fn();
-    const search = createGooglePlaceSearch({
-      createAutocomplete() {
-        return {
-          addListener(_event, callback) {
-            select = callback;
-            return { remove() {} };
-          },
-          getPlace: () => ({ name: 'Text-only result' }),
-        };
-      },
-    });
+    const search = createGooglePlaceSearch({ createAutocomplete: () => harness.element });
+    const cleanup = search.attach(document.createElement('div'), onSelect);
 
-    const cleanup = search.attach(document.createElement('input'), onSelect);
-    expect(() => select()).not.toThrow();
+    await harness.select({});
+    await harness.select({ placePrediction: prediction });
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(place.fetchFields).toHaveBeenCalledWith({ fields });
+    cleanup();
+  });
+
+  it('only selects the latest place when field fetches resolve out of order', async () => {
+    const harness = createAutocompleteHarness();
+    let resolveFirst!: () => void;
+    let resolveSecond!: () => void;
+    const firstPlace = createPlace({
+      displayName: 'First place',
+      fetchFields: vi.fn(() => new Promise<void>((resolve) => { resolveFirst = resolve; })),
+    });
+    const secondPlace = createPlace({
+      displayName: 'Second place',
+      fetchFields: vi.fn(() => new Promise<void>((resolve) => { resolveSecond = resolve; })),
+    });
+    const onSelect = vi.fn();
+    const search = createGooglePlaceSearch({ createAutocomplete: () => harness.element });
+    const cleanup = search.attach(document.createElement('div'), onSelect);
+
+    const firstSelection = harness.select({ placePrediction: { toPlace: () => firstPlace } });
+    const secondSelection = harness.select({ placePrediction: { toPlace: () => secondPlace } });
+    resolveSecond();
+    await secondSelection;
+    resolveFirst();
+    await firstSelection;
+
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: 'Second place' }));
+    cleanup();
+  });
+
+  it('reports a failed field fetch as unavailable', async () => {
+    const harness = createAutocompleteHarness();
+    const failure = new Error('fetch failed');
+    const place = createPlace({ fetchFields: vi.fn().mockRejectedValue(failure) });
+    const onSelect = vi.fn();
+    const onUnavailable = vi.fn();
+    const search = createGooglePlaceSearch({ createAutocomplete: () => harness.element });
+    const cleanup = search.attach(document.createElement('div'), onSelect, onUnavailable);
+
+    await harness.select({ placePrediction: { toPlace: () => place } });
+
+    expect(onUnavailable).toHaveBeenCalledWith(failure);
     expect(onSelect).not.toHaveBeenCalled();
     cleanup();
   });
 
-  it('exposes legacy Google predictions semantically and restores owned attributes', async () => {
-    const search = createGooglePlaceSearch({
-      createAutocomplete() {
-        return {
-          addListener() { return { remove() {} }; },
-          getPlace: () => ({}),
-        };
-      },
-    });
-    const input = document.createElement('input');
-    input.setAttribute('role', 'searchbox');
-    document.body.append(input);
+  it('reports gmp-error as unavailable', () => {
+    const harness = createAutocompleteHarness();
+    const onUnavailable = vi.fn();
+    const search = createGooglePlaceSearch({ createAutocomplete: () => harness.element });
+    const cleanup = search.attach(document.createElement('div'), vi.fn(), onUnavailable);
 
-    const cleanup = search.attach(input, vi.fn());
-    expect(input).toHaveAttribute('role', 'combobox');
-    expect(input).toHaveAttribute('aria-autocomplete', 'list');
-    expect(input).toHaveAttribute('aria-expanded', 'false');
+    harness.error(new Event('gmp-error'));
 
-    const container = document.createElement('div');
-    container.className = 'pac-container';
-    const prediction = document.createElement('div');
-    prediction.className = 'pac-item';
-    container.append(prediction);
-    document.body.append(container);
-    await vi.waitFor(() => expect(prediction).toHaveAttribute('role', 'option'));
+    expect(onUnavailable).toHaveBeenCalledWith(new Error('Google Places autocomplete failed'));
+    cleanup();
+  });
 
-    expect(container).toHaveAttribute('role', 'listbox');
-    expect(input).toHaveAttribute('aria-expanded', 'true');
-    prediction.remove();
-    await vi.waitFor(() => expect(input).toHaveAttribute('aria-expanded', 'false'));
+  it('does not turn a consumer selection error into an unavailable error', async () => {
+    const harness = createAutocompleteHarness();
+    const place = createPlace();
+    const callbackError = new Error('consumer failed');
+    const onSelect = vi.fn(() => { throw callbackError; });
+    const onUnavailable = vi.fn();
+    const search = createGooglePlaceSearch({ createAutocomplete: () => harness.element });
+    const cleanup = search.attach(document.createElement('div'), onSelect, onUnavailable);
+
+    await expect(harness.select({ placePrediction: { toPlace: () => place } })).rejects.toThrow(callbackError);
+
+    expect(onUnavailable).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it('removes both listeners and the element during cleanup', () => {
+    const harness = createAutocompleteHarness();
+    const search = createGooglePlaceSearch({ createAutocomplete: () => harness.element });
+    const cleanup = search.attach(document.createElement('div'), vi.fn(), vi.fn());
+
     cleanup();
 
-    expect(input).toHaveAttribute('role', 'searchbox');
-    expect(input).not.toHaveAttribute('aria-autocomplete');
-    expect(input).not.toHaveAttribute('aria-expanded');
-    expect(container).not.toHaveAttribute('role');
-    expect(prediction).not.toHaveAttribute('role');
-    container.remove();
-    input.remove();
+    expect(harness.removeEventListener).toHaveBeenNthCalledWith(1, 'gmp-select', expect.any(Function));
+    expect(harness.removeEventListener).toHaveBeenNthCalledWith(2, 'gmp-error', expect.any(Function));
+    expect(harness.remove).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a pending selection after cleanup', async () => {
+    const harness = createAutocompleteHarness();
+    let resolveFields!: () => void;
+    const place = createPlace({
+      fetchFields: vi.fn(() => new Promise<void>((resolve) => { resolveFields = resolve; })),
+    });
+    const onSelect = vi.fn();
+    const onUnavailable = vi.fn();
+    const search = createGooglePlaceSearch({ createAutocomplete: () => harness.element });
+    const cleanup = search.attach(document.createElement('div'), onSelect, onUnavailable);
+
+    const pendingSelection = harness.select({ placePrediction: { toPlace: () => place } });
+    cleanup();
+    resolveFields();
+    await pendingSelection;
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onUnavailable).not.toHaveBeenCalled();
   });
 });
