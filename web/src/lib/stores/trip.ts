@@ -167,14 +167,16 @@ export function createTripStore(dependencies: {
     const existing = state[slot].transferWarning;
     updateEndpoint(slot, { transferWarning: existing ? `${existing} ${warning}` : warning });
   };
-  const mapCall = (slot: EndpointSlot, operation: (() => void) | undefined) => {
+  const mapCall = (slot: EndpointSlot, operation: (() => void) | undefined, reportFailure = true) => {
     if (!operation) return;
-    try { operation(); } catch (error) { warn(slot, `Map display failed: ${message(error)}`); }
+    try { operation(); } catch (error) {
+      if (reportFailure) warn(slot, `Map display failed: ${message(error)}`);
+    }
   };
   const drawNetwork = (view: MapView) => {
     if (!networkLines) return;
     mapCall('origin', () => view.network(networkLines!));
-    mapCall('origin', () => view.fitNetwork());
+    if (!state.canalRoute) mapCall('origin', () => view.fitNetwork());
   };
   const loadNetwork = (view: MapView) => {
     if (networkLines) {
@@ -596,16 +598,16 @@ export function createTripStore(dependencies: {
       networkError,
     });
     for (const slot of ['origin', 'destination'] as const) {
-      mapCall(slot, () => mapView?.marker(slot, null));
-      mapCall(slot, () => mapView?.candidates(slot, []));
-      clearLand(slot);
+      mapCall(slot, () => mapView?.marker(slot, null), false);
+      mapCall(slot, () => mapView?.candidates(slot, []), false);
+      mapCall(slot, () => mapView?.clearLand(slot), false);
     }
-    mapCall('origin', () => mapView?.canal(null));
-    mapCall('origin', () => mapView?.day?.(null));
-    mapCall('origin', () => mapView?.locks?.([]));
-    mapCall('origin', () => mapView?.pois?.([]));
-    mapCall('origin', () => mapView?.catalogPlaces([]));
-    if (networkLines) mapCall('origin', () => mapView?.fitNetwork());
+    mapCall('origin', () => mapView?.canal(null), false);
+    mapCall('origin', () => mapView?.day?.(null), false);
+    mapCall('origin', () => mapView?.locks?.([]), false);
+    mapCall('origin', () => mapView?.pois?.([]), false);
+    mapCall('origin', () => mapView?.catalogPlaces([]), false);
+    if (networkLines) mapCall('origin', () => mapView?.fitNetwork(), false);
   }
 
   if (poundApi.health) void catalogHealth().catch(() => {});

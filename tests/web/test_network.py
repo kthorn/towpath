@@ -26,6 +26,7 @@ def test_prepare_network_geometry_preserves_branches_and_geojson_order(graph):
     assert any((-1.0, 51.0) in line.coordinates for line in lines)
     assert any((-1.1, 51.1) in line.coordinates for line in lines)
     assert any((-1.2, 51.1) in line.coordinates for line in lines)
+    assert any((-1.1, 51.2) in line.coordinates for line in lines)
 
 
 def test_prepare_network_geometry_respects_vertex_ceiling_and_endpoints():

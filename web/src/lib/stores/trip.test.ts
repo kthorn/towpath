@@ -82,6 +82,25 @@ describe('trip store', () => {
     expect(map.fitNetwork).toHaveBeenCalledOnce();
   });
 
+  it('draws deferred network lines without refitting after a route fits the map', async () => {
+    let resolveNetwork!: (network: CanalNetworkResponse) => void;
+    const network = { artifact_revision: 'r1', lines: [{ type: 'LineString' as const, coordinates: [[-1, 51], [-2, 52]] as [number, number][] }] };
+    const map = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn(), canal: vi.fn() } as unknown as MapView;
+    const canalNetwork = vi.fn(() => new Promise<CanalNetworkResponse>((resolve) => { resolveNetwork = resolve; }));
+    const { store } = setup({ map, canalNetwork });
+
+    store.setMapView(map);
+    await vi.waitFor(() => expect(canalNetwork).toHaveBeenCalledOnce());
+    await store.setEndpointCoordinate('origin', place('origin'));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    await store.planCanalRoute({});
+    expect(map.canal).toHaveBeenCalledWith(canal.geometry);
+
+    resolveNetwork(network);
+    await vi.waitFor(() => expect(map.network).toHaveBeenCalledWith(network.lines));
+    expect(map.fitNetwork).not.toHaveBeenCalled();
+  });
+
   it('replays cached network lines without a second API call', async () => {
     const network = { artifact_revision: 'r1', lines: [{ type: 'LineString' as const, coordinates: [[-1, 51], [-2, 52]] as [number, number][] }] };
     const canalNetwork = vi.fn(async () => network);
@@ -169,6 +188,7 @@ describe('trip store', () => {
 
     expect(() => store.reset()).not.toThrow();
     expect(get(store).origin.place).toBeNull();
+    expect(get(store).origin.transferWarning).toBeNull();
   });
 
   it('replays hydrated trip state when a map view attaches later', async () => {

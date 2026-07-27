@@ -32,6 +32,40 @@ describe('Google SDK production bridge', () => {
     expect(PolylineCtor).toHaveBeenCalledOnce();
   });
 
+  it('fits a ceiling-sized network without spreading engine-limit arguments', () => {
+    const fitBounds = vi.fn();
+    const MapCtor = vi.fn(() => ({ addListener: vi.fn(), fitBounds }));
+    const PolylineCtor = vi.fn((options) => ({ ...options, setMap: vi.fn() }));
+    const InfoWindowCtor = vi.fn(() => ({
+      setContent: vi.fn(), open: vi.fn(), close: vi.fn(), addListener: vi.fn(() => ({ remove: vi.fn() })),
+    }));
+    const adapters = createGoogleAdapters({
+      maps: { Map: MapCtor, Polyline: PolylineCtor, InfoWindow: InfoWindowCtor },
+      marker: {},
+      places: {},
+      routes: {},
+    });
+    const points = Array.from({ length: 100_000 }, (_, index) => [-index - 1, index] as [number, number]);
+    const max = vi.spyOn(Math, 'max').mockImplementation((...values) => {
+      if (values.length > 10) throw new RangeError('too many arguments');
+      return values.length ? values.reduce((highest, value) => highest > value ? highest : value) : -Infinity;
+    });
+    const min = vi.spyOn(Math, 'min').mockImplementation((...values) => {
+      if (values.length > 10) throw new RangeError('too many arguments');
+      return values.length ? values.reduce((lowest, value) => lowest < value ? lowest : value) : Infinity;
+    });
+
+    try {
+      const view = adapters.createMapView(document.createElement('div'));
+      view.network([{ type: 'LineString', coordinates: points }]);
+      expect(() => view.fitNetwork()).not.toThrow();
+      expect(fitBounds).toHaveBeenCalledWith({ north: 99_999, south: 0, east: -1, west: -100_000 });
+    } finally {
+      max.mockRestore();
+      min.mockRestore();
+    }
+  });
+
   it('bridges Advanced Marker events and apex-anchored lock content to Maps primitives', () => {
     const markerEvents: Array<[string, unknown]> = [];
     const addEventListener = vi.fn((event, callback) => markerEvents.push([event, callback]));

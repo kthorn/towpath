@@ -26,6 +26,10 @@
     }
     catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
   }
+  function reset() {
+    error = '';
+    onReset();
+  }
 </script>
 
 <form novalidate onsubmit={(event) => { event.preventDefault(); submit(); }}>
@@ -36,7 +40,7 @@
   </div>
   <div class="constraint-actions">
     <button type="submit">Plan canal route</button>
-    <button type="button" onclick={onReset}>Reset trip</button>
+    <button type="button" onclick={reset}>Reset trip</button>
   </div>
   {#if error}<p role="alert">{error}</p>{/if}
 </form>

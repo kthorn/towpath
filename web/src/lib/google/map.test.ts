@@ -179,8 +179,8 @@ describe('Google map adapter', () => {
 
     view.network(lines);
     expect(facade.createPolyline).toHaveBeenCalledTimes(2);
-    expect(polylines[0].options).toMatchObject({ strokeColor: '#0e7490', strokeWeight: 3 });
-    expect(polylines[1].options).toMatchObject({ strokeColor: '#0e7490', strokeWeight: 3 });
+    expect(polylines[0].options).toMatchObject({ strokeColor: '#0e7490', strokeWeight: 3, strokeOpacity: 0.55 });
+    expect(polylines[1].options).toMatchObject({ strokeColor: '#0e7490', strokeWeight: 3, strokeOpacity: 0.55 });
 
     view.network(replacement);
     expect(polylines[0].setMap).toHaveBeenCalledWith(null);

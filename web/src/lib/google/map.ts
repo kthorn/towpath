@@ -69,6 +69,7 @@ export interface MapFacade {
     path: GoogleLatLngLiteral[];
     strokeColor: string;
     strokeWeight: number;
+    strokeOpacity?: number;
   }): PolylineInstance;
   fitBounds(map: MapInstance, points: GoogleLatLngLiteral[]): void;
   getBounds(map: MapInstance): MapBounds | undefined;
@@ -460,6 +461,7 @@ export function createGoogleMapView(
           path: geoJsonToGooglePath(line),
           strokeColor: '#0e7490',
           strokeWeight: 3,
+          strokeOpacity: 0.55,
         }));
       }
     },

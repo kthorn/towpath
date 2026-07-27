@@ -127,14 +127,17 @@ function createMapFacade(modules: RuntimeModules): MapFacade {
     },
     fitBounds(map, points) {
       if (!points.length) return;
-      const latitudes = points.map(({ lat }) => lat);
-      const longitudes = points.map(({ lng }) => lng);
-      (map as unknown as RuntimeMap).fitBounds({
-        north: Math.max(...latitudes),
-        south: Math.min(...latitudes),
-        east: Math.max(...longitudes),
-        west: Math.min(...longitudes),
-      });
+      let north = -Infinity;
+      let south = Infinity;
+      let east = -Infinity;
+      let west = Infinity;
+      for (const { lat, lng } of points) {
+        if (lat > north) north = lat;
+        if (lat < south) south = lat;
+        if (lng > east) east = lng;
+        if (lng < west) west = lng;
+      }
+      (map as unknown as RuntimeMap).fitBounds({ north, south, east, west });
     },
     getBounds(map) {
       const bounds = (map as unknown as RuntimeMap).getBounds();

@@ -431,6 +431,23 @@ describe("trip planning interface", () => {
 		expect(screen.getByRole("button", { name: /plan canal route/i })).toBeVisible();
 	});
 
+	it("clears a schedule validation alert when resetting the trip", async () => {
+		const { dependencies, store } = setup();
+		render(App, { props: { dependencies } });
+		await fireEvent.input(screen.getByLabelText(/hours per day/i), {
+			target: { value: "0" },
+		});
+		await fireEvent.click(
+			screen.getByRole("button", { name: /plan canal route/i }),
+		);
+		expect(screen.getByRole("alert")).toHaveTextContent(/hours per day/i);
+
+		await fireEvent.click(screen.getByRole("button", { name: "Reset trip" }));
+
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+		expect(store.reset).toHaveBeenCalledOnce();
+	});
+
 	it.each(["", "0", "-2"])("blocks invalid hours per day %j", async (value) => {
 		const { dependencies, store } = setup();
 		render(App, { props: { dependencies } });
