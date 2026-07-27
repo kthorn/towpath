@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { TripStore } from '../lib/stores/trip';
   import type { BoatSettingsStore } from '../lib/stores/boat-settings';
-  let { store, settings, days = $bindable<string | number>(''), hours = $bindable<string | number>('6') }: {
+  let { store, settings, onReset, days = $bindable<string | number>(''), hours = $bindable<string | number>('6') }: {
     store: TripStore;
     settings: BoatSettingsStore;
+    onReset: () => void;
     days?: string | number;
     hours?: string | number;
   } = $props();
@@ -33,6 +34,9 @@
     <label>Days (optional)<input type="number" min="1" bind:value={days} /></label>
     <label>Hours per day<input type="number" required min="0.1" step="0.5" bind:value={hours} /></label>
   </div>
-  <button type="submit">Plan canal route</button>
+  <div class="constraint-actions">
+    <button type="submit">Plan canal route</button>
+    <button type="button" onclick={onReset}>Reset trip</button>
+  </div>
   {#if error}<p role="alert">{error}</p>{/if}
 </form>
