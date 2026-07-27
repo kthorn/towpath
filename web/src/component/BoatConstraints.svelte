@@ -9,6 +9,7 @@
     hours?: string | number;
   } = $props();
   let error = $state('');
+  let submissionGeneration = 0;
   const optional = (value: string | number) => String(value).trim() === '' ? null : Number(value);
   function positiveOptional(label: string, value: string | number): number | null {
     const number = optional(value);
@@ -16,6 +17,7 @@
     return number;
   }
   async function submit() {
+    const generation = ++submissionGeneration;
     error = '';
     try {
       const hoursPerDay = Number(hours);
@@ -24,9 +26,12 @@
       if (dayCount !== null && !Number.isInteger(dayCount)) throw new Error('Days must be a whole number greater than 0.');
       await store.planCanalRoute({ days: dayCount, hours_per_day: hoursPerDay, ...$settings });
     }
-    catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
+    catch (cause) {
+      if (generation === submissionGeneration) error = cause instanceof Error ? cause.message : String(cause);
+    }
   }
   function reset() {
+    submissionGeneration += 1;
     error = '';
     onReset();
   }

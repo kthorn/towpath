@@ -448,6 +448,28 @@ describe("trip planning interface", () => {
 		expect(store.reset).toHaveBeenCalledOnce();
 	});
 
+	it("does not restore a rejected route alert after resetting the trip", async () => {
+		let rejectRoute!: (error: Error) => void;
+		const pendingRoute = new Promise<typeof route>((_resolve, reject) => {
+			rejectRoute = reject;
+		});
+		const rejectionHandled = pendingRoute.catch(() => undefined);
+		const { dependencies, store } = setup();
+		vi.mocked(store.planCanalRoute).mockReturnValue(pendingRoute);
+		render(App, { props: { dependencies } });
+
+		await fireEvent.click(
+			screen.getByRole("button", { name: /plan canal route/i }),
+		);
+		expect(store.planCanalRoute).toHaveBeenCalledOnce();
+		await fireEvent.click(screen.getByRole("button", { name: "Reset trip" }));
+
+		rejectRoute(new Error("stale route request"));
+		await rejectionHandled;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	});
+
 	it.each(["", "0", "-2"])("blocks invalid hours per day %j", async (value) => {
 		const { dependencies, store } = setup();
 		render(App, { props: { dependencies } });
