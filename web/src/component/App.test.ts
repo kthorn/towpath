@@ -37,6 +37,7 @@ function setup(overrides: { unavailable?: boolean; mapReject?: boolean; sameNode
     destination: endpoint('Canal Base', 2),
     canalRoute: overrides.sameNode ? { ...route, route: { ...route.route, start: 'A', end: 'A', total_km: 0, total_minutes: 0, total_locks: 0, days: [] } } : route,
     routeError: null,
+    networkError: null,
     routing: false,
     selectedDay: null,
     enabledPoiKinds: [],
@@ -56,7 +57,7 @@ function setup(overrides: { unavailable?: boolean; mapReject?: boolean; sameNode
     selectCandidate: vi.fn(async () => {}), confirmGeometricFallback: vi.fn(),
     planCanalRoute: vi.fn(async () => route),
     togglePoiKind: vi.fn(), selectDay: vi.fn(), refreshRoutePois: vi.fn(async () => {}),
-    toggleCatalogKind: vi.fn(), toggleCatalogKinds: vi.fn(), refreshCatalogPlaces: vi.fn(async () => {}), setMapView: vi.fn(),
+    toggleCatalogKind: vi.fn(), toggleCatalogKinds: vi.fn(), refreshCatalogPlaces: vi.fn(async () => {}), reset: vi.fn(), setMapView: vi.fn(),
   };
   const selects: Array<(place: SelectedPlace) => void> = [];
   const mapClick = { callback: (_coordinate: { lat: number; lon: number }) => {} };

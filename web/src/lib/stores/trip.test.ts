@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PoundApiError } from '../api';
 import type {
   CanalCandidatesResponse,
+  CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
   CatalogPlacesResponse,
@@ -43,11 +44,16 @@ function setup(options: {
   matrices?: TransferResult[][];
   routeError?: Error;
   map?: MapView;
+  canalNetwork?: () => Promise<CanalNetworkResponse>;
   routePois?: (request: unknown) => Promise<RoutePoisResponse>;
   catalogPlaces?: (request: unknown) => Promise<CatalogPlacesResponse>;
   catalogHealth?: () => Promise<{ status: string; artifact_revision: string; catalog_revision: string | null; catalog_status: 'available' | 'unavailable' }>;
 } = {}) {
   const canalCandidates = vi.fn(async ({ lat }: LatLon) => lat < 52 ? response('r1', [1, 2]) : response('r1', [3, 4]));
+  const canalNetwork = options.canalNetwork ?? vi.fn(async () => ({
+    artifact_revision: 'r1',
+    lines: [{ type: 'LineString' as const, coordinates: [[-1, 51], [-2, 52]] as [number, number][] }],
+  }));
   const canalRoute = vi.fn(async (_request: CanalRouteRequest) => canal);
   const routePois = options.routePois ?? vi.fn(async () => ({ pois: [], zoom_in_required: false, matching_count: 0, day: null }));
   const catalogPlaces = options.catalogPlaces ?? vi.fn(async () => ({ catalog_revision: 'c1', places: [], matching_count: 0, over_cap: false, day: null }));
@@ -61,17 +67,116 @@ function setup(options: {
     matrix: vi.fn(async () => matrices[Math.min(matrixIndex++, matrices.length - 1)]),
     route: vi.fn(async () => { if (options.routeError) throw options.routeError; return land; }),
   };
-  const store = createTripStore({ poundApi: { canalCandidates, canalRoute, routePois, catalogPlaces, health: catalogHealth }, transferRouter, mapView: options.map, transferMode: 'WALK' });
-  return { store, canalCandidates, canalRoute, transferRouter, catalogPlaces, catalogHealth };
+  const store = createTripStore({ poundApi: { canalCandidates, canalNetwork, canalRoute, routePois, catalogPlaces, health: catalogHealth }, transferRouter, mapView: options.map, transferMode: 'WALK' });
+  return { store, canalCandidates, canalNetwork, canalRoute, transferRouter, catalogPlaces, catalogHealth };
 }
 
 describe('trip store', () => {
+  it('loads and fits the network once when a map attaches', async () => {
+    const network = { artifact_revision: 'r1', lines: [{ type: 'LineString' as const, coordinates: [[-1, 51], [-2, 52]] as [number, number][] }] };
+    const map = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn() } as unknown as MapView;
+    const { store } = setup({ map, canalNetwork: vi.fn(async () => network) });
+
+    store.setMapView(map);
+    await vi.waitFor(() => expect(map.network).toHaveBeenCalledWith(network.lines));
+    expect(map.fitNetwork).toHaveBeenCalledOnce();
+  });
+
+  it('replays cached network lines without a second API call', async () => {
+    const network = { artifact_revision: 'r1', lines: [{ type: 'LineString' as const, coordinates: [[-1, 51], [-2, 52]] as [number, number][] }] };
+    const canalNetwork = vi.fn(async () => network);
+    const firstMap = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn() } as unknown as MapView;
+    const secondMap = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn() } as unknown as MapView;
+    const { store } = setup({ canalNetwork });
+
+    store.setMapView(firstMap);
+    await vi.waitFor(() => expect(firstMap.network).toHaveBeenCalledWith(network.lines));
+    store.setMapView(secondMap);
+    expect(canalNetwork).toHaveBeenCalledOnce();
+    expect(secondMap.network).toHaveBeenCalledWith(network.lines);
+    expect(secondMap.fitNetwork).toHaveBeenCalledOnce();
+  });
+
+  it('records a network error without blocking endpoint operations', async () => {
+    const map = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn() } as unknown as MapView;
+    const { store } = setup({ map, canalNetwork: vi.fn(async () => { throw new Error('network unavailable'); }) });
+
+    store.setMapView(map);
+    await vi.waitFor(() => expect(get(store).networkError).toBe('network unavailable'));
+    await store.setEndpointCoordinate('origin', place('origin'));
+    expect(get(store).origin.selectedUid).toBe(2);
+  });
+
+  it('resets trip state and fits the cached network', async () => {
+    const map = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn() } as unknown as MapView;
+    const { store } = setup({ map });
+    store.setMapView(map);
+    await vi.waitFor(() => expect(map.network).toHaveBeenCalled());
+    await store.setEndpointCoordinate('origin', place('origin'));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    await store.planCanalRoute({});
+
+    store.reset();
+
+    expect(get(store).origin.place).toBeNull();
+    expect(get(store).destination.place).toBeNull();
+    expect(get(store).canalRoute).toBeNull();
+    expect(get(store).routePois).toBeNull();
+    expect(map.canal).toHaveBeenCalledWith(null);
+    expect(map.fitNetwork).toHaveBeenCalled();
+  });
+
+  it('ignores stale endpoint responses after reset', async () => {
+    let resolveOld!: (value: CanalCandidatesResponse) => void;
+    const { store, canalCandidates } = setup();
+    canalCandidates.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+
+    const pending = store.setEndpointCoordinate('origin', place('old'));
+    store.reset();
+    resolveOld(response('r1', [1]));
+    await pending;
+
+    expect(get(store).origin.place).toBeNull();
+    expect(get(store).origin.candidates).toEqual([]);
+  });
+
+  it('ignores stale route responses after reset', async () => {
+    let resolveRoute!: (value: CanalRouteResponse) => void;
+    const { store, canalRoute } = setup();
+    await store.setEndpointCoordinate('origin', place('origin'));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    canalRoute.mockImplementationOnce(() => new Promise((resolve) => { resolveRoute = resolve; }));
+
+    const pending = store.planCanalRoute({});
+    store.reset();
+    resolveRoute(canal);
+    await pending;
+
+    expect(get(store).origin.place).toBeNull();
+    expect(get(store).destination.place).toBeNull();
+    expect(get(store).canalRoute).toBeNull();
+  });
+
+  it('resets state even when map cleanup fails', async () => {
+    const map = {
+      ...viewportMap(() => {}),
+      network: vi.fn(),
+      fitNetwork: vi.fn(),
+      clearLand: vi.fn(() => { throw new Error('clear failed'); }),
+    } as unknown as MapView;
+    const { store } = setup({ map });
+    await store.setEndpointCoordinate('origin', place('origin'));
+
+    expect(() => store.reset()).not.toThrow();
+    expect(get(store).origin.place).toBeNull();
+  });
+
   it('replays hydrated trip state when a map view attaches later', async () => {
     const { store } = setup();
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
     await store.planCanalRoute({});
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     store.setMapView(map);
     expect(map.marker).toHaveBeenCalledWith('origin', { lat: 51, lon: -1 });
     expect(map.marker).toHaveBeenCalledWith('destination', { lat: 53, lon: -1 });
@@ -88,14 +193,14 @@ describe('trip store', () => {
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
     const canalDraw = vi.fn();
-    const map = { marker: vi.fn(() => { throw new Error('marker failed'); }), candidates: vi.fn(), land: vi.fn(), canal: canalDraw, onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(() => { throw new Error('marker failed'); }), candidates: vi.fn(), land: vi.fn(), canal: canalDraw, network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     store.setMapView(map);
     expect(map.candidates).toHaveBeenCalledTimes(2);
     expect(canalDraw).toHaveBeenCalledWith(null);
   });
   it('selects and draws the recommended reachable candidate for both symmetric endpoints', async () => {
     const marker = vi.fn(); const candidates = vi.fn(); const landDraw = vi.fn();
-    const map = { marker, candidates, land: landDraw, canal: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker, candidates, land: landDraw, canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ map });
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', { lat: 53, lon: -3 });
@@ -133,7 +238,7 @@ describe('trip store', () => {
 
   it('retains place and candidates when land routing fails', async () => {
     const clearLand = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), onMapClick: vi.fn(), clearLand, destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand, destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ routeError: new Error('land unavailable'), map });
     await store.setEndpointCoordinate('origin', place('origin'));
     expect(get(store).origin).toMatchObject({ selectedUid: 2, landRoute: null });
@@ -143,7 +248,7 @@ describe('trip store', () => {
 
   it('constructs the exact canal request and draws the route', async () => {
     const drawCanal = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: drawCanal, onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: drawCanal, network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store, canalRoute } = setup({ map });
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
@@ -157,7 +262,7 @@ describe('trip store', () => {
   it('clears the old route and locks before a failed replan', async () => {
     const drawCanal = vi.fn();
     const drawLocks = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: drawCanal, pois: vi.fn(), locks: drawLocks, day: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: drawCanal, network: vi.fn(), fitNetwork: vi.fn(), pois: vi.fn(), locks: drawLocks, day: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store, canalRoute } = setup({ map });
     const lockedRoute: CanalRouteResponse = {
       ...canal,
@@ -224,7 +329,7 @@ describe('trip store', () => {
 
   it('clears prior POIs before a failed refresh for a newly selected day', async () => {
     const drawPois = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), pois: drawPois, locks: vi.fn(), day: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), pois: drawPois, locks: vi.fn(), day: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const fullRoutePois: RoutePoisResponse = {
       pois: [{ identity: 'node/1/pub', kind: 'pub', name: 'The Pub', coordinate: { lat: 51, lon: -1 }, distance_to_route_m: 10 }],
       zoom_in_required: false,
@@ -386,7 +491,7 @@ describe('trip store', () => {
       .mockImplementationOnce(() => new Promise<CatalogPlacesResponse>((resolve) => { resolveOld = resolve; }))
       .mockImplementationOnce(() => new Promise<CatalogPlacesResponse>((resolve) => { resolveNew = resolve; }));
     const catalogDraw = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), catalogPlaces: catalogDraw, onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), catalogPlaces: catalogDraw, onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ catalogPlaces, map });
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
@@ -534,7 +639,7 @@ describe('trip store', () => {
 
   it('swallows map failures while retaining usable state', async () => {
     const failing = () => { throw new Error('map failed'); };
-    const map = { marker: failing, candidates: failing, land: failing, canal: failing, onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: failing, candidates: failing, land: failing, canal: failing, network: failing, fitNetwork: failing, onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ map });
     await expect(store.setEndpointCoordinate('origin', place('origin'))).resolves.toBeUndefined();
     expect(get(store).origin.selectedUid).toBe(2);
@@ -545,7 +650,7 @@ describe('trip store', () => {
     let resolveOld!: (value: CanalRouteResponse) => void;
     let resolveNew!: (value: CanalRouteResponse) => void;
     const draw = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: draw, onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: draw, network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store, canalRoute } = setup({ map });
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
@@ -568,7 +673,7 @@ describe('trip store', () => {
   it('invalidates an in-flight canal route when either endpoint changes', async () => {
     let resolveRoute!: (value: CanalRouteResponse) => void;
     const draw = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: draw, onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: draw, network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store, canalRoute } = setup({ map });
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
@@ -585,7 +690,7 @@ describe('trip store', () => {
 
   it('initializes required selections as null and clears stale land for destination changes', async () => {
     const clearLand = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), onMapClick: vi.fn(), clearLand, destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand, destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ map });
     expect(get(store).origin.selectedUid).toBeNull();
     expect(get(store).destination.selectedUid).toBeNull();
@@ -596,7 +701,7 @@ describe('trip store', () => {
   });
 
   it('turns a land-overlay clear failure into a warning without losing endpoint state', async () => {
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), onMapClick: vi.fn(), clearLand: () => { throw new Error('clear failed'); }, destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: () => { throw new Error('clear failed'); }, destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ map });
     await store.setEndpointCoordinate('destination', place('destination', 53));
     expect(get(store).destination.selectedUid).toBe(4);
