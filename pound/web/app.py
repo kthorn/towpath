@@ -17,6 +17,7 @@ from pound.graph.artifact import GraphArtifact, InvalidArtifactError, load_artif
 from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.api import router as api_router
 from pound.web.config import WebSettings
+from pound.web.network import prepare_network_geometry
 
 
 def _load_web_artifact(settings: WebSettings) -> GraphArtifact:
@@ -46,6 +47,12 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         app.state.settings = runtime_settings
         app.state.spatial_index = GraphSpatialIndex(artifact.graph)
         app.state.poi_spatial_index = PoiSpatialIndex(artifact.pois)
+        try:
+            app.state.network_lines = prepare_network_geometry(app.state.graph)
+            app.state.network_error = None
+        except Exception as exc:
+            app.state.network_lines = ()
+            app.state.network_error = str(exc)
 
         app.state.catalog = None
         app.state.catalog_revision = None
