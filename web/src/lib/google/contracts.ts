@@ -51,6 +51,8 @@ export interface MapView {
   candidates(slot: EndpointSlot, candidates: CanalCandidate[], selectedUid?: number): void;
   land(slot: EndpointSlot, route: LandRoute | null): void;
   canal(geometry: GeoJSONLineString | null): void;
+  network(lines: GeoJSONLineString[]): void;
+  fitNetwork(): void;
   catalogPlaces(places: CatalogPlace[]): void;
   pois(pois: RoutePoi[]): void;
   locks(locks: RouteLock[]): void;

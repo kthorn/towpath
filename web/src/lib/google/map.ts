@@ -1,6 +1,7 @@
 import type {
   CanalCandidate,
   CatalogPlace,
+  GeoJSONLineString,
   LatLon,
   MapBounds,
   RouteDayGeometry,
@@ -306,6 +307,8 @@ export function createGoogleMapView(
   const placeMarkers: Partial<Record<EndpointSlot, MarkerInstance>> = {};
   const candidateMarkers: Record<EndpointSlot, MarkerInstance[]> = { origin: [], destination: [] };
   const landRoutes: Partial<Record<EndpointSlot, PolylineInstance>> = {};
+  const networkLines: PolylineInstance[] = [];
+  let networkGeometries: GeoJSONLineString[] = [];
   const catalogMarkers: MarkerInstance[] = [];
   const poiMarkers: MarkerInstance[] = [];
   const lockMarkers: MarkerInstance[] = [];
@@ -413,7 +416,6 @@ export function createGoogleMapView(
       delete placeMarkers[slot];
       if (coordinate) {
         placeMarkers[slot] = facade.createMarker({ map, position: toGoogleLatLng(coordinate), title: slot });
-        facade.fitBounds(map, [toGoogleLatLng(coordinate)]);
       }
     },
     candidates(slot, candidates: CanalCandidate[], selectedUid?: number) {
@@ -427,7 +429,6 @@ export function createGoogleMapView(
           }),
         );
       }
-      if (candidates.length) facade.fitBounds(map, candidates.map(({ coordinate }) => toGoogleLatLng(coordinate)));
     },
     land(slot, route: LandRoute | null) {
       clearLandSlot(slot);
@@ -435,7 +436,6 @@ export function createGoogleMapView(
         const path = route.path.map(toGoogleLatLng);
         landRoutes[slot] = facade.createPolyline({ map, path, strokeColor: '#2563eb', strokeWeight: 5 });
         element.setAttribute(`data-${slot}-land-overlay`, 'visible');
-        facade.fitBounds(map, path);
       }
     },
     canal(geometry) {
@@ -449,6 +449,25 @@ export function createGoogleMapView(
         element.setAttribute('data-canal-overlay', 'visible');
         facade.fitBounds(map, canalPath);
       }
+    },
+    network(lines) {
+      for (const line of networkLines) line.setMap(null);
+      networkLines.length = 0;
+      networkGeometries = lines;
+      for (const line of lines) {
+        networkLines.push(facade.createPolyline({
+          map,
+          path: geoJsonToGooglePath(line),
+          strokeColor: '#0e7490',
+          strokeWeight: 3,
+        }));
+      }
+    },
+    fitNetwork() {
+      const points = networkGeometries.flatMap((line) =>
+        line.coordinates.map(([lon, lat]) => toGoogleLatLng({ lat, lon })),
+      );
+      if (points.length) facade.fitBounds(map, points);
     },
     catalogPlaces(places: CatalogPlace[]) {
       closeInfoWindow();
@@ -563,6 +582,9 @@ export function createGoogleMapView(
       clearDay();
       clearLandSlot('origin');
       clearLandSlot('destination');
+      for (const line of networkLines) line.setMap(null);
+      networkLines.length = 0;
+      networkGeometries = [];
       canalRoute?.setMap(null);
       canalRoute = undefined;
     },
