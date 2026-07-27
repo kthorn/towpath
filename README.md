@@ -157,6 +157,13 @@ cruising time, warnings, and day divisions where applicable. Verify proposed
 access and navigation restrictions locally; a graph node is not a promise of a
 safe mooring, pedestrian entrance, or vehicle drop-off.
 
+### Canal network view
+
+On startup and after a trip reset, the map displays the full canal network as
+translucent lines fetched from `/api/network`. The network view provides a
+geographic context for route planning. A trip reset button in the bottom-right
+re-centers the map on the full network.
+
 ### Route overlays and POI layers
 
 The map shows points of interest and route overlays when a route is planned.
