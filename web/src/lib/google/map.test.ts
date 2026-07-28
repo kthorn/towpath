@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { CanalCandidate, CatalogPlace } from '../types';
+import type { CanalCandidate, CatalogPlace, GeoJSONLineString } from '../types';
 import { createGoogleMapView, type MapFacade } from './map';
 
 function candidate(uid: number): CanalCandidate {
@@ -141,33 +141,67 @@ describe('Google map adapter', () => {
     expect(markers[2].map).toBeNull();
     expect(markers[3].map).toBeNull();
     expect(markers[4].map).not.toBeNull();
-    expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [{ lat: 52, lng: -2 }]);
-    expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [
-      { lat: 53, lng: -2 },
-      { lat: 54, lng: -3 },
-    ]);
+    expect(facade.fitBounds).not.toHaveBeenCalled();
   });
 
   it('owns land and canal overlays independently and converts GeoJSON while drawing', () => {
     const { view, element, facade, markers, polylines } = setup();
     view.marker('origin', { lat: 51, lon: -1 });
     view.land('origin', { path: [{ lat: 51, lon: -1 }], durationSeconds: 3, distanceMeters: 4 });
-    view.canal({ type: 'LineString', coordinates: [[-1.5, 52.5], [-1.6, 52.6]] });
     expect(element).toHaveAttribute('data-origin-land-overlay', 'visible');
+    expect(markers[0].map).not.toBeNull();
+    expect(facade.fitBounds).not.toHaveBeenCalled();
+
+    view.canal({ type: 'LineString', coordinates: [[-1.5, 52.5], [-1.6, 52.6]] });
     expect(element).toHaveAttribute('data-canal-overlay', 'visible');
     view.clearLand('origin');
     expect(element).not.toHaveAttribute('data-origin-land-overlay');
 
     expect(polylines[0].setMap).toHaveBeenCalledWith(null);
     expect(polylines[1].setMap).not.toHaveBeenCalled();
-    expect(markers[0].map).not.toBeNull();
-    expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [{ lat: 51, lng: -1 }]);
     expect(polylines[1].options.path).toEqual([{ lat: 52.5, lng: -1.5 }, { lat: 52.6, lng: -1.6 }]);
     expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [{ lat: 52.5, lng: -1.5 }, { lat: 52.6, lng: -1.6 }]);
 
     view.canal(null);
     expect(element).not.toHaveAttribute('data-canal-overlay');
     expect(polylines[1].setMap).toHaveBeenCalledWith(null);
+  });
+
+  it('draws, replaces, fits, and destroys full network polylines', () => {
+    const { view, facade, polylines } = setup();
+    const lines: GeoJSONLineString[] = [
+      { type: 'LineString', coordinates: [[-1, 51], [-1.1, 51.1]] },
+      { type: 'LineString', coordinates: [[-1.2, 51.2], [-1.3, 51.3]] },
+    ];
+    const replacement: GeoJSONLineString[] = [
+      { type: 'LineString', coordinates: [[-2, 52], [-2.1, 52.1]] },
+    ];
+
+    view.network(lines);
+    expect(facade.createPolyline).toHaveBeenCalledTimes(2);
+    expect(polylines[0].options).toMatchObject({ strokeColor: '#0e7490', strokeWeight: 3, strokeOpacity: 0.55 });
+    expect(polylines[1].options).toMatchObject({ strokeColor: '#0e7490', strokeWeight: 3, strokeOpacity: 0.55 });
+
+    view.network(replacement);
+    expect(polylines[0].setMap).toHaveBeenCalledWith(null);
+    expect(polylines[1].setMap).toHaveBeenCalledWith(null);
+    expect(facade.createPolyline).toHaveBeenCalledTimes(3);
+
+    view.fitNetwork();
+    expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [
+      { lat: 52, lng: -2 },
+      { lat: 52.1, lng: -2.1 },
+    ]);
+
+    view.destroy();
+    expect(polylines[2].setMap).toHaveBeenCalledWith(null);
+  });
+
+  it('does not fit an empty network', () => {
+    const { view, facade } = setup();
+    view.network([]);
+    view.fitNetwork();
+    expect(facade.fitBounds).not.toHaveBeenCalled();
   });
 
   it('replaces POI and lock markers and highlights a selected day', () => {

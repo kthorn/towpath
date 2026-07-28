@@ -308,6 +308,11 @@ class RouteLock(BaseModel):
     approximate: bool = False
 
 
+class CanalNetworkResponse(BaseModel):
+    artifact_revision: str
+    lines: list[GeoJSONLineString]
+
+
 class CanalRouteResponse(BaseModel):
     route: RouteResult
     geometry: GeoJSONLineString

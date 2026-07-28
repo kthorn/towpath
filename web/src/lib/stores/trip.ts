@@ -13,12 +13,14 @@ import { rankCandidates, type RankedCandidate } from '../planner';
 import type {
   CanalCandidatesRequest,
   CanalCandidatesResponse,
+  CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
   CatalogPlace,
   CatalogPlacesRequest,
   CatalogPlacesResponse,
   CatalogQueryPolicy,
+  GeoJSONLineString,
   HealthResponse,
   LatLon,
   MapBounds,
@@ -28,6 +30,7 @@ import type {
 
 interface PoundApi {
   canalCandidates(request: CanalCandidatesRequest): Promise<CanalCandidatesResponse>;
+  canalNetwork(): Promise<CanalNetworkResponse>;
   canalRoute(request: CanalRouteRequest): Promise<CanalRouteResponse>;
   routePois(request: RoutePoisRequest): Promise<RoutePoisResponse>;
   health?: () => Promise<HealthResponse>;
@@ -59,6 +62,7 @@ export interface TripState {
   destination: EndpointState;
   canalRoute: CanalRouteResponse | null;
   routeError: string | null;
+  networkError: string | null;
   routing: boolean;
   selectedDay: number | null;
   enabledPoiKinds: string[];
@@ -84,6 +88,7 @@ export interface TripStore extends Readable<TripState> {
   toggleCatalogKind(kind: string, policy?: CatalogQueryPolicy): void;
   toggleCatalogKinds(kinds: string[], policy: CatalogQueryPolicy): void;
   refreshCatalogPlaces(bounds: MapBounds): Promise<void>;
+  reset(): void;
   setMapView(mapView: MapView | undefined): void;
 }
 
@@ -105,7 +110,7 @@ export function createTripStore(dependencies: {
   let mapView = dependencies.mapView;
   const initial: TripState = {
     origin: emptyEndpoint(), destination: emptyEndpoint(), canalRoute: null, routeError: null, routing: false,
-    selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null,
+    selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null, networkError: null,
     catalog: { enabledKinds: [], places: [], loading: false, error: null },
     catalogRevision: null, catalogStatus: 'unknown', catalogMatchingCount: 0, catalogOverCap: false,
   };
@@ -117,6 +122,8 @@ export function createTripStore(dependencies: {
   let routeRequest = 0;
   let poiRequest = 0;
   let catalogRequest = 0;
+  let networkLines: GeoJSONLineString[] | null = null;
+  let networkRequest: Promise<void> | undefined;
   let viewportUnsubscribe: (() => void) | undefined;
   let lastViewportBounds: MapBounds | undefined;
   let poiRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -160,9 +167,37 @@ export function createTripStore(dependencies: {
     const existing = state[slot].transferWarning;
     updateEndpoint(slot, { transferWarning: existing ? `${existing} ${warning}` : warning });
   };
-  const mapCall = (slot: EndpointSlot, operation: (() => void) | undefined) => {
+  const mapCall = (slot: EndpointSlot, operation: (() => void) | undefined, reportFailure = true) => {
     if (!operation) return;
-    try { operation(); } catch (error) { warn(slot, `Map display failed: ${message(error)}`); }
+    try { operation(); } catch (error) {
+      if (reportFailure) warn(slot, `Map display failed: ${message(error)}`);
+    }
+  };
+  const drawNetwork = (view: MapView) => {
+    if (!networkLines) return;
+    mapCall('origin', () => view.network(networkLines!));
+    if (!state.canalRoute) mapCall('origin', () => view.fitNetwork());
+  };
+  const loadNetwork = (view: MapView) => {
+    if (networkLines) {
+      drawNetwork(view);
+      return;
+    }
+    if (!networkRequest) {
+      networkRequest = Promise.resolve()
+        .then(() => poundApi.canalNetwork())
+        .then(({ lines }) => {
+          networkLines = lines;
+          inner.update((current) => ({ ...current, networkError: null }));
+        })
+        .catch((error) => {
+          inner.update((current) => ({ ...current, networkError: message(error) }));
+          networkRequest = undefined;
+        });
+    }
+    void networkRequest.then(() => {
+      if (mapView === view) drawNetwork(view);
+    });
   };
   const clearCatalogPlaces = () => {
     cancelScheduledCatalogRefresh();
@@ -544,11 +579,43 @@ export function createTripStore(dependencies: {
     if (state.catalog.enabledKinds.length && lastViewportBounds) scheduleCatalogRefresh(lastViewportBounds);
   }
 
+  function reset(): void {
+    generations.origin += 1;
+    generations.destination += 1;
+    routeGeneration += 1;
+    routeRequest += 1;
+    poiRequest += 1;
+    catalogRequest += 1;
+    cancelScheduledPoiRefresh();
+    cancelScheduledCatalogRefresh();
+    catalogPolicies.clear();
+    const networkError = state.networkError;
+    inner.set({
+      ...initial,
+      origin: emptyEndpoint(),
+      destination: emptyEndpoint(),
+      catalog: { ...initial.catalog },
+      networkError,
+    });
+    for (const slot of ['origin', 'destination'] as const) {
+      mapCall(slot, () => mapView?.marker(slot, null), false);
+      mapCall(slot, () => mapView?.candidates(slot, []), false);
+      mapCall(slot, () => mapView?.clearLand(slot), false);
+    }
+    mapCall('origin', () => mapView?.canal(null), false);
+    mapCall('origin', () => mapView?.day?.(null), false);
+    mapCall('origin', () => mapView?.locks?.([]), false);
+    mapCall('origin', () => mapView?.pois?.([]), false);
+    mapCall('origin', () => mapView?.catalogPlaces([]), false);
+    if (networkLines) mapCall('origin', () => mapView?.fitNetwork(), false);
+  }
+
   if (poundApi.health) void catalogHealth().catch(() => {});
 
   return {
     subscribe: inner.subscribe, setEndpointCoordinate, selectCandidate, confirmGeometricFallback,
     planCanalRoute, togglePoiKind, toggleCatalogKind, toggleCatalogKinds, selectDay, refreshRoutePois, refreshCatalogPlaces,
+    reset,
     setMapView(value) {
       cancelScheduledPoiRefresh();
       viewportUnsubscribe?.();
@@ -556,6 +623,7 @@ export function createTripStore(dependencies: {
       lastViewportBounds = undefined;
       mapView = value;
       if (!mapView) return;
+      loadNetwork(mapView);
       for (const slot of ['origin', 'destination'] as const) {
         const endpoint = state[slot];
         if (endpoint.place) mapCall(slot, () => mapView?.marker(slot, endpoint.place!.coordinate));

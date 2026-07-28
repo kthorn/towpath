@@ -40,3 +40,15 @@ it('mounts the provider search on an element container', async () => {
   expect(attach.mock.calls[0][0]).toBeInstanceOf(HTMLElement);
   expect(attach.mock.calls[0][0]).not.toBeInstanceOf(HTMLInputElement);
 });
+
+it('calls provider cleanup when the search unmounts', async () => {
+  const cleanup = vi.fn();
+  const attach = vi.fn((_container: HTMLElement) => cleanup);
+  const rendered = render(PlaceSearch, {
+    props: { label: 'Search origin', search: { attach }, onselect: vi.fn() },
+  });
+
+  await waitFor(() => expect(attach).toHaveBeenCalledOnce());
+  rendered.unmount();
+  expect(cleanup).toHaveBeenCalledOnce();
+});

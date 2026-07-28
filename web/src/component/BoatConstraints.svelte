@@ -1,13 +1,15 @@
 <script lang="ts">
   import type { TripStore } from '../lib/stores/trip';
   import type { BoatSettingsStore } from '../lib/stores/boat-settings';
-  let { store, settings, days = $bindable<string | number>(''), hours = $bindable<string | number>('6') }: {
+  let { store, settings, onReset, days = $bindable<string | number>(''), hours = $bindable<string | number>('6') }: {
     store: TripStore;
     settings: BoatSettingsStore;
+    onReset: () => void;
     days?: string | number;
     hours?: string | number;
   } = $props();
   let error = $state('');
+  let submissionGeneration = 0;
   const optional = (value: string | number) => String(value).trim() === '' ? null : Number(value);
   function positiveOptional(label: string, value: string | number): number | null {
     const number = optional(value);
@@ -15,6 +17,7 @@
     return number;
   }
   async function submit() {
+    const generation = ++submissionGeneration;
     error = '';
     try {
       const hoursPerDay = Number(hours);
@@ -23,7 +26,14 @@
       if (dayCount !== null && !Number.isInteger(dayCount)) throw new Error('Days must be a whole number greater than 0.');
       await store.planCanalRoute({ days: dayCount, hours_per_day: hoursPerDay, ...$settings });
     }
-    catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
+    catch (cause) {
+      if (generation === submissionGeneration) error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+  function reset() {
+    submissionGeneration += 1;
+    error = '';
+    onReset();
   }
 </script>
 
@@ -33,6 +43,9 @@
     <label>Days (optional)<input type="number" min="1" bind:value={days} /></label>
     <label>Hours per day<input type="number" required min="0.1" step="0.5" bind:value={hours} /></label>
   </div>
-  <button type="submit">Plan canal route</button>
+  <div class="constraint-actions">
+    <button type="submit">Plan canal route</button>
+    <button type="button" onclick={reset}>Reset trip</button>
+  </div>
   {#if error}<p role="alert">{error}</p>{/if}
 </form>

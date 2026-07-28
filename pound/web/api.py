@@ -10,6 +10,7 @@ from pound.route.candidates import nearest_coord_candidates, select_spaced_candi
 from pound.route.plan import RouteUnavailableError, plan_canal_route
 from pound.schemas import (
     CanalCandidatesResponse,
+    CanalNetworkResponse,
     CanalRouteResponse,
     CatalogPlaceResponse,
     CatalogPlacesRequest,
@@ -59,6 +60,22 @@ class APIError(BaseModel):
 def _error(status_code: int, *, code: str, message: str, fields: list[str] | None = None):
     detail = APIError(code=code, message=message, fields=fields or [])
     return HTTPException(status_code=status_code, detail=detail.model_dump())
+
+
+@router.get("/canal-network", response_model=CanalNetworkResponse)
+def canal_network(request: Request) -> CanalNetworkResponse:
+    """Return the startup-prepared full canal network overlay."""
+
+    if request.app.state.network_error is not None:
+        raise _error(
+            503,
+            code="network_unavailable",
+            message="The canal network overlay is unavailable.",
+        )
+    return CanalNetworkResponse(
+        artifact_revision=request.app.state.artifact_revision,
+        lines=list(request.app.state.network_lines),
+    )
 
 
 @router.post("/canal-candidates", response_model=CanalCandidatesResponse)

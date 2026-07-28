@@ -17,6 +17,7 @@
   const boatSettings = createBoatSettingsStore();
   let active = $state<EndpointSlot>('origin');
   let plannerSession = $state({ days: '' as string | number, hours: '6' as string | number });
+  let searchKey = $state(0);
 
   const navigation = createNavigation();
   let saveFeedback = $state<SettingsSaveResult | null>(null);
@@ -39,6 +40,12 @@
   function finishSettingsSave(result: SettingsSaveResult) {
     saveFeedback = result;
     navigation.navigate('planner');
+  }
+
+  function resetTrip() {
+    dependencies.store.reset();
+    plannerSession = { days: '', hours: '6' };
+    searchKey += 1;
   }
 
   function handleNavClick(event: MouseEvent, route: AppRoute, ordinaryAction: () => void = () => navigation.navigate(route)) {
@@ -68,12 +75,17 @@
     {/if}
     <div class="map-column">
       <fieldset class="map-target"><legend>Map click sets</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set destination from map</label></fieldset>
-      <MapCanvas load={dependencies.loadMapView} onclick={(coordinate) => dependencies.store.setEndpointCoordinate(active, coordinate)} onready={(view) => dependencies.store.setMapView(view)} />
-    </div>
+		<MapCanvas load={dependencies.loadMapView} onclick={(coordinate) => dependencies.store.setEndpointCoordinate(active, coordinate)} onready={(view) => dependencies.store.setMapView(view)} />
+		{#if $store.networkError}
+			<p class="network-status" role="status">Canal network overlay is unavailable: {$store.networkError}</p>
+		{/if}
+	</div>
     <div class="planner-column">
-      <EndpointPanel slot="origin" endpoint={$store.origin} {store} search={dependencies.placeSearch} />
-      <EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} />
-      <BoatConstraints {store} settings={boatSettings} bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
+		{#key searchKey}
+			<EndpointPanel slot="origin" endpoint={$store.origin} {store} search={dependencies.placeSearch} />
+			<EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} />
+		{/key}
+      <BoatConstraints {store} settings={boatSettings} onReset={resetTrip} bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
       <TripSummary state={$store} onDaySelect={store.selectDay} />
       <RouteLayers {store} />
     </div>

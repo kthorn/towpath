@@ -16,6 +16,11 @@ export interface CanalCandidatesResponse {
   candidates: CanalCandidate[];
 }
 
+export interface CanalNetworkResponse {
+  artifact_revision: string;
+  lines: GeoJSONLineString[];
+}
+
 export interface RouteLeg {
   from_place: string;
   to_place: string;

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPoundApi, PoundApiError } from './api';
 import type {
   CanalCandidatesResponse,
+  CanalNetworkResponse,
   CanalRouteResponse,
   CatalogPlacesRequest,
   CatalogPlacesResponse,
@@ -22,6 +23,14 @@ const candidatesResponse: CanalCandidatesResponse = {
       display_name: 'Grand Union Canal',
     },
   ],
+};
+
+const networkResponse: CanalNetworkResponse = {
+  artifact_revision: 'artifact-123',
+  lines: [{
+    type: 'LineString',
+    coordinates: [[-0.742, 51.997], [-0.7, 52.0]],
+  }],
 };
 
 const routeResponse: CanalRouteResponse = {
@@ -89,6 +98,20 @@ describe('createPoundApi', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lat: 51.997, lon: -0.742 }),
     });
+  });
+
+  it('gets the full canal network', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(networkResponse), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const result = await createPoundApi(fetchFn).canalNetwork();
+
+    expect(result).toEqual(networkResponse);
+    expect(fetchFn).toHaveBeenCalledWith('/api/canal-network', { method: 'GET' });
   });
 
   it('posts route constraints and parses the complete route response', async () => {
