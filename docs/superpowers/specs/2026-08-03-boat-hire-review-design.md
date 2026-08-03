@@ -33,6 +33,35 @@ The generator does not fetch websites. Ranking is based only on catalog data,
 so generation is deterministic and offline. The review page supplies the
 human website check.
 
+### Likelihood ranking
+
+The score uses a small, weighted regular-expression matcher from the Python
+standard library rather than BM25. BM25 is useful for search-result relevance,
+but this task has no labelled training corpus and needs an explainable score;
+weighted phrase rules can expose exactly why a record was ranked highly.
+
+Text is case-folded and punctuation-normalized from these fields:
+
+- name: weight 5;
+- operator, brand, and alternate name: weight 3;
+- description: weight 2;
+- website host/path: weight 1.
+
+Positive rules are grouped by strength. Strong phrases include `boat hire`,
+`boat rental`, `narrowboat hire`, `canal boat`, `self-drive`, `boating
+holiday`, and `cruising holiday`. Medium phrases include `narrowboat`,
+`cruiser`, `cruising`, `boat trip`, `canal trip`, `charter`, and `launch hire`.
+Weak terms include `boat`, `boatyard`, and `marina`. Negative rules reduce the
+score for signals such as `club`, `association`, `society`, `residential`,
+`private`, `dry dock`, `fuel`, `repair`, and `marine services`.
+
+Each matched rule contributes its rule weight multiplied by the field weight,
+with each rule counted at most once per field. A small kind prior distinguishes
+marinas, moorings, and landmarks. Scores are clamped to 0--100, then sorted
+by descending score and stable OSM identity. Ranking reasons list the matched
+positive and negative rules, making the ordering auditable and easy to tune
+before the review begins.
+
 ## Review JSON
 
 The top level stores a format version, source artifact/revision, generation
