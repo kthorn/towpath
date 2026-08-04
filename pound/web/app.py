@@ -7,7 +7,9 @@ from pathlib import Path
 from stat import S_ISREG
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 
@@ -74,6 +76,31 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
 
     application = FastAPI(lifespan=lifespan)
     application.include_router(api_router)
+
+    @application.exception_handler(RequestValidationError)
+    async def catalog_request_validation_error(
+        request: Request,
+        exc: RequestValidationError,
+    ):
+        if request.url.path != "/api/catalog-places":
+            return await request_validation_exception_handler(request, exc)
+
+        fields = sorted(
+            {
+                ".".join(str(part) for part in error["loc"] if part != "body") or "body"
+                for error in exc.errors()
+            }
+        )
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": {
+                    "code": "invalid_catalog_query",
+                    "message": "Invalid catalog query.",
+                    "fields": fields,
+                }
+            },
+        )
 
     @application.get("/api/health")
     async def health(request: Request) -> dict[str, str | None]:
