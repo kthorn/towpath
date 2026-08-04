@@ -104,6 +104,7 @@ function catalogPlace(overrides: Partial<CatalogPlace> = {}): CatalogPlace {
     waterway_distance_m: 120,
     distance_to_full_route_m: 450,
     distance_to_selected_geometry_m: null,
+    distance_to_segment_m: null,
     metadata: {
       name: 'Canal Museum',
       alt_name: null,

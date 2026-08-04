@@ -209,6 +209,7 @@ describe('createPoundApi', () => {
         waterway_distance_m: 45,
         distance_to_full_route_m: 100,
         distance_to_selected_geometry_m: null,
+        distance_to_segment_m: 25,
         metadata: {
           name: 'Canal Museum', alt_name: null, brand: null, operator: 'Canal Trust',
           address: { house_number: '1', street: 'Towpath', place: null, city: 'Oxford', postcode: 'OX1' },
@@ -225,8 +226,9 @@ describe('createPoundApi', () => {
       catalog_revision: 'catalog-456',
       kinds: ['museum'],
       bounds: { south: 51, west: -2, north: 52, east: 0 },
-      route_geometry: { type: 'LineString', coordinates: [[-1, 51], [-1.2, 51.5]] },
-      policy: { basis: 'waterway', radius_m: 2_000 },
+      text: 'canal museum',
+      segment_geometry: { type: 'LineString', coordinates: [[-1, 51], [-1.2, 51.5]] },
+      policy: { basis: 'segment', radius_m: 2_000 },
     };
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } }),
