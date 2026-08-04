@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Boat-hire review</title>
+    <style>
+      :root { color-scheme: light; font-family: system-ui, sans-serif; }
+      body { margin: 0; color: #18212b; background: #f4f6f8; }
+      .panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(20rem, 1fr); min-height: 100vh; }
+      .website, .details { padding: 1.25rem; box-sizing: border-box; }
+      .website { background: #e8edf1; border-right: 1px solid #cbd3da; }
+      .website iframe { display: block; width: 100%; height: 75vh; border: 1px solid #aeb8c1; background: white; }
+      .website a, .details a { overflow-wrap: anywhere; }
+      .fallback { margin: 0.75rem 0; }
+      .details h1 { margin-top: 0; }
+      .filters, .navigation, .decisions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+      .filters a, .navigation a, .decisions button { padding: 0.45rem 0.7rem; border: 1px solid #8c99a5; border-radius: 0.3rem; background: white; color: inherit; text-decoration: none; }
+      .decisions { margin-top: 1rem; }
+      .decisions form { margin: 0; }
+      dt { font-weight: 700; margin-top: 0.65rem; }
+      dd { margin: 0.15rem 0 0; overflow-wrap: anywhere; }
+      .score { font-size: 1.1rem; font-weight: 700; }
+      .completion { margin-top: 2rem; padding: 1rem; background: white; border: 1px solid #cbd3da; }
+      @media (max-width: 800px) { .panes { grid-template-columns: 1fr; } .website { border-right: 0; border-bottom: 1px solid #cbd3da; } }
+    </style>
+  </head>
+  <body>
+    <main class="panes">
+      <section class="website" aria-label="Candidate website">
+        {% if record and record.website_urls %}
+          <iframe src="{{ record.website_urls[0] }}" title="{{ record.name }} website"></iframe>
+          <p class="fallback">
+            <a href="{{ record.website_urls[0] }}" target="_blank" rel="noopener noreferrer">
+              Open website in a new tab: {{ record.website_urls[0] }}
+            </a>
+          </p>
+        {% elif record %}
+          <p>No website recorded</p>
+          {% if record.osm_url %}
+            <p class="fallback">
+              <a href="{{ record.osm_url }}" target="_blank" rel="noopener noreferrer">
+                OpenStreetMap: {{ record.osm_url }}
+              </a>
+            </p>
+          {% endif %}
+        {% endif %}
+      </section>
+
+      <section class="details" aria-label="Candidate details">
+        <nav class="filters" aria-label="Review filters">
+          {% for available_filter in filters %}
+            <a href="{{ review_url(available_filter) }}">{{ available_filter.replace('_', ' ')|title }}</a>
+          {% endfor %}
+        </nav>
+
+        {% if record %}
+          <h1>{{ record.name }}</h1>
+          <p class="score">Likelihood score: {{ record.likelihood_score }}</p>
+          <p>Current decision: {{ record.decision or 'Unreviewed' }}</p>
+          <p>Record {{ position }} of {{ total }} ({{ filter_name.replace('_', ' ') }})</p>
+
+          <dl>
+            <dt>Identity</dt>
+            <dd>{{ record.identity }}</dd>
+            <dt>Kind</dt>
+            <dd>{{ record.kind }}</dd>
+            <dt>OSM type and ID</dt>
+            <dd>{{ record.osm_type }} / {{ record.osm_id }}</dd>
+            <dt>Coordinates</dt>
+            <dd>{{ record.lat }}, {{ record.lon }}</dd>
+            {% for key, value in record.metadata.items() %}
+              <dt>{{ key }}</dt>
+              <dd>{{ value }}</dd>
+            {% endfor %}
+          </dl>
+
+          <h2>Links</h2>
+          <ul>
+            {% for link in record.links %}
+              <li><a href="{{ link.url }}" target="_blank" rel="noopener noreferrer">{{ link.label }}: {{ link.url }}</a></li>
+            {% endfor %}
+          </ul>
+
+          <h2>Likelihood reasons</h2>
+          <ul>
+            {% for reason in record.likelihood_reasons %}
+              <li>{{ reason }}</li>
+            {% endfor %}
+          </ul>
+
+          <nav class="navigation" aria-label="Record navigation">
+            {% if previous %}
+              <a href="{{ review_url(filter_name, previous.identity) }}">Previous</a>
+            {% endif %}
+            {% if next_record %}
+              <a href="{{ review_url(filter_name, next_record.identity) }}">Next</a>
+            {% endif %}
+          </nav>
+
+          <div class="decisions" aria-label="Save decision">
+            {% for value, label in [('vacation_hire', 'Vacation hire'), ('not_vacation_hire', 'Not vacation hire'), ('uncertain', 'Uncertain')] %}
+              <form method="post" action="{{ url_for('decision') }}">
+                <input type="hidden" name="identity" value="{{ record.identity }}">
+                <input type="hidden" name="filter" value="{{ filter_name }}">
+                <button type="submit" name="decision" value="{{ value }}">{{ label }}</button>
+              </form>
+            {% endfor %}
+          </div>
+        {% elif filter_name == 'unreviewed' %}
+          <div class="completion">
+            <h1>All records have been reviewed</h1>
+            <p>There are no unreviewed candidates remaining.</p>
+          </div>
+        {% else %}
+          <div class="completion">
+            <h1>No records match this filter</h1>
+          </div>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>
