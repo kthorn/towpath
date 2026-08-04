@@ -85,6 +85,12 @@ def client(review_path: Path):
     return create_app(review_path).test_client()
 
 
+@pytest.fixture
+def csrf_token(client):
+    marker = b'name="csrf_token" value="'
+    return client.get("/?filter=all").data.split(marker, 1)[1].split(b'"', 1)[0].decode()
+
+
 def test_home_shows_two_panes_and_record_metadata(client):
     response = client.get("/?filter=unreviewed")
 
@@ -97,13 +103,28 @@ def test_home_shows_two_panes_and_record_metadata(client):
     assert b"&lt;candidate&gt;" in response.data
 
 
-def test_decision_is_saved_and_redirects_to_next_unreviewed(client, review_path):
+def test_osm_attribution_is_visible_and_linked(client):
+    response = client.get("/?filter=all")
+
+    assert response.status_code == 200
+    assert b"\xc2\xa9 OpenStreetMap contributors" in response.data
+    assert b'href="https://www.openstreetmap.org/copyright"' in response.data
+
+
+def test_decision_forms_render_a_csrf_token(client):
+    response = client.get("/?filter=all")
+
+    assert response.data.count(b'name="csrf_token"') == 3
+
+
+def test_decision_is_saved_and_redirects_to_next_unreviewed(client, review_path, csrf_token):
     response = client.post(
         "/decision",
         data={
             "identity": "node/1/marina",
             "decision": "vacation_hire",
             "filter": "unreviewed",
+            "csrf_token": csrf_token,
         },
     )
 
@@ -113,13 +134,14 @@ def test_decision_is_saved_and_redirects_to_next_unreviewed(client, review_path)
     assert "filter=unreviewed" in response.headers["Location"]
 
 
-def test_decision_redirect_wraps_to_first_unreviewed(client, review_path):
+def test_decision_redirect_wraps_to_first_unreviewed(client, review_path, csrf_token):
     response = client.post(
         "/decision",
         data={
             "identity": "node/2/marina",
             "decision": "uncertain",
             "filter": "all",
+            "csrf_token": csrf_token,
         },
     )
 
@@ -128,20 +150,30 @@ def test_decision_redirect_wraps_to_first_unreviewed(client, review_path):
     assert "identity=node%2F1%2Fmarina" in response.headers["Location"]
 
 
-def test_invalid_decision_is_rejected_without_writing(client, review_path):
+def test_invalid_decision_is_rejected_without_writing(client, review_path, csrf_token):
     response = client.post(
         "/decision",
-        data={"identity": "node/1/marina", "decision": "maybe", "filter": "all"},
+        data={
+            "identity": "node/1/marina",
+            "decision": "maybe",
+            "filter": "all",
+            "csrf_token": csrf_token,
+        },
     )
 
     assert response.status_code == 400
     assert load_document(review_path).records[0].decision is None
 
 
-def test_unknown_identity_is_rejected_without_writing(client, review_path):
+def test_unknown_identity_is_rejected_without_writing(client, review_path, csrf_token):
     response = client.post(
         "/decision",
-        data={"identity": "node/999/marina", "decision": "uncertain", "filter": "all"},
+        data={
+            "identity": "node/999/marina",
+            "decision": "uncertain",
+            "filter": "all",
+            "csrf_token": csrf_token,
+        },
     )
 
     assert response.status_code == 400
@@ -152,6 +184,22 @@ def test_unknown_identity_is_rejected_without_writing(client, review_path):
         "not_vacation_hire",
         "uncertain",
     ]
+
+
+def test_missing_or_wrong_csrf_token_is_rejected_without_writing(client, review_path):
+    for token in (None, "wrong-token"):
+        data = {
+            "identity": "node/1/marina",
+            "decision": "vacation_hire",
+            "filter": "all",
+        }
+        if token is not None:
+            data["csrf_token"] = token
+
+        response = client.post("/decision", data=data)
+
+        assert response.status_code == 400
+        assert load_document(review_path).records[0].decision is None
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 from typing import NoReturn, cast, get_args
 from urllib.parse import urlencode
@@ -38,6 +39,7 @@ def _bad_request(message: str) -> NoReturn:
 def create_app(review_path: Path) -> Flask:
     """Create a reviewer app backed by one atomically persisted review file."""
     app = Flask(__name__)
+    csrf_token = secrets.token_urlsafe(32)
     store = ReviewStore(Path(review_path))
     app.extensions["boat_hire_review_store"] = store
     app.jinja_env.globals["review_url"] = _review_url
@@ -84,10 +86,14 @@ def create_app(review_path: Path) -> Flask:
             total=len(records),
             previous=previous,
             next_record=next_record,
+            csrf_token=csrf_token,
         )
 
     @app.post("/decision")
     def decision():
+        if request.form.get("csrf_token") != csrf_token:
+            _bad_request("Invalid CSRF token")
+
         identity = request.form.get("identity")
         decision_value = request.form.get("decision")
         filter_name = request.form.get("filter", "all")

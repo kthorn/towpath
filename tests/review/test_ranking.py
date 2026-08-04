@@ -1,5 +1,5 @@
 from pound.catalog.metadata import NormalizedLink
-from pound.review.ranking import build_document, score_place
+from pound.review.ranking import build_document, is_candidate, score_place
 from tests.review.fixtures import catalog_with, place
 
 
@@ -24,6 +24,24 @@ def test_boat_landmark_is_candidate_but_unrelated_landmark_is_not():
     document = build_document(catalog)
 
     assert [record.name for record in document.records] == ["Skipton Boat Trips"]
+
+
+def test_approved_landmark_signals_are_candidates_and_score_with_reasons():
+    cases = (
+        ("Canal trips", 30, "canal trips"),
+        ("Pulteney Cruisers Ltd", 30, "cruisers"),
+        ("Canal Boat Centre", 70, "canal boat"),
+        ("Self-Drive", 60, "self drive"),
+    )
+
+    for name, expected_score, expected_phrase in cases:
+        candidate = place("landmark", name)
+
+        assert is_candidate(candidate)
+        score, reasons = score_place(candidate)
+
+        assert score == expected_score
+        assert any(expected_phrase in reason for reason in reasons)
 
 
 def test_strong_hire_phrase_outranks_generic_marina_and_exposes_reasons():

@@ -11,11 +11,15 @@ from pound.catalog.models import CatalogPlace
 from pound.review.models import ReviewDocument, ReviewLink, ReviewRecord
 
 _CANDIDATE_SIGNAL = re.compile(
-    r"\b(?:boat|boatyard|narrowboat|cruiser|cruising|canal trip|boat trip|hire)\b"
+    r"\b(?:boats?|boatyards?|narrowboats?|cruisers?|cruising|boating|"
+    r"(?:canal|boat)\s+trips?|canal\s+boat|self[ -]?drive|hire|rental|"
+    r"charter|launch\s+hire)\b"
 )
 _POSITIVE_RULES = (
     ("strong", re.compile(r"\b(?:boat|narrowboat)\s+(?:hire|rental)\b"), 12),
-    ("strong", re.compile(r"\b(?:canal\s+boat|self[ -]?drive|boating|cruising)\s+holidays?\b"), 12),
+    ("strong", re.compile(r"\bcanal\s+boat\b"), 12),
+    ("strong", re.compile(r"\bself[ -]?drive\b"), 12),
+    ("strong", re.compile(r"\b(?:boating|cruising)\s+holidays?\b"), 12),
     ("medium", re.compile(r"\bnarrowboats?\b"), 6),
     (
         "medium",
