@@ -13,6 +13,23 @@ uv run pytest
 uv run ruff check .
 ```
 
+## Standalone boat-hire candidate review
+
+Generate the ranked local review file, then serve it for human decisions:
+
+```bash
+uv sync --extra dev
+uv run pound-boat-review generate \
+  --catalog pound/artifacts/england-catalog.pkl \
+  --out pound/artifacts/boat-hire-review.json
+uv run pound-boat-review serve \
+  --review pound/artifacts/boat-hire-review.json
+```
+
+The generated JSON is a local ignored artifact. The reviewer opens at
+`http://127.0.0.1:5000/`. Some websites block iframes; use the visible new-tab
+fallback when that happens.
+
 ## Map prototype: local development
 
 Install Python dependencies. Map development uses a full England artifact; the
