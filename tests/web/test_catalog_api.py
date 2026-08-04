@@ -187,6 +187,26 @@ def test_catalog_places_rejects_geometry_budget_with_structured_error(web_client
     assert response.json()["detail"]["code"] == "catalog_query_budget_exceeded"
 
 
+def test_catalog_places_rejects_segment_geometry_budget_with_segment_field(web_client: TestClient):
+    response = web_client.post(
+        "/api/catalog-places",
+        json=_request(
+            web_client,
+            route_geometry=None,
+            segment_geometry={
+                "type": "LineString",
+                "coordinates": [[-1.0, 51.0], [-1.0, 51.0]] * 5_001,
+            },
+            policy={"basis": "segment", "radius_m": 1_000},
+        ),
+    )
+
+    assert response.status_code == 413
+    detail = response.json()["detail"]
+    assert detail["code"] == "catalog_query_budget_exceeded"
+    assert "segment_geometry" in detail["fields"]
+
+
 def test_catalog_places_rejects_stale_revision(web_client: TestClient):
     response = web_client.post(
         "/api/catalog-places", json=_request(web_client, catalog_revision="stale")

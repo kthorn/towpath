@@ -221,7 +221,7 @@ def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlace
             413,
             code="catalog_query_budget_exceeded",
             message="The catalog geometry exceeds the configured vertex budget.",
-            fields=["route_geometry", "day_geometry"],
+            fields=["route_geometry", "day_geometry", "segment_geometry"],
         )
     if body.policy.basis == "route" and body.route_geometry is None:
         raise _error(
