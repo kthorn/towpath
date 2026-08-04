@@ -27,6 +27,22 @@ def test_store_updates_one_decision_and_timestamp(tmp_path):
     assert load_document(path).records[0].decision == "vacation_hire"
 
 
+def test_failed_atomic_replace_preserves_previous_file(tmp_path, monkeypatch):
+    path = tmp_path / "review.json"
+    write_document(path, sample_document(decision=None))
+    original = path.read_bytes()
+
+    def fail_replace(_temporary_path, _destination):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr("pound.review.store.os.replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        write_document(path, sample_document(decision="vacation_hire"))
+
+    assert path.read_bytes() == original
+
+
 def test_invalid_json_is_rejected_without_replacement(tmp_path):
     path = tmp_path / "review.json"
     path.write_text('{"format_version": 1}', encoding="utf-8")

@@ -45,6 +45,11 @@
             </p>
           {% endif %}
         {% endif %}
+        <p class="attribution">
+          <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">
+            © OpenStreetMap contributors
+          </a>
+        </p>
       </section>
 
       <section class="details" aria-label="Candidate details">
@@ -101,6 +106,7 @@
           <div class="decisions" aria-label="Save decision">
             {% for value, label in [('vacation_hire', 'Vacation hire'), ('not_vacation_hire', 'Not vacation hire'), ('uncertain', 'Uncertain')] %}
               <form method="post" action="{{ url_for('decision') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="identity" value="{{ record.identity }}">
                 <input type="hidden" name="filter" value="{{ filter_name }}">
                 <button type="submit" name="decision" value="{{ value }}">{{ label }}</button>
