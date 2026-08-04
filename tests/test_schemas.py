@@ -2,10 +2,13 @@ import pytest
 from pydantic import ValidationError
 
 from pound import schemas
+from pound.catalog.metadata import CatalogMetadata
 from pound.schemas import (
     Amenity,
     CanalConstraints,
     CanalRouteResponse,
+    CatalogPlaceResponse,
+    CatalogPlacesRequest,
     Coordinate,
     DayPlan,
     GeoJSONLineString,
@@ -229,3 +232,105 @@ def test_canal_route_response_accepts_route_with_empty_legs_and_days():
 
     assert response.route.legs == []
     assert response.route.days == []
+
+
+def test_catalog_request_accepts_text_and_segment_geometry():
+    request = CatalogPlacesRequest.model_validate(
+        {
+            "catalog_revision": "catalog-2",
+            "kinds": ["museum"],
+            "bounds": {
+                "south": 51.0,
+                "west": -1.5,
+                "north": 52.0,
+                "east": -0.5,
+            },
+            "text": "  STRASSE  ",
+            "segment_geometry": {
+                "type": "LineString",
+                "coordinates": [[-1.2, 51.4], [-1.1, 51.5]],
+            },
+            "policy": {"basis": "segment", "radius_m": 2_000},
+        }
+    )
+
+    assert request.text == "  STRASSE  "
+    assert request.policy.basis == "segment"
+    assert request.segment_geometry is not None
+    assert request.segment_geometry.coordinates[0] == (-1.2, 51.4)
+
+
+def _catalog_request_payload(**changes):
+    payload = {
+        "catalog_revision": "catalog-2",
+        "kinds": ["museum"],
+        "bounds": {
+            "south": 51.0,
+            "west": -1.5,
+            "north": 52.0,
+            "east": -0.5,
+        },
+        "policy": {"basis": "none", "radius_m": None},
+    }
+    payload.update(changes)
+    return payload
+
+
+def test_catalog_request_rejects_overlong_text():
+    with pytest.raises(ValidationError):
+        CatalogPlacesRequest.model_validate(_catalog_request_payload(text="x" * 257))
+
+
+def test_catalog_request_rejects_segment_policy_without_geometry():
+    with pytest.raises(ValidationError, match="segment policy requires segment_geometry"):
+        CatalogPlacesRequest.model_validate(
+            _catalog_request_payload(
+                policy={"basis": "segment", "radius_m": 2_000},
+            )
+        )
+
+
+@pytest.mark.parametrize("basis", ["route", "waterway", "none"])
+def test_catalog_request_rejects_segment_geometry_for_other_policies(basis):
+    radius_m = None if basis == "none" else 2_000
+    with pytest.raises(ValidationError, match="segment_geometry requires a segment policy"):
+        CatalogPlacesRequest.model_validate(
+            _catalog_request_payload(
+                route_geometry=(
+                    {
+                        "type": "LineString",
+                        "coordinates": [[-1.2, 51.4], [-1.1, 51.5]],
+                    }
+                    if basis == "route"
+                    else None
+                ),
+                segment_geometry={
+                    "type": "LineString",
+                    "coordinates": [[-1.2, 51.4], [-1.1, 51.5]],
+                },
+                policy={"basis": basis, "radius_m": radius_m},
+            )
+        )
+
+
+def test_catalog_place_response_accepts_segment_distance():
+    response = CatalogPlaceResponse(
+        identity="way/42/museum",
+        kind="museum",
+        name="Canal Museum",
+        coordinate=Coordinate(lat=51.5, lon=-1.2),
+        distance_to_segment_m=25.0,
+        metadata=CatalogMetadata(name="Canal Museum"),
+    )
+
+    assert response.distance_to_segment_m == 25.0
+    assert (
+        CatalogPlaceResponse(
+            identity="way/42/museum",
+            kind="museum",
+            name="Canal Museum",
+            coordinate=Coordinate(lat=51.5, lon=-1.2),
+            metadata=CatalogMetadata(name="Canal Museum"),
+        ).distance_to_segment_m
+        is None
+    )
