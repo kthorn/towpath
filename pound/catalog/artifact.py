@@ -16,14 +16,19 @@ from shapely import get_coordinates, wkb
 from pound.catalog.metadata import CatalogAddress, CatalogMetadata, NormalizedLink
 from pound.catalog.models import CatalogPlace
 
+CATALOG_SCHEMA_VERSION = 2
+OSM_ATTRIBUTION = "© OpenStreetMap contributors"
+
 _PAYLOAD_FIELDS = {"places", "metadata"}
 _METADATA_FIELDS = {
-    "catalog_revision",
-    "source",
-    "fetched_at",
-    "built_at",
-    "inventory_summary",
+    "attribution",
     "build_summary",
+    "built_at",
+    "catalog_revision",
+    "catalog_schema_version",
+    "fetched_at",
+    "inventory_summary",
+    "source",
 }
 _GEOMETRY_TYPES = {
     "point": {"Point"},
@@ -86,6 +91,19 @@ def _validate_metadata(metadata: Any) -> dict[str, Any]:
             sorted(fields),
             f"expected exactly {sorted(_METADATA_FIELDS)}; "
             f"missing={missing}, unexpected={unexpected}",
+        )
+    version = metadata["catalog_schema_version"]
+    if type(version) is not int or version != CATALOG_SCHEMA_VERSION:
+        raise _invalid(
+            "metadata.catalog_schema_version",
+            version,
+            f"expected supported version {CATALOG_SCHEMA_VERSION}",
+        )
+    if metadata["attribution"] != OSM_ATTRIBUTION:
+        raise _invalid(
+            "metadata.attribution",
+            metadata["attribution"],
+            f"expected exactly {OSM_ATTRIBUTION!r}",
         )
     for field in ("catalog_revision", "source", "fetched_at", "built_at"):
         value = metadata[field]
@@ -195,6 +213,8 @@ def prepare_catalog(places: Iterable[CatalogPlace], metadata: dict[str, Any]) ->
     """Validate catalog records and metadata before trusted local serialization."""
     complete_metadata = dict(metadata)
     complete_metadata.setdefault("catalog_revision", str(uuid4()))
+    complete_metadata.setdefault("catalog_schema_version", CATALOG_SCHEMA_VERSION)
+    complete_metadata.setdefault("attribution", OSM_ATTRIBUTION)
     return CatalogArtifact(places=tuple(places), metadata=complete_metadata)
 
 

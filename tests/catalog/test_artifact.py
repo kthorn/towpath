@@ -51,8 +51,58 @@ def test_catalog_artifact_has_exact_payload_and_round_trips(tmp_path: Path):
     loaded = load_catalog(path)
     assert loaded == artifact
     assert loaded.metadata["catalog_revision"] != ""
+    assert loaded.metadata["catalog_schema_version"] == 2
+    assert loaded.metadata["attribution"] == "© OpenStreetMap contributors"
     assert loaded.places[0].geometry_wkb == artifact.places[0].geometry_wkb
     assert loaded.places[0].metadata == artifact.places[0].metadata
+
+
+def _write_catalog_payload(
+    path: Path,
+    artifact,
+    **metadata_changes,
+) -> None:
+    metadata = {**artifact.metadata, **metadata_changes}
+    with path.open("wb") as stream:
+        pickle.dump({"places": list(artifact.places), "metadata": metadata}, stream)
+
+
+@pytest.mark.parametrize("version", [1, 3, "2", True])
+def test_catalog_loader_rejects_incompatible_schema_versions(
+    tmp_path: Path,
+    version,
+):
+    artifact = prepare_catalog([_place()], _metadata())
+    path = tmp_path / "incompatible.pkl"
+    _write_catalog_payload(path, artifact, catalog_schema_version=version)
+
+    with pytest.raises(
+        InvalidCatalogError,
+        match="metadata.catalog_schema_version",
+    ):
+        load_catalog(path)
+
+
+def test_catalog_loader_rejects_missing_schema_version(tmp_path: Path):
+    artifact = prepare_catalog([_place()], _metadata())
+    metadata = dict(artifact.metadata)
+    metadata.pop("catalog_schema_version")
+    path = tmp_path / "missing-version.pkl"
+    with path.open("wb") as stream:
+        pickle.dump({"places": list(artifact.places), "metadata": metadata}, stream)
+
+    with pytest.raises(InvalidCatalogError, match="metadata keys"):
+        load_catalog(path)
+
+
+@pytest.mark.parametrize("attribution", ["OpenStreetMap", "", None])
+def test_catalog_loader_rejects_wrong_attribution(tmp_path: Path, attribution):
+    artifact = prepare_catalog([_place()], _metadata())
+    path = tmp_path / "wrong-attribution.pkl"
+    _write_catalog_payload(path, artifact, attribution=attribution)
+
+    with pytest.raises(InvalidCatalogError, match="metadata.attribution"):
+        load_catalog(path)
 
 
 def test_catalog_artifact_rejects_bad_metadata_records_and_duplicate_identity(tmp_path):
