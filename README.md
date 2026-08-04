@@ -314,6 +314,12 @@ uv run pound-ingest catalog england \
   --profile
 ```
 
+Catalog artifacts use serialized contract version `2` and carry the exact
+attribution value `© OpenStreetMap contributors`. Catalog revisions identify
+individual builds and remain independent from routing artifact revisions.
+Catalogs built with an older or missing schema version are rejected at startup
+and must be rebuilt with `pound-ingest`; they are not migrated in place.
+
 A successful real-England build produced **185,029 records**, an
 **85,378,417-byte** artifact, in **200.49 s wall time**, with **2,534,084 KiB
 peak RSS**. The explicit build gates are: exactly 185,029 records for the same
@@ -384,6 +390,14 @@ POUND_CATALOG_PATH=/absolute/path/to/england-catalog.pkl \
 POUND_STATIC_DIR=web/dist \
 uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000
 ```
+
+`POST /api/catalog-places` supports an optional text filter of at most 256
+characters. Text is stripped, Unicode-casefolded, and matched by substring
+against the normalized primary or alternate OSM name. A `segment` policy
+accepts public GeoJSON `LineString` geometry and returns places within its
+radius, including the exact boundary, with `distance_to_segment_m` populated.
+Segment coordinates share the existing 10,000-coordinate request budget and
+the radius remains capped at 2,000 metres.
 
 Without `POUND_CATALOG_PATH`, routing remains available and catalog layers are
 unavailable by design. With a configured but missing or invalid catalog,
