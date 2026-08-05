@@ -35,6 +35,14 @@ _NEGATIVE_RULES = (
         re.compile(r"\bresidential|private|dry\s+dock|fuel|repairs?|marine\s+services\b"),
         -6,
     ),
+    ("negative", re.compile(r"\b(?:boat|canal)\s+trips?\b"), -6),
+    ("negative", re.compile(r"\bkayak\b"), -12),
+    ("negative", re.compile(r"\b(?:charter\s+boat|launch\s+hire)\b"), -6),
+    (
+        "negative",
+        re.compile(r"\b(?:project|carving|memorial|bench|office|stone|welcome\s+post)\b"),
+        -12,
+    ),
 )
 _FIELD_WEIGHTS = (
     ("name", 5),

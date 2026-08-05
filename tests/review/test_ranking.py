@@ -1,3 +1,5 @@
+import pytest
+
 from pound.catalog.metadata import NormalizedLink
 from pound.review.ranking import build_document, is_candidate, score_place
 from tests.review.fixtures import catalog_with, place
@@ -28,7 +30,7 @@ def test_boat_landmark_is_candidate_but_unrelated_landmark_is_not():
 
 def test_approved_landmark_signals_are_candidates_and_score_with_reasons():
     cases = (
-        ("Canal trips", 30, "canal trips"),
+        ("Canal trips", 0, "canal trips"),
         ("Pulteney Cruisers Ltd", 30, "cruisers"),
         ("Canal Boat Centre", 70, "canal boat"),
         ("Self-Drive", 60, "self drive"),
@@ -107,3 +109,50 @@ def test_links_preserve_all_labels_but_website_urls_only_include_websites():
     ]
     assert record.website_urls == ["https://hire.example/boats"]
     assert record.osm_url == "https://www.openstreetmap.org/node/3"
+
+
+@pytest.mark.parametrize(
+    ("name", "kind", "operator", "website", "expected_score", "reason"),
+    (
+        ("Canal Boat Project", "landmark", None, None, 10, "project"),
+        ("Kayak and Boat Hire", "landmark", None, None, 10, "kayak"),
+        ("Canal Boat Carving Welcome Post", "landmark", None, None, 10, "carving"),
+        ("Skipton Boat Trips", "landmark", "Pennine Boat Trips", None, 16, "boat trips"),
+        ("Sweet William Charter Boat", "marina", None, None, 20, "charter boat"),
+        ("Kings Staithe", "marina", "Wroxham Launch Hire", None, 10, "launch hire"),
+        ("Charter Stone", "landmark", None, None, 0, "stone"),
+        (
+            "Richardsons Boating Holidays",
+            "marina",
+            None,
+            None,
+            80,
+            "boating holidays",
+        ),
+        (
+            "Canal Cruising Company",
+            "marina",
+            None,
+            "https://www.canalcruising.co.uk/",
+            46,
+            "cruising",
+        ),
+        (
+            "Wherry Hathor",
+            "landmark",
+            "Wherry Yacht Charitable Charter Trust",
+            "https://www.wherryyachtcharter.org",
+            24,
+            "charter",
+        ),
+    ),
+)
+def test_feedback_rules_demote_false_positives_without_harming_positives(
+    name, kind, operator, website, expected_score, reason
+):
+    candidate = place(kind, name, operator=operator, website=website)
+
+    score, reasons = score_place(candidate)
+
+    assert score == expected_score
+    assert any(reason in detail for detail in reasons)
