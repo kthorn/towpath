@@ -135,6 +135,7 @@ class RoutePoi(BaseModel):
 
 MAX_ROUTE_POI_COORDINATES = 10_000
 MAX_CATALOG_ROUTE_COORDINATES = MAX_ROUTE_POI_COORDINATES
+MAX_CATALOG_TEXT_LENGTH = 256
 
 
 class CatalogQueryPolicyModel(BaseModel):
@@ -142,7 +143,7 @@ class CatalogQueryPolicyModel(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    basis: Literal["route", "waterway", "none"]
+    basis: Literal["route", "waterway", "segment", "none"]
     radius_m: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
@@ -162,12 +163,14 @@ class CatalogPlacesRequest(BaseModel):
     catalog_revision: str = Field(min_length=1)
     kinds: list[str]
     bounds: MapBounds
+    text: str | None = Field(default=None, max_length=MAX_CATALOG_TEXT_LENGTH)
+    segment_geometry: GeoJSONLineString | None = None
     route_geometry: GeoJSONLineString | None = None
     day_geometry: GeoJSONLineString | None = None
     day: int | None = Field(gt=0, default=None)
     policy: CatalogQueryPolicyModel
 
-    @field_validator("route_geometry", "day_geometry", mode="before")
+    @field_validator("route_geometry", "day_geometry", "segment_geometry", mode="before")
     @classmethod
     def require_numeric_line_coordinates(cls, geometry):
         if geometry is None:
@@ -184,7 +187,7 @@ class CatalogPlacesRequest(BaseModel):
                     raise ValueError("LineString coordinates must contain numbers")
         return geometry
 
-    @field_validator("route_geometry", "day_geometry")
+    @field_validator("route_geometry", "day_geometry", "segment_geometry")
     @classmethod
     def require_line_coordinates(cls, geometry: GeoJSONLineString | None):
         if geometry is None:
@@ -197,6 +200,14 @@ class CatalogPlacesRequest(BaseModel):
             if not math.isfinite(lat) or not -90 <= lat <= 90:
                 raise ValueError("LineString latitude must be finite and within -90 through 90")
         return geometry
+
+    @model_validator(mode="after")
+    def validate_segment_policy_geometry(self):
+        if self.policy.basis == "segment" and self.segment_geometry is None:
+            raise ValueError("segment policy requires segment_geometry")
+        if self.policy.basis != "segment" and self.segment_geometry is not None:
+            raise ValueError("segment_geometry requires a segment policy")
+        return self
 
 
 class CatalogPlaceResponse(BaseModel):
@@ -211,6 +222,7 @@ class CatalogPlaceResponse(BaseModel):
     waterway_distance_m: float | None = Field(default=None, ge=0)
     distance_to_full_route_m: float | None = Field(default=None, ge=0)
     distance_to_selected_geometry_m: float | None = Field(default=None, ge=0)
+    distance_to_segment_m: float | None = Field(default=None, ge=0)
     metadata: CatalogMetadata
 
 
