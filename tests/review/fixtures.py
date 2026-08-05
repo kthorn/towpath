@@ -62,9 +62,9 @@ def sample_record(*, decision=None):
         links=[ReviewLink(label="OpenStreetMap", url="https://www.openstreetmap.org/node/1")],
         website_urls=[],
         osm_url="https://www.openstreetmap.org/node/1",
-        likelihood_score=10,
+        likelihood_score=0,
         rank=1,
-        likelihood_reasons=["marina kind prior"],
+        likelihood_reasons=[],
         decision=decision,
         reviewed_at=None,
     )

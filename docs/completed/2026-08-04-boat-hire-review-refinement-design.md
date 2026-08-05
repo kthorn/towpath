@@ -15,7 +15,9 @@ JSON-backed, explainable, and free of website fetching or learned ranking.
 
 Keep candidate extraction broad: all named `marina` and `mooring` records remain
 eligible, as do boat-related `landmark` records. Existing positive rules and the
-mixed signals `marina`, `cruisers`, `narrowboats`, and bare `charter` remain.
+mixed signals `cruisers`, `narrowboats`, and bare `charter` remain.
+Marina records are still candidates but `marina` itself is not likelihood
+evidence: the kind prior is zero and no text rule targets it.
 
 Add only four contextual negative rule groups, each producing an auditable
 reason when matched:

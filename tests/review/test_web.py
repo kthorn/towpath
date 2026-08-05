@@ -234,10 +234,11 @@ def test_no_website_shows_osm_and_google_fallbacks(client):
     assert response.status_code == 200
     assert b"No website recorded" in response.data
     assert b"https://www.openstreetmap.org/node/2" in response.data
-    assert b'href="https://www.google.com/search?q=Second+Marina+%26+Mooring"' in response.data
     assert b"Search Google for Second Marina &amp; Mooring" in response.data
-    assert b'target="_blank"' in response.data
-    assert b'rel="noopener noreferrer"' in response.data
+    assert (
+        b'<a href="https://www.google.com/search?q=Second+Marina+%26+Mooring"'
+        b' target="_blank" rel="noopener noreferrer"'
+    ) in response.data
 
 
 def test_completed_unreviewed_view_has_completion_message(tmp_path):
