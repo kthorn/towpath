@@ -1,7 +1,7 @@
 # Boat-hire review refinement design
 
 - **Date:** 2026-08-04
-- **Status:** Approved in conversation; implementation pending
+- **Status:** Implementation complete
 - **Scope:** Refine the one-time standalone Flask reviewer generated from the OSM catalog.
 
 ## Goal
