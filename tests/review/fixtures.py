@@ -8,7 +8,16 @@ from pound.ingest.ir import OsmElementType
 from pound.review.models import ReviewDocument, ReviewLink, ReviewRecord
 
 
-def place(kind, name, *, operator=None, osm_id=None, website=None):
+def place(
+    kind,
+    name,
+    *,
+    operator=None,
+    osm_id=None,
+    website=None,
+    lat=51.0,
+    lon=-1.0,
+):
     osm_id = osm_id or 1000 + sum(map(ord, name))
     osm_url = f"https://www.openstreetmap.org/node/{osm_id}"
     links = [NormalizedLink(label="OpenStreetMap", url=osm_url)]
@@ -19,10 +28,10 @@ def place(kind, name, *, operator=None, osm_id=None, website=None):
         osm_id=osm_id,
         kind=kind,
         name=name,
-        lat=51.0,
-        lon=-1.0,
+        lat=lat,
+        lon=lon,
         metadata=CatalogMetadata(name=name, operator=operator, links=links),
-        geometry_wkb=wkb.dumps(Point(-1.0, 51.0), output_dimension=2),
+        geometry_wkb=wkb.dumps(Point(lon, lat), output_dimension=2),
         geometry_source="point",
     )
 

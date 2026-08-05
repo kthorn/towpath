@@ -1,7 +1,14 @@
+import networkx as nx
 import pytest
 
 from pound.catalog.metadata import NormalizedLink
-from pound.review.ranking import build_document, is_candidate, score_place
+from pound.graph.spatial import GraphSpatialIndex
+from pound.review.ranking import (
+    build_document,
+    filter_catalog_to_network,
+    is_candidate,
+    score_place,
+)
 from tests.review.fixtures import catalog_with, place
 
 
@@ -156,3 +163,43 @@ def test_feedback_rules_demote_false_positives_without_harming_positives(
 
     assert score == expected_score
     assert any(reason in detail for detail in reasons)
+
+
+def test_network_filter_removes_distant_places_and_preserves_retained_decisions():
+    graph = nx.Graph()
+    graph.add_node(1, lat=51.0, lon=-1.0)
+    graph.add_node(2, lat=51.0, lon=-0.99)
+    graph.add_edge(1, 2)
+    network_index = GraphSpatialIndex(graph)
+    near = place("marina", "Near Marina", osm_id=1, lat=51.0, lon=-1.0)
+    far = place("marina", "Far Marina", osm_id=2, lat=52.0, lon=-1.0)
+    catalog = catalog_with(near, far)
+
+    filtered = filter_catalog_to_network(catalog, network_index)
+    previous = build_document(catalog)
+    previous = previous.model_copy(
+        update={
+            "records": [
+                record.model_copy(
+                    update={
+                        "decision": (
+                            "vacation_hire" if record.name == "Near Marina" else "not_vacation_hire"
+                        ),
+                        "reviewed_at": (
+                            "2026-08-04T00:00:00Z"
+                            if record.name == "Near Marina"
+                            else "2026-08-04T00:01:00Z"
+                        ),
+                    }
+                )
+                for record in previous.records
+            ]
+        }
+    )
+
+    document = build_document(filtered, previous=previous)
+
+    assert [record.name for record in filtered.places] == ["Near Marina"]
+    assert [record.name for record in document.records] == ["Near Marina"]
+    assert document.records[0].decision == "vacation_hire"
+    assert document.records[0].reviewed_at == "2026-08-04T00:00:00Z"
