@@ -44,6 +44,11 @@
               </a>
             </p>
           {% endif %}
+          <p class="fallback">
+            <a href="{{ google_search_url(record.name) }}" target="_blank" rel="noopener noreferrer">
+              Search Google for {{ record.name }}
+            </a>
+          </p>
         {% endif %}
         <p class="attribution">
           <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">

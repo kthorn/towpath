@@ -227,12 +227,14 @@ def test_previous_and_next_links_use_ranked_neighbors(client):
     assert b"identity=node%2F3%2Fmarina" in response.data
 
 
-def test_no_website_shows_osm_fallback(client):
+def test_no_website_shows_osm_and_google_fallbacks(client):
     response = client.get("/?filter=all&identity=node/2/marina")
 
     assert response.status_code == 200
     assert b"No website recorded" in response.data
     assert b"https://www.openstreetmap.org/node/2" in response.data
+    assert b'href="https://www.google.com/search?q=Second+Marina"' in response.data
+    assert b"Search Google for Second Marina" in response.data
     assert b'target="_blank"' in response.data
     assert b'rel="noopener noreferrer"' in response.data
 
