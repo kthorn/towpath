@@ -54,13 +54,17 @@ def test_approved_landmark_signals_are_candidates_and_score_with_reasons():
 
 
 def test_strong_hire_phrase_outranks_generic_marina_and_exposes_reasons():
+    generic = place("marina", "Ordinary Marina")
     hire = place("marina", "Canal Boat Hire", operator="Holiday Narrowboats")
     club = place("marina", "Canal Boat Club", operator="Canal Cruising Association")
 
+    generic_score, generic_reasons = score_place(generic)
     hire_score, hire_reasons = score_place(hire)
     club_score, club_reasons = score_place(club)
 
-    assert hire_score > club_score
+    assert generic_score == 0
+    assert generic_reasons == []
+    assert hire_score > club_score > generic_score
     assert any("boat hire" in reason for reason in hire_reasons)
     assert any("club" in reason or "association" in reason for reason in club_reasons)
 
@@ -125,15 +129,15 @@ def test_links_preserve_all_labels_but_website_urls_only_include_websites():
         ("Kayak and Boat Hire", "landmark", None, None, 10, "kayak"),
         ("Canal Boat Carving Welcome Post", "landmark", None, None, 10, "carving"),
         ("Skipton Boat Trips", "landmark", "Pennine Boat Trips", None, 16, "boat trips"),
-        ("Sweet William Charter Boat", "marina", None, None, 20, "charter boat"),
-        ("Kings Staithe", "marina", "Wroxham Launch Hire", None, 10, "launch hire"),
+        ("Sweet William Charter Boat", "marina", None, None, 10, "charter boat"),
+        ("Kings Staithe", "marina", "Wroxham Launch Hire", None, 0, "launch hire"),
         ("Charter Stone", "landmark", None, None, 0, "stone"),
         (
             "Richardsons Boating Holidays",
             "marina",
             None,
             None,
-            80,
+            70,
             "boating holidays",
         ),
         (
@@ -141,7 +145,7 @@ def test_links_preserve_all_labels_but_website_urls_only_include_websites():
             "marina",
             None,
             "https://www.canalcruising.co.uk/",
-            46,
+            36,
             "cruising",
         ),
         (

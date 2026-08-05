@@ -28,7 +28,7 @@ _POSITIVE_RULES = (
         re.compile(r"\bcruisers?|cruising|(?:canal|boat)\s+trips?|charter|launch\s+hire\b"),
         6,
     ),
-    ("weak", re.compile(r"\bboats?|boatyard|marina\b"), 2),
+    ("weak", re.compile(r"\bboats?|boatyard\b"), 2),
 )
 _NEGATIVE_RULES = (
     ("negative", re.compile(r"\bclubs?|associations?|societies?\b"), -6),
@@ -54,7 +54,7 @@ _FIELD_WEIGHTS = (
     ("description", 2),
     ("website", 1),
 )
-_KIND_PRIORS = {"marina": 10, "mooring": 2, "landmark": 0}
+_KIND_PRIORS = {"marina": 0, "mooring": 2, "landmark": 0}
 
 
 def _normalized(value: str) -> str:
