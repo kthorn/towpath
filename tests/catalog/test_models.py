@@ -79,3 +79,20 @@ def test_catalog_metadata_forbids_raw_tags_and_validates_nested_address():
 
     with pytest.raises(ValidationError):
         CatalogMetadata.model_validate({"name": "Shop", "links": [], "source": "mapper-only"})
+
+
+def test_catalog_contract_excludes_graph_and_commercial_provider_fields():
+    forbidden_fields = {
+        "google_place_id",
+        "nearest_edge",
+        "nearest_node_uid",
+        "projected_lat",
+        "projected_lon",
+        "provider",
+        "provider_id",
+        "rating",
+        "reviews",
+    }
+
+    assert forbidden_fields.isdisjoint(CatalogPlace.model_fields)
+    assert forbidden_fields.isdisjoint(CatalogMetadata.model_fields)

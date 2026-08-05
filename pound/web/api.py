@@ -209,7 +209,11 @@ def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlace
         )
     coordinate_count = sum(
         len(geometry.coordinates)
-        for geometry in (body.route_geometry, body.day_geometry)
+        for geometry in (
+            body.route_geometry,
+            body.day_geometry,
+            body.segment_geometry,
+        )
         if geometry is not None
     )
     if coordinate_count > settings.catalog_max_route_vertices:
@@ -217,7 +221,7 @@ def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlace
             413,
             code="catalog_query_budget_exceeded",
             message="The catalog geometry exceeds the configured vertex budget.",
-            fields=["route_geometry", "day_geometry"],
+            fields=["route_geometry", "day_geometry", "segment_geometry"],
         )
     if body.policy.basis == "route" and body.route_geometry is None:
         raise _error(
@@ -259,6 +263,7 @@ def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlace
             coordinate=Coordinate(lat=place.lat, lon=place.lon),
             waterway_distance_m=result.waterway_distances[index],
             distance_to_full_route_m=result.full_route_distances[index],
+            distance_to_segment_m=result.segment_distances[index],
             distance_to_selected_geometry_m=result.selected_geometry_distances[index],
             metadata=place.metadata,
         )

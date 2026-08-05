@@ -35,6 +35,11 @@ def test_read_catalog_emits_all_supported_geometry_records_deterministically():
     )
     assert len({place.identity for place in places}) == len(places)
 
+    by_identity = {(place.osm_type, place.osm_id): place for place in places}
+    assert by_identity[(OsmElementType.NODE, 2002)].geometry_source == "point"
+    assert by_identity[(OsmElementType.RELATION, 2301)].geometry_source == "area"
+    assert by_identity[(OsmElementType.WAY, 2101)].geometry_source == "area"
+
 
 def test_read_catalog_assembles_linear_way_geometry(tmp_path):
     source = tmp_path / "linear.osm"
@@ -56,30 +61,43 @@ def test_read_catalog_assembles_linear_way_geometry(tmp_path):
     assert linear.kind == "mooring"
 
 
-def test_read_catalog_rejects_transport_pedestrian_inactive_and_malformed_objects(tmp_path):
+def test_read_catalog_reports_inactive_unnamed_duplicate_and_malformed_records(
+    tmp_path,
+):
     source = tmp_path / "catalog.osm"
     source.write_text(
         FIXTURE.read_text().replace(
             "</osm>",
             '<node id="2002" lat="51.7501" lon="-1.2601">'
-            '<tag k="amenity" v="pub"/><tag k="name" v="Towpath Arms"/></node>'
+            '<tag k="amenity" v="pub"/>'
+            '<tag k="name" v="Towpath Arms"/></node>'
             '<node id="9001" lat="51.7" lon="-1.2">'
-            '<tag k="amenity" v="pub"/><tag k="name" v="Towpath Arms"/></node>'
+            '<tag k="amenity" v="pub"/></node>'
             '<node id="9002" lat="51.7" lon="-1.2">'
-            '<tag k="amenity" v="pub"/><tag k="name" v="Closed Arms"/>'
+            '<tag k="amenity" v="pub"/>'
+            '<tag k="name" v="Closed Arms"/>'
             '<tag k="disused" v="yes"/></node>'
-            '<node id="9003" lat="51.7" lon="-1.2">'
-            '<tag k="amenity" v="pub"/><tag k="name" v="&lt;unsafe&gt;"/></node>'
+            '<relation id="9003">'
+            '<member type="way" ref="999999" role="outer"/>'
+            '<tag k="type" v="multipolygon"/>'
+            '<tag k="amenity" v="pub"/>'
+            '<tag k="name" v="Broken Arms"/></relation>'
             "</osm>",
         )
     )
 
     places = read_catalog(source)
+    report = places.report
 
-    identities = {place.identity for place in places}
-    assert (OsmElementType.NODE, 9001, "pub") in identities
-    assert (OsmElementType.NODE, 9002, "pub") not in identities
-    assert (OsmElementType.NODE, 9003, "pub") not in identities
+    assert report["duplicate"] >= 1
+    assert report["inactive"] >= 1
+    assert report["malformed"] >= 1
+    assert report["excluded_by_reason"]["unnamed"] >= 1
+    assert all(
+        place.metadata.links[-1].url == f"https://www.openstreetmap.org/"
+        f"{place.osm_type.value}/{place.osm_id}"
+        for place in places
+    )
 
 
 def test_read_catalog_is_independent_of_graph_bound_poi_fields():

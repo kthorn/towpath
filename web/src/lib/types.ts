@@ -110,7 +110,7 @@ export interface CatalogMetadata {
   kind_details: Record<string, string>;
 }
 
-export type CatalogPolicyBasis = 'route' | 'waterway' | 'none';
+export type CatalogPolicyBasis = 'route' | 'waterway' | 'segment' | 'none';
 
 export interface CatalogQueryPolicy {
   basis: CatalogPolicyBasis;
@@ -125,6 +125,7 @@ export interface CatalogPlace {
   waterway_distance_m: number | null;
   distance_to_full_route_m: number | null;
   distance_to_selected_geometry_m: number | null;
+  distance_to_segment_m: number | null;
   metadata: CatalogMetadata;
 }
 
@@ -132,8 +133,10 @@ export interface CatalogPlacesRequest {
   catalog_revision: string;
   kinds: string[];
   bounds: MapBounds;
+  text?: string | null;
   route_geometry?: GeoJSONLineString;
   day_geometry?: GeoJSONLineString;
+  segment_geometry?: GeoJSONLineString;
   day?: number | null;
   policy: CatalogQueryPolicy;
 }

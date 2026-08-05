@@ -27,7 +27,7 @@ const land: LandRoute = { path: [{ lat: 1, lon: 2 }], durationSeconds: 20, dista
 const canal: CanalRouteResponse = { route: { start: 'a', end: 'b', is_ring: false, legs: [], days: [], total_km: 1, total_locks: 0, total_minutes: 2, amenities: [], warnings: [], graph_source_date: 'today' }, geometry: { type: 'LineString', coordinates: [[-1, 51], [-2, 52]] } };
 const catalogPlace = (identity: string, kind: string) => ({
   identity, kind, name: kind, coordinate: { lat: 51.2, lon: -1.2 },
-  waterway_distance_m: 20, distance_to_full_route_m: 30, distance_to_selected_geometry_m: null,
+  waterway_distance_m: 20, distance_to_full_route_m: 30, distance_to_selected_geometry_m: null, distance_to_segment_m: null,
   metadata: { name: kind, alt_name: null, brand: null, operator: null, address: null, opening_hours: null,
     access: null, fee: null, wheelchair: null, phone: null, email: null, description: null, links: [], kind_details: {} },
 });

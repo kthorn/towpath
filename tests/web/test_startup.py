@@ -225,6 +225,53 @@ def test_startup_loads_catalog_after_routing_artifact(tmp_path: Path):
         }
 
 
+def test_incompatible_catalog_schema_degrades_without_breaking_startup(
+    tmp_path: Path,
+):
+    artifact_path = tmp_path / "graph.pkl"
+    catalog_path = tmp_path / "catalog.pkl"
+    save_artifact(
+        nx.Graph(),
+        [],
+        artifact_path,
+        artifact_metadata("route-revision"),
+    )
+    catalog = prepare_catalog(
+        (catalog_place("pub", 1, 51.0, -1.0),),
+        {
+            "source": "catalog-test",
+            "fetched_at": "2026-07-11T00:00:00Z",
+            "built_at": "2026-07-12T00:00:00Z",
+            "inventory_summary": {},
+            "build_summary": {},
+        },
+    )
+    _write_blob(
+        catalog_path,
+        {
+            "places": list(catalog.places),
+            "metadata": {
+                **catalog.metadata,
+                "catalog_schema_version": 1,
+            },
+        },
+    )
+    settings = WebSettings(
+        artifact_path=artifact_path,
+        static_dir=tmp_path / "static",
+        catalog_path=catalog_path,
+    )
+
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/health").json() == {
+            "status": "degraded",
+            "artifact_revision": "route-revision",
+            "catalog_revision": None,
+            "catalog_status": "unavailable",
+        }
+        assert client.app.state.graph.number_of_nodes() == 0
+
+
 def test_corrupt_catalog_degrades_health_without_breaking_routing_startup(tmp_path: Path):
     artifact_path = tmp_path / "graph.pkl"
     catalog_path = tmp_path / "catalog.pkl"

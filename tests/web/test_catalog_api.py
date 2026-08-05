@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import cast
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -39,6 +40,68 @@ def test_catalog_places_returns_normalized_places_and_distances(web_client: Test
     assert body["places"][0]["coordinate"] == {"lat": 51.0, "lon": -1.0}
     assert body["places"][0]["distance_to_full_route_m"] < 10
     assert body["places"][0]["metadata"]["name"] == "pub 201"
+
+
+def test_catalog_places_returns_segment_distance(web_client: TestClient):
+    response = web_client.post(
+        "/api/catalog-places",
+        json=_request(
+            web_client,
+            route_geometry=None,
+            segment_geometry={
+                "type": "LineString",
+                "coordinates": [[-1.1, 51.0], [-0.9, 51.0]],
+            },
+            policy={"basis": "segment", "radius_m": 2_000},
+        ),
+    )
+
+    assert response.status_code == 200
+    place = response.json()["places"][0]
+    assert place["distance_to_segment_m"] == pytest.approx(0, abs=10)
+    assert place["distance_to_full_route_m"] is None
+
+
+@pytest.mark.parametrize(
+    ("changes", "fields"),
+    [
+        ({"text": "x" * 257}, ["text"]),
+        (
+            {
+                "route_geometry": None,
+                "segment_geometry": {
+                    "type": "LineString",
+                    "coordinates": [["bad", 51.0], [-0.9, 51.0]],
+                },
+                "policy": {"basis": "segment", "radius_m": 2_000},
+            },
+            ["segment_geometry"],
+        ),
+        (
+            {
+                "route_geometry": None,
+                "policy": {"basis": "segment", "radius_m": 2_000},
+            },
+            ["body"],
+        ),
+    ],
+)
+def test_catalog_places_returns_structured_query_validation_errors(
+    web_client: TestClient,
+    changes,
+    fields,
+):
+    response = web_client.post(
+        "/api/catalog-places",
+        json=_request(web_client, **changes),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "code": "invalid_catalog_query",
+        "message": "Invalid catalog query.",
+        "fields": fields,
+    }
 
 
 def test_catalog_places_returns_selected_day_context(web_client: TestClient):
@@ -98,21 +161,14 @@ def test_catalog_places_rejects_invalid_geometry_consistency(web_client: TestCli
 
 
 def test_catalog_places_rejects_strict_body_types_and_extra_fields(web_client: TestClient):
-    assert (
-        web_client.post("/api/catalog-places", json=_request(web_client, extra=True)).status_code
-        == 422
-    )
-    assert (
-        web_client.post("/api/catalog-places", json=_request(web_client, kinds=[1])).status_code
-        == 422
-    )
-    assert (
-        web_client.post(
-            "/api/catalog-places",
-            json=_request(web_client, catalog_revision=123),
-        ).status_code
-        == 422
-    )
+    for payload in (
+        _request(web_client, extra=True),
+        _request(web_client, kinds=[1]),
+        _request(web_client, catalog_revision=123),
+    ):
+        response = web_client.post("/api/catalog-places", json=payload)
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "invalid_catalog_query"
 
 
 def test_catalog_places_rejects_geometry_budget_with_structured_error(web_client: TestClient):
@@ -129,6 +185,26 @@ def test_catalog_places_rejects_geometry_budget_with_structured_error(web_client
 
     assert response.status_code == 413
     assert response.json()["detail"]["code"] == "catalog_query_budget_exceeded"
+
+
+def test_catalog_places_rejects_segment_geometry_budget_with_segment_field(web_client: TestClient):
+    response = web_client.post(
+        "/api/catalog-places",
+        json=_request(
+            web_client,
+            route_geometry=None,
+            segment_geometry={
+                "type": "LineString",
+                "coordinates": [[-1.0, 51.0], [-1.0, 51.0]] * 5_001,
+            },
+            policy={"basis": "segment", "radius_m": 1_000},
+        ),
+    )
+
+    assert response.status_code == 413
+    detail = response.json()["detail"]
+    assert detail["code"] == "catalog_query_budget_exceeded"
+    assert "segment_geometry" in detail["fields"]
 
 
 def test_catalog_places_rejects_stale_revision(web_client: TestClient):

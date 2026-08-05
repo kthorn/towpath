@@ -153,13 +153,17 @@ def test_catalog_england_writes_independent_artifact_and_json_summary(tmp_path, 
     assert artifact.metadata["build_summary"]["duplicate"] == 0
     assert artifact.metadata["build_summary"]["excluded_by_reason"]["transport"] == 2
     assert set(artifact.metadata) == {
-        "catalog_revision",
-        "source",
-        "fetched_at",
-        "built_at",
-        "inventory_summary",
+        "attribution",
         "build_summary",
+        "built_at",
+        "catalog_revision",
+        "catalog_schema_version",
+        "fetched_at",
+        "inventory_summary",
+        "source",
     }
+    assert artifact.metadata["catalog_schema_version"] == 2
+    assert artifact.metadata["attribution"] == "© OpenStreetMap contributors"
 
 
 def test_catalog_england_filters_pbf_in_unique_temp_file_without_mutating_source(
