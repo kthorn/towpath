@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 from pound.catalog.geometry import normalize_catalog_geometry
 from pound.catalog.inventory import (
     _candidate_kind,
+    _is_artwork,
     _is_inactive,
     _is_pedestrian_access,
     _is_transport,
@@ -46,7 +47,7 @@ def _read_report(counts: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def read_catalog(path: Path, *, profiler: BuildProfiler | None = None) -> tuple[CatalogPlace, ...]:
+def read_catalog(path: Path, *, profiler: BuildProfiler | None = None) -> _CatalogPlaces:
     """Read named, active manifest records from an original OSM PBF or XML file."""
     import osmium
 
@@ -78,6 +79,9 @@ def read_catalog(path: Path, *, profiler: BuildProfiler | None = None) -> tuple[
     def classify(tags: dict[str, str]) -> str | None:
         if _is_inactive(tags):
             exclude("inactive")
+            return None
+        if _is_artwork(tags):
+            exclude("artwork")
             return None
         if _is_transport(tags):
             exclude("transport")
@@ -153,7 +157,11 @@ def read_catalog(path: Path, *, profiler: BuildProfiler | None = None) -> tuple[
             if object_name == "Area":
                 osm_type = OsmElementType.WAY if obj.from_way() else OsmElementType.RELATION
                 identity_source = (osm_type, obj.orig_id())
-                kind = _candidate_kind({tag.k: tag.v for tag in obj.tags})
+                area_tags = {tag.k: tag.v for tag in obj.tags}
+                if _is_artwork(area_tags):
+                    exclude("artwork")
+                    continue
+                kind = _candidate_kind(area_tags)
                 if kind is None:
                     continue
                 identity = (*identity_source, kind)

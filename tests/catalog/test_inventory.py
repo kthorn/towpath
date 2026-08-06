@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pound.catalog.inventory import inventory_pbf
+from pound.catalog.inventory import CATALOG_TAG_FILTER_EXPR, inventory_pbf
 from pound.catalog.manifest import (
     CATALOG_KINDS,
     CATALOG_METADATA_KEYS,
@@ -47,6 +47,29 @@ def test_inventory_reports_user_facing_kinds_and_exclusions():
         "toilets": 1,
         "waterway": 1,
     }
+
+
+def test_inventory_excludes_artwork_candidates(tmp_path):
+    source = tmp_path / "artwork.osm"
+    source.write_text(
+        '<?xml version="1.0"?><osm version="0.6">'
+        '<node id="1" lat="51.75" lon="-1.26">'
+        '<tag k="tourism" v="artwork"/><tag k="name" v="Boat Sculpture"/>'
+        "</node>"
+        '<node id="2" lat="51.75" lon="-1.26">'
+        '<tag k="tourism" v="attraction"/><tag k="artist_name" v="A. Artist"/>'
+        '<tag k="name" v="Artist Attraction"/></node>'
+        '<node id="3" lat="51.75" lon="-1.26">'
+        '<tag k="tourism" v="attraction"/><tag k="artwork_type" v="sculpture"/>'
+        '<tag k="name" v="Sculpture Attraction"/></node>'
+        "</osm>"
+    )
+
+    report = inventory_pbf(source)
+
+    assert report.candidate_objects == 0
+    assert report.excluded_counts["artwork"] == 3
+    assert "artwork" not in CATALOG_TAG_FILTER_EXPR
 
 
 def test_manifest_covers_the_approved_catalog_scope_and_budgets():

@@ -45,7 +45,6 @@ _CANDIDATE_TAGS: tuple[tuple[str, str, str], ...] = (
     ("tourism", "viewpoint", "landmark"),
     ("tourism", "theme_park", "landmark"),
     ("tourism", "water_park", "landmark"),
-    ("tourism", "artwork", "landmark"),
 )
 _HISTORIC_SITE_VALUES = frozenset(
     {
@@ -82,6 +81,7 @@ _PEDESTRIAN_TAGS = {
     ("barrier", "stile"),
 }
 _INACTIVE_KEYS = {"abandoned", "disused", "razed", "removed"}
+_ARTWORK_KEYS = ("artist_name", "artwork_type")
 
 
 def _build_catalog_tag_filter_expr() -> str:
@@ -126,6 +126,9 @@ def inventory_pbf(path: Path) -> CatalogInventory:
         if _is_inactive(tags):
             excluded["inactive"] += 1
             continue
+        if _is_artwork(tags):
+            excluded["artwork"] += 1
+            continue
 
         kind = _candidate_kind(tags)
         if kind is not None and kind in CATALOG_KINDS and tags.get("name", "").strip():
@@ -153,7 +156,15 @@ def inventory_pbf(path: Path) -> CatalogInventory:
     )
 
 
+def _is_artwork(tags: dict[str, str]) -> bool:
+    return tags.get("tourism") == "artwork" or any(
+        tags.get(key, "").strip() for key in _ARTWORK_KEYS
+    )
+
+
 def _candidate_kind(tags: dict[str, str]) -> str | None:
+    if _is_artwork(tags):
+        return None
     for key, value, kind in _CANDIDATE_TAGS:
         if tags.get(key) == value:
             return kind
