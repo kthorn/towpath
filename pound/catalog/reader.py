@@ -22,7 +22,7 @@ from pound.ingest.profile import BuildProfiler
 GeometrySource = Literal["point", "line", "area"]
 
 
-class _CatalogPlaces(tuple):
+class _CatalogPlaces(tuple[CatalogPlace, ...]):
     """Tuple-compatible places carrying the reader report for the build CLI."""
 
     report: dict[str, Any]
@@ -158,9 +158,6 @@ def read_catalog(path: Path, *, profiler: BuildProfiler | None = None) -> _Catal
                 osm_type = OsmElementType.WAY if obj.from_way() else OsmElementType.RELATION
                 identity_source = (osm_type, obj.orig_id())
                 area_tags = {tag.k: tag.v for tag in obj.tags}
-                if _is_artwork(area_tags):
-                    exclude("artwork")
-                    continue
                 kind = _candidate_kind(area_tags)
                 if kind is None:
                     continue
