@@ -7,6 +7,7 @@ import os
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from typing import get_args
 
 from pydantic import ValidationError
@@ -58,23 +59,26 @@ class ReviewStore:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.document = load_document(self.path)
+        # ponytail: process-local review server; add an interprocess lock for multi-process serving.
+        self._write_lock = Lock()
 
     def save_decision(self, identity: str, decision: ReviewDecision) -> ReviewDocument:
         """Persist a decision and review timestamp for one known identity."""
         if decision not in get_args(ReviewDecision):
             raise ValueError(f"invalid review decision: {decision!r}")
 
-        if not any(record.identity == identity for record in self.document.records):
-            raise ValueError(f"unknown review identity: {identity}")
+        with self._write_lock:
+            if not any(record.identity == identity for record in self.document.records):
+                raise ValueError(f"unknown review identity: {identity}")
 
-        reviewed_at = datetime.now(UTC).isoformat()
-        records = [
-            record.model_copy(update={"decision": decision, "reviewed_at": reviewed_at})
-            if record.identity == identity
-            else record
-            for record in self.document.records
-        ]
-        updated = self.document.model_copy(update={"records": records})
-        write_document(self.path, updated)
-        self.document = updated
-        return updated
+            reviewed_at = datetime.now(UTC).isoformat()
+            records = [
+                record.model_copy(update={"decision": decision, "reviewed_at": reviewed_at})
+                if record.identity == identity
+                else record
+                for record in self.document.records
+            ]
+            updated = self.document.model_copy(update={"records": records})
+            write_document(self.path, updated)
+            self.document = updated
+            return updated
