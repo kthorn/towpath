@@ -11,7 +11,9 @@ ARG VITE_TRANSFER_MODE
 ENV VITE_GOOGLE_MAPS_API_KEY=${VITE_GOOGLE_MAPS_API_KEY} \
     VITE_GOOGLE_MAP_ID=${VITE_GOOGLE_MAP_ID} \
     VITE_TRANSFER_MODE=${VITE_TRANSFER_MODE}
-RUN npm run build
+RUN test -n "$VITE_GOOGLE_MAPS_API_KEY" \
+    && test -n "$VITE_GOOGLE_MAP_ID" \
+    && npm run build
 
 FROM python:3.12-slim AS runtime
 
@@ -19,6 +21,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.22 /uv /usr/local/bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY pound/ pound/
+RUN test -f pound/artifacts/england.pkl
 RUN uv sync --locked --no-dev --no-editable
 COPY --from=web-builder /build/web/dist /app/web/dist
 
