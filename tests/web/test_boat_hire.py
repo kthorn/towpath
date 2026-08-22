@@ -137,6 +137,16 @@ def test_loader_reports_unreadable_csv_path(tmp_path: Path):
     assert str(path) in str(excinfo.value)
 
 
+def test_loader_reports_invalid_utf8_csv_path(tmp_path: Path):
+    path = tmp_path / "boat-hire.csv"
+    path.write_bytes(b"\xff\xfe\x00invalid-utf8")
+
+    with pytest.raises(ValueError) as excinfo:
+        load_boat_hire_seeds(path)
+    assert str(path) in str(excinfo.value)
+    assert "Could not read" in str(excinfo.value)
+
+
 def test_loader_selects_review_positive_row_regardless_of_provenance(tmp_path: Path):
     path = _csv(
         tmp_path,
@@ -144,6 +154,29 @@ def test_loader_selects_review_positive_row_regardless_of_provenance(tmp_path: P
     )
 
     assert load_boat_hire_seeds(path) == (BoatHireSeed("provider", "base:one", 51.0, -1.0),)
+
+
+def test_selector_keeps_every_seed_component_in_one_call():
+    graph = nx.Graph()
+    graph.add_edges_from(((1, 2), (3, 4), (5, 6)))
+
+    class _PerSeedProjector:
+        def project_to_nearest_edge(self, latitude: float, longitude: float):
+            edge = (1, 2) if latitude == 51.0 else (3, 4)
+            return edge, Point(longitude, latitude), 250.0
+
+    selected = select_boat_hire_overlay(
+        graph,
+        _PerSeedProjector(),  # type: ignore[arg-type] — deliberate duck-typed fixture
+        (
+            BoatHireSeed("provider", "base:one", 51.0, -1.0),
+            BoatHireSeed("provider", "base:two", 52.0, -2.0),
+        ),
+    )
+
+    assert set(selected.nodes) == {1, 2, 3, 4}
+    assert set(selected.edges) == {(1, 2), (3, 4)}
+    assert set(graph.nodes) == {1, 2, 3, 4, 5, 6}
 
 
 def test_selector_keeps_only_the_seed_component_and_accepts_250m():

@@ -41,7 +41,7 @@ BOAT_HIRE_ENRICHMENT_FIELDS: tuple[str, ...] = (
     "exclude",
 )
 
-BOAT_HIRE_OVERLAY_DISTANCE_M = 250.0
+BOAT_HIRE_OVERLAY_DISTANCE_M: float = 250.0
 _ALLOWED_EXCLUDE_VALUES = frozenset({"", "true", "false"})
 
 
@@ -69,7 +69,7 @@ def load_boat_hire_seeds(path: Path) -> tuple[BoatHireSeed, ...]:
             reader = csv.DictReader(stream)
             rows = list(reader)
             fieldnames = reader.fieldnames
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         raise ValueError(f"Could not read boat-hire enrichment CSV {path}") from exc
     if fieldnames is None:
         raise ValueError(f"Boat-hire enrichment CSV {path} is empty or unreadable")
