@@ -109,7 +109,7 @@ def test_settings_reject_invalid_tuning(field: str, value: int | float, tmp_path
     values: dict[str, Any] = {
         "artifact_path": tmp_path / "graph.pkl",
         "static_dir": tmp_path / "static",
-        "boat_hire_enrichment_path": tmp_path / "boat-hire.csv",
+        "boat_hire_enrichment_path": write_boat_hire_enrichment(tmp_path / "boat-hire.csv"),
     }
     values[field] = value
 
