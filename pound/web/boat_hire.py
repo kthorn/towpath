@@ -79,7 +79,7 @@ def load_boat_hire_seeds(path: Path) -> tuple[BoatHireSeed, ...]:
         )
 
     seeds: list[BoatHireSeed] = []
-    seen_identities: set[str] = set()
+    seen_identities: set[tuple[str, str]] = set()
     for row_number, row in enumerate(rows, start=2):
         if None in row:
             raise ValueError(f"Boat-hire enrichment CSV {path} row {row_number} has surplus cells")
@@ -91,12 +91,12 @@ def load_boat_hire_seeds(path: Path) -> tuple[BoatHireSeed, ...]:
                 f"Boat-hire enrichment CSV {path} row {row_number} requires nonblank "
                 "source_provider_id and location_id"
             )
-        if identity in seen_identities:
+        if (provider, location) in seen_identities:
             raise ValueError(
                 f"Boat-hire enrichment CSV {path} row {row_number} duplicates "
                 f"(source_provider_id, location_id) {identity!r}"
             )
-        seen_identities.add(identity)
+        seen_identities.add((provider, location))
         exclude = row["exclude"]
         if exclude not in _ALLOWED_EXCLUDE_VALUES:
             raise ValueError(

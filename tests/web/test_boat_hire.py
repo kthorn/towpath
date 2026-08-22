@@ -81,6 +81,19 @@ def test_loader_rejects_duplicate_provider_location_identity(tmp_path: Path):
         load_boat_hire_seeds(_csv(tmp_path, _row(), _row()))
 
 
+def test_loader_accepts_distinct_pairs_that_collide_as_joined_display_strings(tmp_path: Path):
+    path = _csv(
+        tmp_path,
+        _row(source_provider_id="a/b", location_id="c"),
+        _row(source_provider_id="a", location_id="b/c"),
+    )
+
+    assert load_boat_hire_seeds(path) == (
+        BoatHireSeed("a/b", "c", 51.0, -1.0),
+        BoatHireSeed("a", "b/c", 51.0, -1.0),
+    )
+
+
 def test_loader_rejects_surplus_row_cells(tmp_path: Path):
     path = tmp_path / "boat-hire.csv"
     row = _row()
@@ -130,7 +143,7 @@ def test_selector_keeps_only_the_seed_component_and_accepts_250m():
 
     selected = select_boat_hire_overlay(
         graph,
-        _Projector((1, 2), 250.0),
+        _Projector((1, 2), 250.0),  # type: ignore[arg-type] — deliberate duck-typed fixture
         (BoatHireSeed("provider", "base:one", 51.0, -1.0),),
     )
 
@@ -144,6 +157,6 @@ def test_selector_rejects_a_distance_just_over_the_inclusive_limit():
     with pytest.raises(ValueError, match="base:one"):
         select_boat_hire_overlay(
             graph,
-            _Projector((1, 2), math.nextafter(250.0, math.inf)),
+            _Projector((1, 2), math.nextafter(250.0, math.inf)),  # type: ignore[arg-type] — deliberate duck-typed fixture
             (BoatHireSeed("provider", "base:one", 51.0, -1.0),),
         )
