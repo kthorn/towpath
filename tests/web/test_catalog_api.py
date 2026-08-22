@@ -9,12 +9,13 @@ from pound.catalog.spatial import CatalogSpatialIndex
 from pound.graph.artifact import save_artifact
 from pound.web.app import create_app
 from pound.web.config import WebSettings
-from tests.web.conftest import catalog_place
+from tests.web.conftest import catalog_place, write_boat_hire_enrichment
 
 
 def _request(client: TestClient, **changes):
+    app = cast(FastAPI, client.app)
     payload = {
-        "catalog_revision": client.app.state.catalog_revision,
+        "catalog_revision": app.state.catalog_revision,
         "kinds": ["pub"],
         "bounds": {"south": 50.9, "west": -1.1, "north": 51.1, "east": -0.9},
         "route_geometry": {
@@ -28,11 +29,12 @@ def _request(client: TestClient, **changes):
 
 
 def test_catalog_places_returns_normalized_places_and_distances(web_client: TestClient):
+    app = cast(FastAPI, web_client.app)
     response = web_client.post("/api/catalog-places", json=_request(web_client))
 
     assert response.status_code == 200
     body = response.json()
-    assert body["catalog_revision"] == web_client.app.state.catalog_revision
+    assert body["catalog_revision"] == app.state.catalog_revision
     assert body["matching_count"] == 1
     assert body["over_cap"] is False
     assert body["day"] is None
@@ -235,7 +237,20 @@ def test_catalog_places_returns_503_when_catalog_is_unavailable(tmp_path: Path, 
             "poi_summary": {},
         },
     )
-    settings = WebSettings(artifact_path=artifact_path, static_dir=tmp_path / "static")
+    settings = WebSettings(
+        artifact_path=artifact_path,
+        static_dir=tmp_path / "static",
+        boat_hire_enrichment_path=write_boat_hire_enrichment(
+            tmp_path / "boat-hire.csv",
+            rows=[
+                {
+                    "source_provider_id": "test-provider",
+                    "location_id": "base:test",
+                    "exclude": "true",
+                }
+            ],
+        ),
+    )
 
     with TestClient(create_app(settings)) as client:
         response = client.post(

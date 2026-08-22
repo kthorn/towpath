@@ -1,3 +1,4 @@
+import csv
 from collections.abc import Generator
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from pound.catalog.models import CatalogPlace
 from pound.graph.artifact import save_artifact
 from pound.ingest.ir import OsmElementType, PoiCategory, PointOfInterest, WayDimensions
 from pound.web.app import create_app
+from pound.web.boat_hire import BOAT_HIRE_ENRICHMENT_FIELDS
 from pound.web.config import WebSettings
 
 
@@ -39,6 +41,28 @@ def artifact_metadata(revision: str, *, source: str = "test") -> dict:
         "validation": {},
         "poi_summary": {},
     }
+
+
+def write_boat_hire_enrichment(
+    path: Path,
+    *,
+    rows: list[dict[str, str]] | None = None,
+) -> Path:
+    default = dict.fromkeys(BOAT_HIRE_ENRICHMENT_FIELDS, "")
+    default.update(
+        record_type="company_base",
+        source_provider_id="test-provider",
+        location_id="base:test",
+        latitude="51.0",
+        longitude="-1.0",
+        osm_url="https://www.openstreetmap.org/node/1",
+        exclude="",
+    )
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=BOAT_HIRE_ENRICHMENT_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows if rows is not None else [default])
+    return path
 
 
 @pytest.fixture
@@ -149,6 +173,7 @@ def web_client(tmp_path: Path, route_graph: nx.Graph) -> Generator[TestClient, N
     settings = WebSettings(
         artifact_path=artifact_path,
         static_dir=tmp_path / "static",
+        boat_hire_enrichment_path=write_boat_hire_enrichment(tmp_path / "boat-hire.csv"),
         catalog_path=catalog_path,
         candidate_pool_size=3,
         google_destination_limit=2,

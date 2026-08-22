@@ -36,5 +36,9 @@ def test_network_startup_failure_is_nonfatal(web_client: TestClient, monkeypatch
         )
 
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "network_unavailable"
+    assert response.json()["detail"] == {
+        "code": "network_unavailable",
+        "message": "The canal network overlay is unavailable.",
+        "fields": [],
+    }
     assert route_response.status_code == 200

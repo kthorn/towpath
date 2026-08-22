@@ -64,9 +64,9 @@ def _error(status_code: int, *, code: str, message: str, fields: list[str] | Non
 
 @router.get("/canal-network", response_model=CanalNetworkResponse)
 def canal_network(request: Request) -> CanalNetworkResponse:
-    """Return the startup-prepared full canal network overlay."""
+    """Return the startup-prepared canal network overlay."""
 
-    if request.app.state.network_error is not None:
+    if request.app.state.network_error is not None or not request.app.state.network_lines:
         raise _error(
             503,
             code="network_unavailable",

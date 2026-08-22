@@ -6,13 +6,30 @@ from fastapi.testclient import TestClient
 from pound.graph.artifact import save_artifact
 from pound.web.app import create_app
 from pound.web.config import WebSettings
-from tests.web.conftest import artifact_metadata
+from tests.web.conftest import artifact_metadata, write_boat_hire_enrichment
 
 
 def _client(tmp_path: Path, static_dir: Path) -> TestClient:
     artifact = tmp_path / "graph.pkl"
     save_artifact(nx.Graph(), [], artifact, artifact_metadata("static-test"))
-    return TestClient(create_app(WebSettings(artifact_path=artifact, static_dir=static_dir)))
+    return TestClient(
+        create_app(
+            WebSettings(
+                artifact_path=artifact,
+                static_dir=static_dir,
+                boat_hire_enrichment_path=write_boat_hire_enrichment(
+                    tmp_path / "boat-hire.csv",
+                    rows=[
+                        {
+                            "source_provider_id": "test-provider",
+                            "location_id": "base:test",
+                            "exclude": "true",
+                        }
+                    ],
+                ),
+            )
+        )
+    )
 
 
 def test_static_site_serves_index_assets_and_client_routes(tmp_path: Path):
