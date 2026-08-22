@@ -128,6 +128,15 @@ def test_loader_reports_missing_or_empty_csv_path(tmp_path: Path, content: str |
     assert str(path) in str(excinfo.value)
 
 
+def test_loader_reports_unreadable_csv_path(tmp_path: Path):
+    path = tmp_path / "boat-hire-dir"
+    path.mkdir()
+
+    with pytest.raises(ValueError) as excinfo:
+        load_boat_hire_seeds(path)
+    assert str(path) in str(excinfo.value)
+
+
 def test_loader_selects_review_positive_row_regardless_of_provenance(tmp_path: Path):
     path = _csv(
         tmp_path,
