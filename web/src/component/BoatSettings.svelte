@@ -27,8 +27,8 @@
     return parsed;
   }
 
-  function parseBridgeDelay(value: string | number): number | null {
-    if (String(value).trim() === '') return null;
+  function parseBridgeDelay(value: string | number | null): number | null {
+    if (value === null || String(value).trim() === '') return null;
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed < 0) throw new Error('Movable-bridge delay must be zero or greater.');
     return parsed;

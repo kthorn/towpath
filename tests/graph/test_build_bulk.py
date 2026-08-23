@@ -1,4 +1,5 @@
 import networkx as nx
+import pytest
 
 from pound.graph.build import build_graph
 from pound.graph.locks import attach_locks
@@ -333,6 +334,42 @@ def test_tunnel_way_emits_sorted_restrictions():
         (102, "oneway:boat", "yes"),
         (102, "opening_hours", "Mo-Fr 09:00-17:00"),
     )
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected"),
+    [
+        ({"oneway": "yes"}, ((104, "oneway", "yes"),)),
+        ({"oneway": "no"}, ()),
+        ({"access": "private"}, ((104, "access", "private"),)),
+        ({"access": "yes"}, ()),
+        ({"boat": "private"}, ((104, "boat", "private"),)),
+        ({"boat": "yes"}, ()),
+        (
+            {"oneway:conditional": "yes @ (Mo-Fr)"},
+            ((104, "oneway:conditional", "yes @ (Mo-Fr)"),),
+        ),
+        ({"restriction": "no_entry"}, ((104, "restriction", "no_entry"),)),
+        (
+            {"restriction:boat": "no_entry"},
+            ((104, "restriction:boat", "no_entry"),),
+        ),
+    ],
+)
+def test_tunnel_way_emits_each_unmodeled_restriction(tags, expected):
+    way = _way(
+        104,
+        WaterwayKind.CANAL,
+        "Tunnel reach",
+        [1, 2],
+        [(51.75, -1.26), (51.751, -1.261)],
+        tags={"waterway": "canal", "tunnel": "yes", **tags},
+        has_tunnel=True,
+    )
+
+    graph = build_graph(_features([way]))
+
+    assert next(data for _, _, data in graph.edges(data=True))["tunnel_restrictions"] == expected
 
 
 def test_coincident_way_preserves_tunnel_restrictions():
