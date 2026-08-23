@@ -62,6 +62,19 @@ def test_loader_includes_blank_and_false_rows_but_ignores_true_rows(tmp_path: Pa
     )
 
 
+def test_loader_accepts_evidence_only_drifters_map_row(tmp_path: Path):
+    path = _csv(
+        tmp_path,
+        _row(
+            source_provider_id="drifters",
+            osm_url="",
+            evidence_url="https://www.drifters.co.uk/uk-canal-map/",
+        ),
+    )
+
+    assert load_boat_hire_seeds(path) == (BoatHireSeed("drifters", "base:one", 51.0, -1.0),)
+
+
 @pytest.mark.parametrize(
     ("changes", "message"),
     [
