@@ -7,7 +7,14 @@ import pytest
 from pound.graph.build import build_graph
 from pound.graph.gazetteer import attach_node_names, build_gazetteer
 from pound.graph.locks import attach_locks
-from pound.ingest.ir import WayDimensions
+from pound.ingest.filters import filter_navigable_ways
+from pound.ingest.ir import (
+    AccessCaveat,
+    WaterwayFeatures,
+    WaterwayKind,
+    WaterwayWay,
+    WayDimensions,
+)
 from pound.ingest.overpass import parse
 from pound.route.cost import (
     CRUISE_KMH,
@@ -18,6 +25,38 @@ from pound.route.cost import (
 from pound.route.plan import plan_canal_route, plan_route, plan_route_from_constraints
 from pound.schemas import CanalConstraints, Coordinate, ResolvedConstraints
 from tests.fixtures import oxford_fixture_path
+
+
+def _access_caveat_graph():
+    graph = nx.Graph(fetched_at="2026-08-23T00:00:00Z")
+    for uid, lon, name in ((1, -1.0, "Start"), (2, -0.99, "Middle"), (3, -0.98, "End")):
+        graph.add_node(uid, lat=51.0, lon=lon, name=name, movable_bridge_ids=())
+    dimensions = WayDimensions()
+    graph.add_edge(
+        1,
+        2,
+        length_m=700.0,
+        locks=0,
+        dimensions=dimensions,
+        osm_way_id=10,
+        geometry=[(51.0, -1.0), (51.0, -0.99)],
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
+        access_caveats=(AccessCaveat(10, "boat", "discouraged", "discouraged"),),
+    )
+    graph.add_edge(
+        2,
+        3,
+        length_m=700.0,
+        locks=0,
+        dimensions=dimensions,
+        osm_way_id=20,
+        geometry=[(51.0, -0.99), (51.0, -0.98)],
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
+        access_caveats=(AccessCaveat(20, "access", "customers", "unknown"),),
+    )
+    return graph
 
 
 def _graph_and_gaz():
@@ -188,6 +227,32 @@ def test_selected_tunnel_restrictions_are_warnings():
     ]
 
 
+def test_access_caveats_suppress_duplicate_tunnel_warnings():
+    graph = _infrastructure_graph(2)
+    graph.add_edge(
+        1,
+        2,
+        length_m=100.0,
+        locks=0,
+        dimensions=WayDimensions(),
+        osm_way_id=77,
+        has_tunnel=True,
+        movable_bridge_ids=(),
+        tunnel_restrictions=(
+            (77, "boat", "discouraged"),
+            (77, "access", "permissive"),
+        ),
+        access_caveats=(AccessCaveat(77, "boat", "discouraged", "discouraged"),),
+    )
+
+    route = plan_route(ResolvedConstraints(start_uid=1, end_uid=2), graph=graph)
+
+    assert route.warnings == [
+        "Route uses 1 segment(s) tagged boat=discouraged; verify local access.",
+        'tunnel way 77: unmodeled restriction access="permissive"',
+    ]
+
+
 def test_empty_oneway_value_survives_artifact_validation_and_warns():
     from pound.graph.artifact import prepare_artifact
 
@@ -208,6 +273,7 @@ def test_empty_oneway_value_survives_artifact_validation_and_warns():
         geometry=[(51.0, -1.0), (51.0, -0.98)],
         movable_bridge_ids=(),
         tunnel_restrictions=((77, "oneway", ""),),
+        access_caveats=(),
     )
     metadata = {
         "source": "overpass",
@@ -231,6 +297,73 @@ def test_warnings_flag_unknown_dims():
     (rc, g) = _resolved(days=1, boat_beam_m=2.0, boat_draft_m=0.8)
     r = plan_route(rc, graph=g)
     assert any("unknown" in w.lower() for w in r.warnings)
+
+
+def test_route_reports_selected_access_caveats_without_mutating_graph():
+    graph = _access_caveat_graph()
+    before = copy.deepcopy({(u, v): data for u, v, data in graph.edges(data=True)})
+    route = plan_route(ResolvedConstraints(start_uid=1, end_uid=3), graph=graph)
+    assert [segment.model_dump() for segment in route.access_segments] == [
+        {
+            "from_uid": 1,
+            "to_uid": 2,
+            "osm_way_id": 10,
+            "kind": "discouraged",
+            "tag": "boat",
+            "value": "discouraged",
+        },
+        {
+            "from_uid": 2,
+            "to_uid": 3,
+            "osm_way_id": 20,
+            "kind": "unknown",
+            "tag": "access",
+            "value": "customers",
+        },
+    ]
+    assert route.warnings == [
+        "Route uses 1 segment(s) tagged boat=discouraged; verify local access.",
+        'Route uses 1 segment(s) with unrecognized access="customers"; verify local access.',
+    ]
+    assert {(u, v): data for u, v, data in graph.edges(data=True)} == before
+
+
+def test_public_filter_removes_private_shortcut_before_route_planning():
+    def way(osm_id, tags, node_ids, geometry):
+        return WaterwayWay(
+            osm_id=osm_id,
+            kind=WaterwayKind.CANAL,
+            name=None,
+            tags=tags,
+            node_ids=node_ids,
+            geometry=geometry,
+            dimensions=WayDimensions(),
+        )
+
+    features = WaterwayFeatures(
+        ways=[
+            way(
+                30,
+                {"waterway": "canal", "access": "private"},
+                [1, 3],
+                [(51.0, -1.0), (51.0, -0.98)],
+            ),
+            way(10, {"waterway": "canal"}, [1, 2], [(51.0, -1.0), (51.0, -0.99)]),
+            way(20, {"waterway": "canal"}, [2, 3], [(51.0, -0.99), (51.0, -0.98)]),
+        ],
+        nodes=[],
+        source="test",
+        fetched_at="2026-08-23T00:00:00Z",
+        bbox=None,
+    )
+    graph = build_graph(filter_navigable_ways(features))
+    start = next(uid for uid, data in graph.nodes(data=True) if "1" in data["osm_node_ids"])
+    end = next(uid for uid, data in graph.nodes(data=True) if "3" in data["osm_node_ids"])
+    route = plan_route(ResolvedConstraints(start_uid=start, end_uid=end), graph=graph)
+
+    assert 30 not in {data["osm_way_id"] for _, _, data in graph.edges(data=True)}
+    assert route.total_km > 0
+    assert route.access_segments == []
 
 
 def test_graph_source_date_from_metadata():

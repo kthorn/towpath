@@ -30,6 +30,15 @@ export interface RouteLeg {
   flagged_unknown_dims: boolean;
 }
 
+export interface RouteAccessSegment {
+  from_uid: number;
+  to_uid: number;
+  osm_way_id: number;
+  kind: 'discouraged' | 'unknown';
+  tag: 'boat' | 'access';
+  value: string;
+}
+
 export interface DayPlan {
   day: number;
   legs: RouteLeg[];
@@ -57,6 +66,7 @@ export interface RouteResult {
   total_minutes: number;
   amenities: Amenity[];
   warnings: string[];
+  access_segments: RouteAccessSegment[];
   graph_source_date: string;
 }
 

@@ -13,6 +13,7 @@ from pound.schemas import (
     DayPlan,
     GeoJSONLineString,
     ResolvedConstraints,
+    RouteAccessSegment,
     RouteDayGeometry,
     RouteLeg,
     RouteLock,
@@ -75,6 +76,41 @@ def test_route_result_round_trip():
     assert restored == result
     assert restored.legs[0].flagged_unknown_dims is False
     assert restored.warnings == []
+    assert restored.access_segments == []
+
+
+def test_route_access_segment_uses_canonical_endpoint_order():
+    segment = RouteAccessSegment(
+        from_uid=1,
+        to_uid=2,
+        osm_way_id=10,
+        kind="discouraged",
+        tag="boat",
+        value="discouraged",
+    )
+
+    assert segment.model_dump() == {
+        "from_uid": 1,
+        "to_uid": 2,
+        "osm_way_id": 10,
+        "kind": "discouraged",
+        "tag": "boat",
+        "value": "discouraged",
+    }
+
+
+def test_route_access_segment_rejects_reverse_endpoint_order():
+    with pytest.raises(
+        ValidationError, match="access segment edge must use ascending endpoint uids"
+    ):
+        RouteAccessSegment(
+            from_uid=2,
+            to_uid=1,
+            osm_way_id=10,
+            kind="unknown",
+            tag="access",
+            value="customers",
+        )
 
 
 def test_resolved_constraints_has_uids_not_strings():

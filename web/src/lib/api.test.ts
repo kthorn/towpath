@@ -70,6 +70,7 @@ const routeResponse: CanalRouteResponse = {
       },
     ],
     warnings: [],
+    access_segments: [],
     graph_source_date: '2026-07-11',
   },
   geometry: {
