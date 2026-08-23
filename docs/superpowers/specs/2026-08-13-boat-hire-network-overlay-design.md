@@ -46,7 +46,9 @@ At application startup, after loading the full, validated undirected graph:
 1. Parse and validate the CSV.
 2. For every non-excluded row, use the existing `GraphSpatialIndex.project_to_nearest_edge`
    to find the nearest routing-eligible edge.
-3. Require the metric edge distance to be at most the inclusive 250 m threshold.
+3. Require the metric edge distance to be at most the inclusive 250 m threshold,
+   except the documented `canal-holidays/base:62` 251 m exception in
+   `docs/completed/2026-08-23-canal-holidays-base-62-snap-exception-design.md`.
    A farther base is a startup error rather than a silently omitted seed.
 4. Use `networkx.connected_components` on the undirected graph. Each snapped edge
    selects the component containing either endpoint.
@@ -63,7 +65,10 @@ There is no client-side filtering and no API schema change.
 Missing CSV configuration, an unreadable/invalid CSV, an unsupported coverage
 `exclude` value, a duplicate `(source_provider_id, location_id)`, missing or malformed
 non-excluded coordinates, missing non-excluded location evidence, or a non-excluded
-base farther than 250 m from a routing-eligible edge fails startup. Silent fallback
+base farther than its applicable threshold—250 m by default or 251 m only for
+`canal-holidays/base:62` under
+`docs/completed/2026-08-23-canal-holidays-base-62-snap-exception-design.md`—fails
+startup. Silent fallback
 to the full overlay is never allowed.
 
 If valid non-excluded data selects zero graph components, routing still starts normally,
@@ -85,7 +90,9 @@ Add focused checks for:
 - CSV schema and the exact allowed `exclude` values.
 - Complete valid/evidenced coordinates for each non-excluded row; excluded rows are
   ignored by seed validation.
-- Exact 250 m acceptance and just-over-threshold rejection.
+- Exact 250 m acceptance and just-over-threshold rejection for ordinary seeds;
+  exact 251 m acceptance and just-over-threshold rejection only for
+  `canal-holidays/base:62`.
 - Two edge-bearing disconnected graph components where a base near one produces
   overlay geometry only for that component while the full graph still routes across
   its original component.
