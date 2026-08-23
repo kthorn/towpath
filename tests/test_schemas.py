@@ -18,6 +18,7 @@ from pound.schemas import (
     RouteLock,
     RouteResult,
 )
+from pound.web.api import CanalRouteRequest
 
 
 def test_canal_constraints_defaults():
@@ -30,6 +31,19 @@ def test_canal_constraints_defaults():
     assert c.amenity_prefs == []
     assert "allow_derelict" not in CanalConstraints.model_fields
     assert "allow_derelict" not in ResolvedConstraints.model_fields
+
+
+def test_movable_bridge_delay_is_finite_and_nonnegative():
+    assert CanalConstraints(start="A", movable_bridge_delay_min=0).movable_bridge_delay_min == 0
+    with pytest.raises(ValidationError):
+        ResolvedConstraints(start_uid=1, end_uid=2, movable_bridge_delay_min=float("inf"))
+    with pytest.raises(ValidationError):
+        CanalRouteRequest(
+            start_uid=1,
+            end_uid=2,
+            artifact_revision="r",
+            movable_bridge_delay_min=float("nan"),
+        )
 
 
 def test_route_result_round_trip():

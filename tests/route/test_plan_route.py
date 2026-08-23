@@ -9,7 +9,12 @@ from pound.graph.gazetteer import attach_node_names, build_gazetteer
 from pound.graph.locks import attach_locks
 from pound.ingest.ir import WayDimensions
 from pound.ingest.overpass import parse
-from pound.route.cost import CRUISE_KMH, LOCK_MINUTES, time_min
+from pound.route.cost import (
+    CRUISE_KMH,
+    DEFAULT_MOVABLE_BRIDGE_DELAY_MIN,
+    LOCK_MINUTES,
+    time_min,
+)
 from pound.route.plan import plan_canal_route, plan_route, plan_route_from_constraints
 from pound.schemas import CanalConstraints, Coordinate, ResolvedConstraints
 from tests.fixtures import oxford_fixture_path
@@ -78,8 +83,109 @@ def test_total_minutes_matches_time_min_over_edges():
     r = plan_route(rc, graph=g)
     # rounding accumulates across the 4 legs; the existing Scope C test uses abs=1
     assert r.total_minutes == pytest.approx(
-        round(time_min(r.total_km * 1000, r.total_locks)), abs=1
+        round(
+            time_min(
+                r.total_km * 1000,
+                r.total_locks,
+                movable_bridge_delay_min=DEFAULT_MOVABLE_BRIDGE_DELAY_MIN,
+            )
+        ),
+        abs=1,
     )
+
+
+def _infrastructure_graph(node_count: int) -> nx.Graph:
+    graph = nx.Graph()
+    for uid in range(1, node_count + 1):
+        graph.add_node(
+            uid,
+            lat=float(uid),
+            lon=float(uid),
+            name=str(uid),
+            movable_bridge_ids=(),
+        )
+    return graph
+
+
+def test_movable_bridge_delay_changes_selected_path():
+    graph = _infrastructure_graph(4)
+    for u, v, length_m, osm_way_id, movable_bridge_ids in (
+        (1, 2, 500.0, 12, ("way:12",)),
+        (2, 4, 500.0, 24, ()),
+        (1, 3, 650.0, 13, ()),
+        (3, 4, 650.0, 34, ()),
+    ):
+        graph.add_edge(
+            u,
+            v,
+            length_m=length_m,
+            locks=0,
+            dimensions=WayDimensions(),
+            osm_way_id=osm_way_id,
+            movable_bridge_ids=movable_bridge_ids,
+            tunnel_restrictions=(),
+        )
+
+    default_delay = plan_route(
+        ResolvedConstraints(start_uid=1, end_uid=4, movable_bridge_delay_min=None), graph=graph
+    )
+    zero_delay = plan_route(
+        ResolvedConstraints(start_uid=1, end_uid=4, movable_bridge_delay_min=0.0), graph=graph
+    )
+
+    assert [(leg.from_place, leg.to_place) for leg in default_delay.legs] == [
+        ("1", "3"),
+        ("3", "4"),
+    ]
+    assert [(leg.from_place, leg.to_place) for leg in zero_delay.legs] == [("1", "2"), ("2", "4")]
+
+
+def test_arrived_at_movable_bridge_node_costs_once():
+    graph = _infrastructure_graph(3)
+    graph.nodes[2]["movable_bridge_ids"] = ("node:2",)
+    for u, v, osm_way_id in ((1, 2, 12), (2, 3, 23)):
+        graph.add_edge(
+            u,
+            v,
+            length_m=0.0,
+            locks=0,
+            dimensions=WayDimensions(),
+            osm_way_id=osm_way_id,
+            movable_bridge_ids=(),
+            tunnel_restrictions=(),
+        )
+
+    route = plan_route(
+        ResolvedConstraints(start_uid=1, end_uid=3, movable_bridge_delay_min=None), graph=graph
+    )
+
+    assert [leg.est_minutes for leg in route.legs] == [DEFAULT_MOVABLE_BRIDGE_DELAY_MIN, 0]
+    assert route.total_minutes == DEFAULT_MOVABLE_BRIDGE_DELAY_MIN
+
+
+def test_selected_tunnel_restrictions_are_warnings():
+    graph = _infrastructure_graph(2)
+    graph.add_edge(
+        1,
+        2,
+        length_m=100.0,
+        locks=0,
+        dimensions=WayDimensions(),
+        osm_way_id=77,
+        has_tunnel=True,
+        movable_bridge_ids=(),
+        tunnel_restrictions=(
+            (77, "oneway:boat", "yes"),
+            (77, "opening_hours", "Mo-Fr 09:00-17:00"),
+        ),
+    )
+
+    route = plan_route(ResolvedConstraints(start_uid=1, end_uid=2), graph=graph)
+
+    assert route.warnings == [
+        'tunnel way 77: unmodeled restriction oneway:boat="yes"',
+        'tunnel way 77: unmodeled restriction opening_hours="Mo-Fr 09:00-17:00"',
+    ]
 
 
 def test_locks_counted_on_lock_edge():
@@ -231,8 +337,8 @@ def test_plan_canal_route_emits_day_geometries_and_route_locks():
 
 def test_far_source_lock_point_falls_back_to_approximate_midpoint():
     graph = nx.Graph()
-    graph.add_node(1, lat=51.0, lon=-1.0, name="Start")
-    graph.add_node(2, lat=51.0, lon=-0.98, name="End")
+    graph.add_node(1, lat=51.0, lon=-1.0, name="Start", movable_bridge_ids=())
+    graph.add_node(2, lat=51.0, lon=-0.98, name="End", movable_bridge_ids=())
     graph.add_edge(
         1,
         2,
@@ -242,6 +348,8 @@ def test_far_source_lock_point_falls_back_to_approximate_midpoint():
         lock_points=[(52.0, -1.0)],
         dimensions=WayDimensions(),
         osm_way_id=1,
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
     )
 
     response = plan_canal_route(ResolvedConstraints(start_uid=1, end_uid=2), graph=graph)
@@ -253,8 +361,8 @@ def test_far_source_lock_point_falls_back_to_approximate_midpoint():
 
 def test_approximate_lock_uses_midpoint_along_curved_geometry():
     graph = nx.Graph()
-    graph.add_node(1, lat=0, lon=0, name="Start")
-    graph.add_node(2, lat=0, lon=2, name="End")
+    graph.add_node(1, lat=0, lon=0, name="Start", movable_bridge_ids=())
+    graph.add_node(2, lat=0, lon=2, name="End", movable_bridge_ids=())
     graph.add_edge(
         1,
         2,
@@ -263,6 +371,8 @@ def test_approximate_lock_uses_midpoint_along_curved_geometry():
         locks=1,
         dimensions=WayDimensions(),
         osm_way_id=1,
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
     )
 
     response = plan_canal_route(ResolvedConstraints(start_uid=1, end_uid=2), graph=graph)

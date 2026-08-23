@@ -1,7 +1,7 @@
 from pound.ingest.ir import WayDimensions
 from pound.route.cost import (
-    BRIDGE_MINUTES,
     CRUISE_KMH,
+    DEFAULT_MOVABLE_BRIDGE_DELAY_MIN,
     LOCK_MINUTES,
     is_eligible,
     time_min,
@@ -11,16 +11,19 @@ from pound.route.cost import (
 def test_constants_match_design():
     assert CRUISE_KMH == 4.8
     assert LOCK_MINUTES == 12
-    assert BRIDGE_MINUTES == 5
+
+
+def test_default_movable_bridge_delay_is_five_minutes():
+    assert DEFAULT_MOVABLE_BRIDGE_DELAY_MIN == 5.0
+    assert time_min(9_500.0, 2, movable_bridges=1, movable_bridge_delay_min=5.0) == 147.75
+    assert time_min(9_500.0, 2, movable_bridges=1, movable_bridge_delay_min=0.0) == 142.75
 
 
 def test_time_min_formula():
     # 9.5 km, 2 locks, no bridges: 9.5/4.8*60 + 2*12 = 142.75
-    assert time_min(9500.0, 2) == 142.75
-    # with one movable bridge: +5
-    assert time_min(9500.0, 2, 1) == 147.75
+    assert time_min(9500.0, 2, movable_bridge_delay_min=DEFAULT_MOVABLE_BRIDGE_DELAY_MIN) == 142.75
     # zero distance, zero locks
-    assert time_min(0.0, 0) == 0.0
+    assert time_min(0.0, 0, movable_bridge_delay_min=DEFAULT_MOVABLE_BRIDGE_DELAY_MIN) == 0.0
 
 
 def test_is_eligible_passes_when_within_dims():

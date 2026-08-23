@@ -1,7 +1,7 @@
 """HTTP API for candidate selection and pure artifact-backed routing."""
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
 
 from pound.catalog.manifest import CATALOG_KINDS
 from pound.catalog.spatial import CatalogQueryLimitError
@@ -43,6 +43,7 @@ class CanalRouteRequest(BaseModel):
     artifact_revision: str
     days: int | None = Field(gt=0, default=None)
     hours_per_day: float = Field(gt=0, default=6.0)
+    movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
     boat_length_m: float | None = Field(gt=0, default=None)
     boat_beam_m: float | None = Field(gt=0, default=None)
     boat_draft_m: float | None = Field(gt=0, default=None)
@@ -310,6 +311,7 @@ def canal_route(body: CanalRouteRequest, request: Request) -> CanalRouteResponse
         end_uid=body.end_uid,
         days=body.days,
         hours_per_day=body.hours_per_day,
+        movable_bridge_delay_min=body.movable_bridge_delay_min,
         boat_length_m=body.boat_length_m,
         boat_beam_m=body.boat_beam_m,
         boat_draft_m=body.boat_draft_m,

@@ -9,19 +9,25 @@ from pound.ingest.ir import WayDimensions
 
 CRUISE_KMH = 4.8  # ~3 mph, standard canal cruising assumption
 LOCK_MINUTES = 12  # typical single-lock, single-boat time
-BRIDGE_MINUTES = 5  # movable bridge penalty (optional, off by default at planner)
+DEFAULT_MOVABLE_BRIDGE_DELAY_MIN = 5.0
 
 
-def time_min(length_m: float, locks: int, movable_bridges: int = 0) -> float:
-    """Traversal time in minutes for an edge of length_m metres.
+def resolve_movable_bridge_delay(override: float | None) -> float:
+    return DEFAULT_MOVABLE_BRIDGE_DELAY_MIN if override is None else override
 
-    time = (length_m / 1000) / CRUISE_KMH * 60 + locks * LOCK_MINUTES
-           + movable_bridges * BRIDGE_MINUTES
-    """
+
+def time_min(
+    length_m: float,
+    locks: int,
+    *,
+    movable_bridges: int = 0,
+    movable_bridge_delay_min: float,
+) -> float:
+    """Traversal time in minutes for an edge of length_m metres."""
     return (
         (length_m / 1000.0) / CRUISE_KMH * 60.0
         + locks * LOCK_MINUTES
-        + movable_bridges * BRIDGE_MINUTES
+        + movable_bridges * movable_bridge_delay_min
     )
 
 

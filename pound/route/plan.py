@@ -11,6 +11,7 @@ tests inject an in-memory graph directly.
 bridge the CLI and Agent Core use.
 """
 
+import json
 from dataclasses import dataclass
 
 import networkx as nx
@@ -18,7 +19,7 @@ from networkx.exception import NetworkXNoPath
 
 from pound.graph.build import _haversine_m, _node_key
 from pound.graph.locks import LOCK_SOURCE_TOLERANCE_M, project_point_to_edge
-from pound.route.cost import is_eligible, time_min
+from pound.route.cost import is_eligible, resolve_movable_bridge_delay, time_min
 from pound.route.resolve import resolve_place
 from pound.schemas import (
     CanalConstraints,
@@ -72,11 +73,23 @@ def plan_canal_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> Ca
     )
 
 
+def _traversal_time_min(graph, u, v, edge, bridge_delay_min: float) -> float:
+    # Charge bridge IDs on the edge or arrived-at node; the starting node is exempt.
+    bridge_ids = set(edge["movable_bridge_ids"]) | set(graph.nodes[v]["movable_bridge_ids"])
+    return time_min(
+        edge["length_m"],
+        edge.get("locks", 0),
+        movable_bridges=len(bridge_ids),
+        movable_bridge_delay_min=bridge_delay_min,
+    )
+
+
 def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _ComputedRoute:
     """Compute the public route result together with its selected graph path."""
     # ResolvedConstraints carries the graph's own node handles — no coord->uid
     # mapping, no name lookup, no graph mutation. Pure on the resolved uids.
     start, end = constraints.start_uid, constraints.end_uid
+    bridge_delay_min = resolve_movable_bridge_delay(constraints.movable_bridge_delay_min)
 
     def _name_attr(uid):
         n = graph.nodes[uid]
@@ -98,7 +111,7 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
             return None
         if unknown:
             unknown_edges.append(str(d["osm_way_id"]))
-        return time_min(d["length_m"], d.get("locks", 0))
+        return _traversal_time_min(graph, u, v, d, bridge_delay_min)
 
     try:
         path = nx.shortest_path(graph, start, end, weight=weight)
@@ -124,7 +137,7 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
                 to_place=_name_attr(v),
                 distance_km=round(km, 4),
                 locks=locks,
-                est_minutes=round(time_min(d["length_m"], locks)),
+                est_minutes=round(_traversal_time_min(graph, u, v, d, bridge_delay_min)),
                 flagged_unknown_dims=str(d["osm_way_id"]) in set(unknown_edges),
             )
         )
@@ -136,6 +149,7 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
     warnings: list[str] = []
     if unknown_edges:
         warnings.append(f"draft/beam unknown on {len(set(unknown_edges))} segment(s)")
+    warnings.extend(_tunnel_warnings(path, graph))
 
     day_ranges = _day_path_ranges(legs, constraints.hours_per_day, constraints.days)
     days = _chunk_days(legs, constraints.hours_per_day, constraints.days)
@@ -160,6 +174,18 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
         path=tuple(path),
         day_ranges=tuple(day_ranges),
     )
+
+
+def _tunnel_warnings(path: list[int], graph: nx.Graph) -> list[str]:
+    restrictions = {
+        item
+        for u, v in zip(path, path[1:], strict=False)
+        for item in graph.edges[u, v]["tunnel_restrictions"]
+    }
+    return [
+        f"tunnel way {way_id}: unmodeled restriction {key}={json.dumps(value)}"
+        for way_id, key, value in sorted(restrictions)
+    ]
 
 
 def _path_geometry(path: tuple[int, ...], graph: nx.Graph) -> list[tuple[float, float]]:
@@ -287,6 +313,7 @@ def plan_route_from_constraints(
         end_uid=resolve_place(c.end, graph, snap_tolerance_m=snap_tolerance_m),
         days=c.days,
         hours_per_day=c.hours_per_day,
+        movable_bridge_delay_min=c.movable_bridge_delay_min,
         boat_length_m=c.boat_length_m,
         boat_beam_m=c.boat_beam_m,
         boat_draft_m=c.boat_draft_m,

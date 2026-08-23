@@ -61,9 +61,7 @@ def test_route_rejects_coercible_wrong_json_types(web_client: TestClient, change
     assert web_client.post("/api/canal-route", json=_request(**changes)).status_code == 422
 
 
-@pytest.mark.parametrize(
-    "field", ["boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"]
-)
+@pytest.mark.parametrize("field", ["boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"])
 @pytest.mark.parametrize("value", [0, -0.1])
 def test_route_rejects_nonpositive_boat_dimensions(
     web_client: TestClient, field: str, value: float
@@ -132,12 +130,13 @@ def test_route_same_existing_handle_is_valid(web_client: TestClient):
 
 
 def test_route_calls_planner_once_with_resolved_constraints(web_client: TestClient):
-    with patch("pound.web.api.plan_canal_route", wraps=__import__(
-        "pound.route.plan", fromlist=["plan_canal_route"]
-    ).plan_canal_route) as planner:
+    with patch(
+        "pound.web.api.plan_canal_route",
+        wraps=__import__("pound.route.plan", fromlist=["plan_canal_route"]).plan_canal_route,
+    ) as planner:
         response = web_client.post(
             "/api/canal-route",
-            json=_request(days=2, boat_length_m=20, boat_beam_m=2.5),
+            json=_request(days=2, boat_length_m=20, boat_beam_m=2.5, movable_bridge_delay_min=0),
         )
 
     assert response.status_code == 200
@@ -152,6 +151,7 @@ def test_route_calls_planner_once_with_resolved_constraints(web_client: TestClie
         "boat_beam_m": 2.5,
         "boat_draft_m": None,
         "boat_height_m": None,
+        "movable_bridge_delay_min": 0.0,
     }
 
 
