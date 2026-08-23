@@ -440,3 +440,33 @@ def test_nonexcluded_rows_are_coordinate_and_evidence_ready():
     assert not problems, "unresolved boat-hire rows:\n" + "\n".join(
         f"- {problem}" for problem in problems
     )
+
+
+CANAL_HOLIDAYS_BASE_62_ATTESTATION = {
+    "source_url": "https://www.canalholidays.com/bases/62.htm",
+    "evidence_url": "https://www.canalholidays.com/canal-map/",
+    "latitude": "52.2559783723458",
+    "longitude": "-1.31417997134753",
+    "exclude": "",
+}
+CANAL_HOLIDAYS_BASE_62_NOTES = (
+    "Canal Holidays official map BaseId 62 supplies this base coordinate; "
+    "source URL is an exact BaseId match.",
+    "User-approved one-base startup snap exception: the current England artifact "
+    "measures 250.968 m; this identity is permitted up to 251 m.",
+)
+
+
+def test_canal_holidays_base_62_row_is_offline_attested():
+    with CSV_PATH.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+
+    row = next(
+        row
+        for row in rows
+        if (row["source_provider_id"], row["location_id"]) == ("canal-holidays", "base:62")
+    )
+    for field, value in CANAL_HOLIDAYS_BASE_62_ATTESTATION.items():
+        assert row[field] == value
+    for note in CANAL_HOLIDAYS_BASE_62_NOTES:
+        assert note in row["notes"]
