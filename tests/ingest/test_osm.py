@@ -32,12 +32,14 @@ def test_tags_filter_expr_is_pinned():
     # bare dimension-alias lines (would pull roads) must be absent
     assert "w/maxwidth" not in TAGS_FILTER_EXPR
     assert "w/bridge:movable" not in TAGS_FILTER_EXPR
+    assert "n/bridge:movable" in TAGS_FILTER_EXPR
+    assert "n/bridge=movable" in TAGS_FILTER_EXPR
     assert "w/waterway=lock_gate" not in TAGS_FILTER_EXPR
     for clause in (
-        'nwr/waterway=water_point',
-        'nwr/amenity=pub,cafe,restaurant,fuel,sanitary_dump_station,taxi',
-        'nwr/shop=supermarket,convenience,bakery,greengrocer,butcher,deli,general',
-        'nwr/highway=footway,path,pedestrian,steps,bus_stop',
+        "nwr/waterway=water_point",
+        "nwr/amenity=pub,cafe,restaurant,fuel,sanitary_dump_station,taxi",
+        "nwr/shop=supermarket,convenience,bakery,greengrocer,butcher,deli,general",
+        "nwr/highway=footway,path,pedestrian,steps,bus_stop",
     ):
         assert clause in TAGS_FILTER_EXPR
     assert "amenity=drinking_water" not in TAGS_FILTER_EXPR
@@ -64,6 +66,13 @@ def test_read_pbf_captures_place_and_lock_gate_nodes():
     assert {n.osm_id for n in gates} == {5}
 
 
+def test_read_pbf_retains_bridge_movable_node():
+    features = read_pbf(_tiny_pbf_path())
+    assert {(node.osm_id, node.kind) for node in features.nodes} >= {
+        (2, NodeKind.MOVABLE_BRIDGE),
+    }
+
+
 def test_read_waterway_features_matches_graph_inputs_without_classifying_pois(monkeypatch):
     legacy = read_pbf(_tiny_pbf_path())
 
@@ -86,11 +95,16 @@ def test_read_pbf_emits_bulk_pois_with_area_assembly_and_deduplication():
     feats = read_pbf(_tiny_pbf_path())
     identities = [(str(p.osm_type), p.osm_id, p.kind) for p in feats.poi_candidates]
     assert identities == [
-        ("node", 2001, "water_point"), ("node", 2002, "pub"),
-        ("node", 2003, "supermarket"), ("node", 2004, "rail_station"),
-        ("node", 2005, "bus_stop"), ("node", 2006, "entrance"),
-        ("node", 2007, "gate"), ("relation", 2301, "fuel"),
-        ("way", 2101, "marina"), ("way", 2102, "cafe"),
+        ("node", 2001, "water_point"),
+        ("node", 2002, "pub"),
+        ("node", 2003, "supermarket"),
+        ("node", 2004, "rail_station"),
+        ("node", 2005, "bus_stop"),
+        ("node", 2006, "entrance"),
+        ("node", 2007, "gate"),
+        ("relation", 2301, "fuel"),
+        ("way", 2101, "marina"),
+        ("way", 2102, "cafe"),
         ("way", 2103, "path_connection"),
     ]
     geometries = {p.osm_id: wkt.loads(p.geometry_wkt).geom_type for p in feats.poi_candidates}
@@ -134,6 +148,7 @@ def test_stream_area_pois_matches_legacy_areas_and_incomplete_diagnostics():
     expected = [
         candidate for candidate in legacy.poi_candidates if candidate.geometry_source == "area"
     ]
+
     def order(candidate):
         return candidate.osm_type.value, candidate.osm_id, candidate.kind
 
@@ -333,17 +348,25 @@ def test_bulk_poi_candidates_match_overpass_after_source_fields_are_excluded():
 
     def source_neutral(candidate):
         return (
-            str(candidate.osm_type), candidate.osm_id, str(candidate.category), candidate.kind,
-            candidate.name, candidate.tags, candidate.geometry_source,
+            str(candidate.osm_type),
+            candidate.osm_id,
+            str(candidate.category),
+            candidate.kind,
+            candidate.name,
+            candidate.tags,
+            candidate.geometry_source,
         )
 
     assert [source_neutral(candidate) for candidate in bulk.poi_candidates] == [
         source_neutral(candidate) for candidate in overpass.poi_candidates
     ]
-    bulk_geometries = {candidate.identity: wkt.loads(candidate.geometry_wkt)
-                       for candidate in bulk.poi_candidates}
-    overpass_geometries = {candidate.identity: wkt.loads(candidate.geometry_wkt)
-                           for candidate in overpass.poi_candidates}
+    bulk_geometries = {
+        candidate.identity: wkt.loads(candidate.geometry_wkt) for candidate in bulk.poi_candidates
+    }
+    overpass_geometries = {
+        candidate.identity: wkt.loads(candidate.geometry_wkt)
+        for candidate in overpass.poi_candidates
+    }
     assert bulk_geometries.keys() == overpass_geometries.keys()
     assert all(
         bulk_geometries[identity].equals(overpass_geometries[identity])

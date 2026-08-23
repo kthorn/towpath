@@ -29,6 +29,14 @@ def test_build_query_contains_bbox_and_filters():
     assert "out geom;" in q
 
 
+def test_build_query_requests_both_movable_bridge_tag_forms():
+    query = build_query(OXFORD_BBOX)
+    assert 'node["bridge:movable"]' in query
+    assert 'node["bridge"="movable"]' in query
+    assert 'way["bridge:movable"]' in query
+    assert 'way["bridge"="movable"]' in query
+
+
 def test_build_query_uses_explicit_poi_and_pedestrian_clauses():
     q = build_query(OXFORD_BBOX)
     for clause in (
@@ -81,6 +89,24 @@ def test_parse_flags_tunnel():
     feats = parse(load_fixture()["elements"], OXFORD_BBOX)
     w = next(w for w in feats.ways if w.osm_id == 1006)
     assert w.has_tunnel is True
+
+
+def test_parse_flags_bridge_movable_way():
+    features = parse(
+        [
+            {
+                "type": "way",
+                "id": 99,
+                "tags": {"waterway": "canal", "bridge": "movable"},
+                "geometry": [
+                    {"lat": 51.75, "lon": -1.26},
+                    {"lat": 51.751, "lon": -1.261},
+                ],
+            }
+        ],
+        OXFORD_BBOX,
+    )
+    assert features.ways[0].has_movable_bridge is True
 
 
 def test_parse_keeps_lock_gate_and_lock_nodes():

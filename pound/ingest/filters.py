@@ -85,6 +85,7 @@ _NON_NAVIGABLE_BOAT = {"no", "unsuitable", "canoe"}
 def is_navigable(tags: dict[str, str] | None) -> bool:
     """True unless the way is explicitly tagged non-navigable to canal boats.
 
+    An explicit `access=no` wins even when a contradictory `boat=yes` is present.
     OSM `boat` access tag: `no`=prohibited/impassable, `unsuitable`=navigable-
     in-principle-but-not-really, `canoe`=canoe-only (out of scope for a canal-
     boat router). Everything else (`yes`, `private`, `permissive`, `permit`,
@@ -97,7 +98,7 @@ def is_navigable(tags: dict[str, str] | None) -> bool:
     """
     if not tags:
         return True
-    return tags.get("boat") not in _NON_NAVIGABLE_BOAT
+    return tags.get("access") != "no" and tags.get("boat") not in _NON_NAVIGABLE_BOAT
 
 
 def filter_navigable_ways(features: WaterwayFeatures) -> WaterwayFeatures:
