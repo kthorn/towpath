@@ -250,6 +250,7 @@ describe("trip planning interface", () => {
 				boat_beam_m: 2.05,
 				boat_draft_m: 0.8,
 				boat_height_m: 2.4,
+				movable_bridge_delay_min: 0,
 			}),
 		);
 		const { dependencies, store } = setup();
@@ -265,6 +266,7 @@ describe("trip planning interface", () => {
 				boat_beam_m: 2.05,
 				boat_draft_m: 0.8,
 				boat_height_m: 2.4,
+				movable_bridge_delay_min: 0,
 			}),
 		);
 	});
@@ -392,6 +394,7 @@ describe("trip planning interface", () => {
 			boat_beam_m: null,
 			boat_draft_m: null,
 			boat_height_m: null,
+			movable_bridge_delay_min: null,
 		});
 	});
 
