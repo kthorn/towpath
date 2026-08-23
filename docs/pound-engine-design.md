@@ -126,8 +126,9 @@ pound/
 | **derelict/disused** | `waterway=derelict_canal`, `disused:*`, `abandoned:*` | EXCLUDE |
 | lock chamber | `waterway=lock` (short way) and/or `lock=yes` | lock edge → time penalty |
 | lock gate | node `waterway=lock_gate` | lock counting |
-| movable bridge | `bridge:movable=*` / `bridge=movable` / swing/lift | optional time penalty |
-| tunnel | `tunnel=yes` on waterway | optional penalty / one-way timing |
+| movable bridge | `bridge:movable=*` / `bridge=movable` / swing/lift | 5-min delay per bridge (default; per-route override, `0` disables) |
+| tunnel | `tunnel=yes` on waterway | bare tag adds no time cost; unmodeled restrictions warn |
+| access | `access=no` | EXCLUDE waterway globally at build time (even when `boat=yes`) |
 | max beam | `maxwidth=*` / `width=*` on way | dimension filter |
 | max length | `maxlength=*` | dimension filter |
 | draft | `maxdraft=*` / `maxdraught=*` / `depth=*` | dimension filter |
@@ -227,14 +228,22 @@ Edge traversal time:
 ```
 time_min(edge) = (length_m / 1000) / cruise_kmh * 60
                + edge.locks * lock_minutes
-               + movable_bridges * bridge_minutes   # optional
+               + movable_bridges * bridge_minutes   # 5-min default; per-route override
 ```
 
 Defaults (tunable, expose as constants):
 
 - `cruise_kmh ≈ 4.8` (~3 mph — the standard canal cruising assumption)
 - `lock_minutes ≈ 12` (typical 10–15; single lock, single boat)
-- `bridge_minutes ≈ 5` for movable bridges (optional, off by default)
+- `bridge_minutes ≈ 5` for movable bridges — the sole movable-bridge default
+  (`DEFAULT_MOVABLE_BRIDGE_DELAY_MIN` in `route/cost.py`). A per-route
+  non-negative override replaces it, and `0` disables the delay entirely.
+
+Tunnel ways add no traversal time: bare `tunnel=yes` is routable with no
+penalty and no warning. Directional (`oneway` / `oneway:boat`), opening-hours,
+conditional, and `access`/`boat` restriction tags on tunnel ways are **not**
+evaluated — there is no timetable parsing and no directional graph — they
+surface only as route warnings naming the unmodeled key.
 
 This matches the boater "lock-miles" heuristic. Keep all constants in one place
 and document them; the checker (§7) recomputes from the same constants.
