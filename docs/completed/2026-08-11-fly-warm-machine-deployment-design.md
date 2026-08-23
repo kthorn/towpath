@@ -1,6 +1,6 @@
 # Fly.io Warm-Machine Deployment Design
 
-> **Status:** approved for implementation
+> **Status:** validated in production
 > **Scope:** publish the existing graph-only Towpath web application for a few US Pacific users
 
 ## Goal
@@ -35,6 +35,16 @@ Machines. Normal stop/start did not meet acceptance: one no-retry health request
 returned `502` after 45.459173 seconds, while Fly logs recorded application startup
 roughly 183–272 seconds after a start. This is a real readiness failure, not a
 candidate for a health-check workaround.
+
+## Live Acceptance
+
+- The existing image was deployed with `min_machines_running = 1` on one `sjc`
+  `shared-cpu-4x` / 8GB Machine.
+- One no-retry public `GET /api/health` request returned `200` in 0.314281 seconds
+  with `status: healthy` and artifact revision
+  `6949913d-816f-4870-9499-3c613f716e00`.
+- The Machine remained `started` with a passing service check through nine idle
+  minutes, exceeding its prior auto-stop window.
 
 ## Decisions
 
