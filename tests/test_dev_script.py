@@ -43,7 +43,18 @@ def _prepare_launcher(
     (tmp_path / "web").mkdir()
     artifact = tmp_path / "artifact.pkl"
     artifact.touch()
-    (tmp_path / ".env.sh").write_text(f"export POUND_ARTIFACT_PATH={shlex.quote(str(artifact))}\n")
+    enrichment = tmp_path / "boat-hire.csv"
+    enrichment.write_text("record_type\n", encoding="utf-8")
+    (tmp_path / ".env.sh").write_text(
+        "\n".join(
+            [
+                f"export POUND_ARTIFACT_PATH={shlex.quote(str(artifact))}",
+                f"export POUND_BOAT_HIRE_ENRICHMENT_PATH={shlex.quote(str(enrichment))}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -55,6 +66,7 @@ def _prepare_launcher(
     pid_dir.mkdir()
     environment = os.environ.copy()
     environment.pop("POUND_ARTIFACT_PATH", None)
+    environment.pop("POUND_BOAT_HIRE_ENRICHMENT_PATH", None)
     environment.update(
         PATH=f"{fake_bin}{os.pathsep}{environment['PATH']}",
         DEV_LOG=str(log),
@@ -109,6 +121,37 @@ def _wait_for_exit(pid: int) -> None:
             return
         time.sleep(0.05)
     raise AssertionError(f"process {pid} is still alive")
+
+
+def test_dev_script_requires_enrichment_path_before_launching_servers(tmp_path: Path) -> None:
+    server = """#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'started\\n' >> "$DEV_LOG"
+"""
+    script, log, _, environment = _prepare_launcher(tmp_path, server, server)
+    env_file = tmp_path / ".env.sh"
+    env_file.write_text(
+        "\n".join(
+            line
+            for line in env_file.read_text().splitlines()
+            if not line.startswith("export POUND_BOAT_HIRE_ENRICHMENT_PATH=")
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    process = subprocess.run(
+        [str(script)],
+        cwd=tmp_path,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+
+    assert process.returncode != 0
+    assert "POUND_BOAT_HIRE_ENRICHMENT_PATH is not set" in process.stdout
+    assert not log.exists()
 
 
 def test_dev_script_starts_and_stops_both_servers(tmp_path: Path) -> None:

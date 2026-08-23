@@ -3,7 +3,8 @@
 This is an explicitly opt-in network test that can make billable Google Maps
 Platform requests. The ordinary `npm test` suite never collects it, and
 `npm run test:smoke` skips it unless `GOOGLE_MAPS_SMOKE=1`,
-`VITE_GOOGLE_MAPS_API_KEY`, and `POUND_ARTIFACT_PATH` are all present.
+`VITE_GOOGLE_MAPS_API_KEY`, `POUND_ARTIFACT_PATH`, and
+`POUND_BOAT_HIRE_ENRICHMENT_PATH` are all present.
 
 ## Prerequisites
 
@@ -15,6 +16,9 @@ Platform requests. The ordinary `npm test` suite never collects it, and
   legacy Oxford/Overpass scaffold cannot route this scenario. Build England as
   described in the repository README and keep the artifact outside version
   control.
+- The curated boat-hire enrichment CSV used for the display overlay. Keep the
+  CSV tracked at `pound/data/boat-hire-enrichment.csv` or provide an equivalent
+  existing file through `POUND_BOAT_HIRE_ENRICHMENT_PATH`.
 - Chromium for Playwright: `npx playwright install chromium`.
 
 From `web/`, run:
@@ -25,12 +29,15 @@ VITE_GOOGLE_MAPS_API_KEY='restricted-browser-key' \
 VITE_GOOGLE_MAP_ID='project-map-id' \
 VITE_TRANSFER_MODE='WALK' \
 POUND_ARTIFACT_PATH='pound/artifacts/england.pkl' \
+POUND_BOAT_HIRE_ENRICHMENT_PATH='pound/data/boat-hire-enrichment.csv' \
 npm run test:smoke
 ```
 
 Although the command is launched from `web/`, Playwright starts Uvicorn with
-the repository root (`..`) as its working directory. Therefore a relative
-`POUND_ARTIFACT_PATH` is repository-root-relative; an absolute path also works.
+the repository root (`..`) as its working directory. Therefore relative
+`POUND_ARTIFACT_PATH` and `POUND_BOAT_HIRE_ENRICHMENT_PATH` values are
+repository-root-relative; absolute paths also work. The configured enrichment
+path must name an existing CSV before the smoke server starts.
 The runner refuses to reuse existing FastAPI or Vite servers so the acceptance
 test always exercises the supplied artifact and browser configuration.
 
