@@ -292,6 +292,16 @@ def test_load_rejects_non_tuple_access_caveats(tmp_path: Path):
     _assert_rebuild_error(path, "access_caveats")
 
 
+def test_load_rejects_unhashable_access_caveat_tag(tmp_path: Path):
+    path = tmp_path / "graph.pkl"
+    payload = _valid_payload()
+    malformed = AccessCaveat(200, [], "discouraged", "discouraged")  # type: ignore[arg-type]
+    payload["graph"].edges[0, 1]["access_caveats"] = (malformed,)
+    _write(path, payload)
+
+    _assert_rebuild_error(path, "access_caveat")
+
+
 def test_load_rejects_duplicate_access_caveats(tmp_path: Path):
     path = tmp_path / "graph.pkl"
     payload = _valid_payload()

@@ -113,7 +113,8 @@ def _validate_access_caveats(edge: tuple[int, int], caveats: Any) -> None:
                 "expected a positive OSM way id",
             )
         if (
-            caveat.tag not in {"boat", "access"}
+            not isinstance(caveat.tag, str)
+            or caveat.tag not in {"boat", "access"}
             or not isinstance(caveat.value, str)
             or not caveat.value
         ):
