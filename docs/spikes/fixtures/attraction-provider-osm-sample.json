@@ -1,0 +1,88 @@
+{
+  "attribution": "Contains OpenStreetMap data © OpenStreetMap contributors, ODbL 1.0",
+  "generated_at": "2026-07-12",
+  "method": {
+    "corridor_note": "Point-radius samples, not complete canal-corridor censuses",
+    "distance_m": 2000,
+    "extract": {
+      "source": "Geofabrik England PBF",
+      "replication_timestamp": "2026-06-27T20:21:30Z"
+    },
+    "allowlist": {
+      "tourism": [
+        "aquarium",
+        "artwork",
+        "attraction",
+        "gallery",
+        "museum",
+        "theme_park",
+        "viewpoint",
+        "zoo"
+      ],
+      "historic": "any value",
+      "leisure": [
+        "garden",
+        "nature_reserve"
+      ]
+    },
+    "distance_calculation": "Minimum local equirectangular point-to-geometry-segment distance",
+    "deduplication": "None; counts expose raw OSM feature identities for taxonomy analysis"
+  },
+  "samples": {
+    "birmingham": {
+      "center": {"lat": 52.4777, "lon": -1.9117},
+      "character": "dense city",
+      "count": 958,
+      "named_count": 410,
+      "categories": {"historic": 151, "leisure": 418, "tourism": 389},
+      "examples": ["Ikon Gallery", "Black Sabbath Memorial"]
+    },
+    "oxford": {
+      "center": {"lat": 51.758, "lon": -1.269},
+      "character": "canal city",
+      "count": 839,
+      "named_count": 379,
+      "categories": {"historic": 114, "leisure": 547, "tourism": 178},
+      "examples": ["Worcester College", "Snakes Island", "Rewley Road Swing Bridge"],
+      "live_overpass_cross_check": {
+        "queried_at": "2026-07-12T17:09:02Z",
+        "raw_count": 555,
+        "endpoint": "https://overpass-api.de/api/interpreter"
+      }
+    },
+    "foxton": {
+      "center": {"lat": 52.5026, "lon": -0.9867},
+      "character": "tourism-heavy rural",
+      "count": 9,
+      "named_count": 6,
+      "categories": {"historic": 3, "tourism": 6},
+      "examples": ["Foxton Inclined Plane", "Foxton Inclined Plane Trust Museum", "Foxton Locks"]
+    },
+    "braunston": {
+      "center": {"lat": 52.2891, "lon": -1.203},
+      "character": "rural canal hub",
+      "count": 3,
+      "named_count": 0,
+      "categories": {"historic": 3},
+      "examples": [],
+      "live_overpass_cross_check": {
+        "queried_at": "2026-07-12T17:09:02Z",
+        "raw_count": 3,
+        "endpoint": "https://overpass-api.de/api/interpreter"
+      }
+    },
+    "fenny_stratford": {
+      "center": {"lat": 52.0006, "lon": -0.718},
+      "character": "sparse/suburban",
+      "count": 70,
+      "named_count": 56,
+      "categories": {"historic": 19, "leisure": 6, "tourism": 45},
+      "examples": ["Magiovinum Roman Settlement", "Bletchley Park", "Tecton Art Centre"]
+    }
+  },
+  "public_overpass_failures": {
+    "primary_endpoint": "HTTP 406 for Birmingham, Foxton, and Fenny Stratford",
+    "private_coffee_endpoint": "Birmingham timed out after 120 seconds with no response",
+    "interpretation": "Public Overpass is suitable for development sampling, not a production nationwide catalog build"
+  }
+}
