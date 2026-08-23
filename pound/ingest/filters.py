@@ -10,7 +10,13 @@ derelict_canal / disused:* / abandoned:* unconditionally. At the IR level we
 only *flag* derelict so the reader can drop it.
 """
 
-from pound.ingest.ir import NodeKind, WaterwayFeatures, WaterwayKind, WayDimensions
+from pound.ingest.ir import (
+    AccessCaveat,
+    NodeKind,
+    WaterwayFeatures,
+    WaterwayKind,
+    WayDimensions,
+)
 
 _DERELICT_WATERWAY_VALUES = {"derelict_canal"}
 _DERELICT_TAG_PREFIXES = ("disused:", "abandoned:")
@@ -79,31 +85,40 @@ def extract_dimensions(tags: dict[str, str] | None) -> WayDimensions:
     return WayDimensions(**values)
 
 
-_NON_NAVIGABLE_BOAT = {"no", "unsuitable", "canoe"}
+_NON_PUBLIC_BOAT = {"no", "unsuitable", "canoe", "private", "permit"}
+_NON_PUBLIC_ACCESS = {"no", "private", "permit"}
+_ORDINARY_ACCESS_VALUES = {"yes", "permissive", "designated"}
 
 
 def is_navigable(tags: dict[str, str] | None) -> bool:
-    """True unless the way is explicitly tagged non-navigable to canal boats.
+    """True unless exact literal boat or access tags exclude a public route.
 
-    An explicit `access=no` wins even when a contradictory `boat=yes` is present.
-    OSM `boat` access tag: `no`=prohibited/impassable, `unsuitable`=navigable-
-    in-principle-but-not-really, `canoe`=canoe-only (out of scope for a canal-
-    boat router). Everything else (`yes`, `private`, `permissive`, `permit`,
-    `designated`, `discouraged`, `unknown`, missing, typos) is kept — bad data
-    and unknowns fall back to "keep," not silent drop. Literal-string matching
-    only; we deliberately do NOT alias typos like `unkmown` -> `unknown`
-    (an alias could collide with a future `boat=yes` synonym and drop a real
-    navigable edge). Dimensions (`maxwidth` etc.) are a *separate*, plan-time
-    concern (`route/cost.py:is_eligible`) and stay untouched here.
+    Matching is case-sensitive. Missing tags and non-standard explicit values
+    remain eligible; later routing reports the retained values as caveats.
     """
-    if not tags:
-        return True
-    return tags.get("access") != "no" and tags.get("boat") not in _NON_NAVIGABLE_BOAT
+    tags = tags or {}
+    return tags.get("boat") not in _NON_PUBLIC_BOAT and tags.get("access") not in _NON_PUBLIC_ACCESS
+
+
+def extract_access_caveats(
+    osm_way_id: int, tags: dict[str, str] | None
+) -> tuple[AccessCaveat, ...]:
+    """Normalize retained access caveats without interpreting legal permission."""
+    if not is_navigable(tags):
+        return ()
+    values = []
+    for tag in ("boat", "access"):
+        value = (tags or {}).get(tag)
+        if not value or value in _ORDINARY_ACCESS_VALUES:
+            continue
+        kind = "discouraged" if value == "discouraged" else "unknown"
+        values.append(AccessCaveat(osm_way_id, tag, value, kind))
+    return tuple(sorted(set(values)))
 
 
 def filter_navigable_ways(features: WaterwayFeatures) -> WaterwayFeatures:
-    """Return a new WaterwayFeatures with non-navigable ways (`is_navigable` is
-    False) removed from `features.ways`. `nodes` are untouched (infra-node
+    """Return a new WaterwayFeatures with non-public-access ways (`is_navigable`
+    is False) removed from `features.ways`. `nodes` are untouched (infra-node
     pruning is a separate concern handled by `prune_non_navigable_infra`).
 
     Pure: returns a new WaterwayFeatures; does not mutate the input. Uses
@@ -114,7 +129,7 @@ def filter_navigable_ways(features: WaterwayFeatures) -> WaterwayFeatures:
     mutate one, switch to a deep copy). `nodes` is the same list reference as
     the input (deliberately — "untouched").
 
-    Boat-only: does NOT fold `is_derelict`. The readers drop derelict ways
+    Public-access-only: does NOT fold `is_derelict`. The readers drop derelict ways
     inline in their way loops; that stays. Folding here would break
     `test_parse_excludes_derelict` and leak `disused:waterway` ways.
     """

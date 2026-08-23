@@ -60,6 +60,21 @@ def test_lock_gate_on_single_boat_no_way_is_dropped(tags):
     assert [n.osm_id for n in out.nodes] == []
 
 
+def test_lock_gate_on_single_access_private_way_is_dropped():
+    ways = [
+        _way(
+            1,
+            WaterwayKind.CANAL,
+            {"waterway": "canal", "access": "private"},
+            [(51.0, -1.0), (51.001, -1.0)],
+            [100, 101],
+        ),
+    ]
+    nodes = [_node(100, NodeKind.LOCK_GATE)]
+    out = prune_non_navigable_infra(_features(ways, nodes))
+    assert [n.osm_id for n in out.nodes] == []
+
+
 def test_lock_gate_on_mixed_boat_no_and_yes_is_kept():
     # node 100 at the shared endpoint of a boat=no way and a boat=yes way
     ways = [

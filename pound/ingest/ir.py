@@ -11,6 +11,7 @@ therefore a bulk-path concern, not an Overpass-reader concern — consistent wit
 this plan stopping before graph build.
 """
 
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
@@ -105,6 +106,14 @@ class PointOfInterest(BaseModel):
     @property
     def identity(self) -> tuple[OsmElementType, int, str]:
         return self.osm_type, self.osm_id, self.kind
+
+
+@dataclass(frozen=True, order=True)
+class AccessCaveat:
+    osm_way_id: int
+    tag: Literal["boat", "access"]
+    value: str
+    kind: Literal["discouraged", "unknown"]
 
 
 class WayDimensions(BaseModel):

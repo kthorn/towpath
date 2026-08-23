@@ -183,6 +183,20 @@ def test_path_display_point_is_closest_point_to_waterway():
     assert poi.nearest_waterway_distance_m == pytest.approx(40, abs=0.02)
 
 
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"access": "private", "tags": {"boat": "yes", "access": "yes"}},
+        {"tags": {"access": "permit"}},
+        {"boat": "private"},
+    ],
+)
+def test_poi_index_reuses_public_access_policy(updates):
+    graph = _graph()
+    graph.edges[9, 2].update(updates)
+    assert PoiAttachmentIndex(graph).edge_keys == []
+
+
 def test_deterministic_edge_and_node_ties_and_non_navigable_edges():
     graph = _graph(non_navigable_shortcut=True)
     # Lies on the non-navigable shortcut, but must attach to routing edge (2, 9).

@@ -141,14 +141,20 @@ def test_fetch_oxford_applies_prune_then_filter_chain(monkeypatch):
     from pound.ingest import overpass as _overpass
 
     raw = json.loads(Path(oxford_fixture_path()).read_text())
-    # inject a boat=no way into the fixture's elements (so the filter has work to do)
+    # inject non-public ways into the fixture's elements (so the filter has work to do)
     boat_no_way = {
         "type": "way",
         "id": 9999,
         "tags": {"waterway": "canal", "boat": "no"},
         "geometry": [{"lat": 51.7510, "lon": -1.2600}, {"lat": 51.7520, "lon": -1.2600}],
     }
-    raw["elements"].append(boat_no_way)
+    access_private_way = {
+        "type": "way",
+        "id": 9998,
+        "tags": {"waterway": "canal", "access": "private"},
+        "geometry": [{"lat": 51.7530, "lon": -1.2600}, {"lat": 51.7540, "lon": -1.2600}],
+    }
+    raw["elements"].extend([boat_no_way, access_private_way])
     monkeypatch.setattr(_overpass, "fetch_raw", lambda *a, **kw: raw)
 
     # spy on chain functions (call through to real to preserve behaviour)
@@ -169,8 +175,8 @@ def test_fetch_oxford_applies_prune_then_filter_chain(monkeypatch):
     monkeypatch.setattr(_overpass, "filter_navigable_ways", spy_filter)
 
     features = fetch_oxford()
-    # the boat=no way must be gone
-    assert 9999 not in {w.osm_id for w in features.ways}
+    # neither non-public way must survive
+    assert {9998, 9999}.isdisjoint({way.osm_id for way in features.ways})
     # chain functions were called
     assert len(called_prune) == 1
     assert len(called_filter) == 1

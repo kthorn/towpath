@@ -306,10 +306,14 @@ def test_load_rejects_bad_poi_attachments(tmp_path: Path, change: dict, match: s
     _assert_rebuild_error(path, match)
 
 
-def test_load_rejects_attachment_to_non_navigable_edge(tmp_path: Path):
+@pytest.mark.parametrize(
+    "edge_tags",
+    [{"boat": "no"}, {"boat": "private"}, {"access": "private"}],
+)
+def test_load_rejects_attachment_to_non_navigable_edge(tmp_path: Path, edge_tags: dict):
     path = tmp_path / "graph.pkl"
     payload = _valid_payload()
-    payload["graph"].edges[0, 1]["boat"] = "no"
+    payload["graph"].edges[0, 1].update(edge_tags)
     _write(path, payload)
 
     _assert_rebuild_error(path, "navigable")
