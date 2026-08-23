@@ -6,6 +6,7 @@ import networkx as nx
 import pytest
 from shapely.geometry import Point
 
+import pound.web.boat_hire as boat_hire
 from pound.web.boat_hire import (
     BOAT_HIRE_ENRICHMENT_FIELDS,
     BoatHireSeed,
@@ -201,4 +202,44 @@ def test_selector_rejects_a_distance_just_over_the_inclusive_limit():
             graph,
             _Projector((1, 2), math.nextafter(250.0, math.inf)),  # type: ignore[arg-type] — deliberate duck-typed fixture
             (BoatHireSeed("provider", "base:one", 51.0, -1.0),),
+        )
+
+
+def test_selector_pins_base_62_as_the_only_distance_exception():
+    assert boat_hire.BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M == {
+        "canal-holidays/base:62": 251.0,
+    }
+
+
+def test_selector_accepts_base_62_at_its_explicit_251m_limit():
+    graph = nx.Graph([(1, 2)])
+
+    selected = select_boat_hire_overlay(
+        graph,
+        _Projector((1, 2), 251.0),  # type: ignore[arg-type] — deliberate duck-typed fixture
+        (BoatHireSeed("canal-holidays", "base:62", 51.0, -1.0),),
+    )
+
+    assert set(selected.edges) == {(1, 2)}
+
+
+def test_selector_rejects_base_62_just_over_its_explicit_limit():
+    graph = nx.Graph([(1, 2)])
+
+    with pytest.raises(ValueError, match=r"base:62 is farther than 251 m"):
+        select_boat_hire_overlay(
+            graph,
+            _Projector((1, 2), math.nextafter(251.0, math.inf)),  # type: ignore[arg-type] — deliberate duck-typed fixture
+            (BoatHireSeed("canal-holidays", "base:62", 51.0, -1.0),),
+        )
+
+
+def test_selector_rejects_canal_holidays_sibling_just_over_default_limit():
+    graph = nx.Graph([(1, 2)])
+
+    with pytest.raises(ValueError, match=r"base:61 is farther than 250 m"):
+        select_boat_hire_overlay(
+            graph,
+            _Projector((1, 2), math.nextafter(250.0, math.inf)),  # type: ignore[arg-type] — deliberate duck-typed fixture
+            (BoatHireSeed("canal-holidays", "base:61", 51.0, -1.0),),
         )

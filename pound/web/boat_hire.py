@@ -42,6 +42,9 @@ BOAT_HIRE_ENRICHMENT_FIELDS: tuple[str, ...] = (
 )
 
 BOAT_HIRE_OVERLAY_DISTANCE_M: float = 250.0
+BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M: dict[str, float] = {
+    "canal-holidays/base:62": 251.0,
+}
 _ALLOWED_EXCLUDE_VALUES = frozenset({"", "true", "false"})
 
 
@@ -165,10 +168,13 @@ def select_boat_hire_overlay(
             )
         except ValueError as exc:
             raise ValueError(f"Could not project boat-hire seed {seed.identity}") from exc
-        if not math.isfinite(distance_m) or distance_m > BOAT_HIRE_OVERLAY_DISTANCE_M:
+        limit_m = BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M.get(
+            seed.identity,
+            BOAT_HIRE_OVERLAY_DISTANCE_M,
+        )
+        if not math.isfinite(distance_m) or distance_m > limit_m:
             raise ValueError(
-                f"Boat-hire seed {seed.identity} is farther than "
-                f"{BOAT_HIRE_OVERLAY_DISTANCE_M:g} m from a routing edge"
+                f"Boat-hire seed {seed.identity} is farther than {limit_m:g} m from a routing edge"
             )
         selected_nodes.update(component_by_node[edge[0]])
     return graph.subgraph(selected_nodes)
