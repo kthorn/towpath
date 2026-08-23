@@ -46,5 +46,6 @@ docs/local/
 
 # Local agent orchestration, review output, and helper scripts
 .pi-subagents/
+.pi/subagents/
 reviews/
 scripts/local/
