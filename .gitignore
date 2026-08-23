@@ -49,3 +49,6 @@ docs/local/
 .pi/subagents/
 reviews/
 scripts/local/
+
+# Disposable implementation plans
+/docs/superpowers/plans/
