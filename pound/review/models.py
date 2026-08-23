@@ -4,9 +4,18 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from pound.catalog.metadata import normalize_external_link
 
 ReviewDecision = Literal["vacation_hire", "not_vacation_hire", "uncertain"]
+
+
+def _normalized_url(value: str) -> str:
+    normalized = normalize_external_link("Review URL", value)
+    if normalized is None:
+        raise ValueError("must be an absolute HTTP(S) URL")
+    return normalized.url
 
 
 class ReviewLink(BaseModel):
@@ -16,6 +25,11 @@ class ReviewLink(BaseModel):
 
     label: str
     url: str
+
+    @field_validator("url")
+    @classmethod
+    def normalize_url(cls, value: str) -> str:
+        return _normalized_url(value)
 
 
 class ReviewRecord(BaseModel):
@@ -39,6 +53,16 @@ class ReviewRecord(BaseModel):
     likelihood_reasons: list[str]
     decision: ReviewDecision | None
     reviewed_at: str | None
+
+    @field_validator("website_urls")
+    @classmethod
+    def normalize_website_urls(cls, values: list[str]) -> list[str]:
+        return [_normalized_url(value) for value in values]
+
+    @field_validator("osm_url")
+    @classmethod
+    def normalize_osm_url(cls, value: str) -> str:
+        return _normalized_url(value)
 
 
 class ReviewDocument(BaseModel):

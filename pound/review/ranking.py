@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 from pound.catalog.artifact import CatalogArtifact
 from pound.catalog.models import CatalogPlace
+from pound.graph.spatial import GraphSpatialIndex
 from pound.review.models import ReviewDocument, ReviewLink, ReviewRecord
 
 _CANDIDATE_SIGNAL = re.compile(
@@ -26,7 +28,7 @@ _POSITIVE_RULES = (
         re.compile(r"\bcruisers?|cruising|(?:canal|boat)\s+trips?|charter|launch\s+hire\b"),
         6,
     ),
-    ("weak", re.compile(r"\bboats?|boatyard|marina\b"), 2),
+    ("weak", re.compile(r"\bboats?|boatyard\b"), 2),
 )
 _NEGATIVE_RULES = (
     ("negative", re.compile(r"\bclubs?|associations?|societies?\b"), -6),
@@ -34,6 +36,14 @@ _NEGATIVE_RULES = (
         "negative",
         re.compile(r"\bresidential|private|dry\s+dock|fuel|repairs?|marine\s+services\b"),
         -6,
+    ),
+    ("negative", re.compile(r"\b(?:boat|canal)\s+trips?\b"), -6),
+    ("negative", re.compile(r"\bkayak\b"), -12),
+    ("negative", re.compile(r"\b(?:charter\s+boat|launch\s+hire)\b"), -6),
+    (
+        "negative",
+        re.compile(r"\b(?:project|carving|memorial|bench|office|stone|welcome\s+post)\b"),
+        -12,
     ),
 )
 _FIELD_WEIGHTS = (
@@ -44,7 +54,7 @@ _FIELD_WEIGHTS = (
     ("description", 2),
     ("website", 1),
 )
-_KIND_PRIORS = {"marina": 10, "mooring": 2, "landmark": 0}
+_KIND_PRIORS = {"marina": 0, "mooring": 2, "landmark": 0}
 
 
 def _normalized(value: str) -> str:
@@ -126,6 +136,27 @@ def _record_for(place: CatalogPlace, score: int, reasons: list[str], rank: int) 
     )
 
 
+NETWORK_RADIUS_M = 250.0
+
+
+def filter_catalog_to_network(
+    catalog: CatalogArtifact,
+    network_index: GraphSpatialIndex,
+    *,
+    radius_m: float = NETWORK_RADIUS_M,
+) -> CatalogArtifact:
+    """Return only catalog geometries within radius_m of a routable graph edge."""
+    if not math.isfinite(radius_m) or radius_m < 0:
+        raise ValueError("radius_m must be finite and non-negative")
+    retained = tuple(
+        place
+        for place in catalog.places
+        if (distance := network_index.distance_to_waterway(place.geometry_wkb)) is not None
+        and distance <= radius_m
+    )
+    return CatalogArtifact(places=retained, metadata=catalog.metadata)
+
+
 def build_document(
     catalog: CatalogArtifact,
     previous: ReviewDocument | None = None,
@@ -157,4 +188,10 @@ def build_document(
     )
 
 
-__all__ = ["build_document", "is_candidate", "score_place"]
+__all__ = [
+    "NETWORK_RADIUS_M",
+    "build_document",
+    "filter_catalog_to_network",
+    "is_candidate",
+    "score_place",
+]

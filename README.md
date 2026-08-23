@@ -21,12 +21,16 @@ Generate the ranked local review file, then serve it for human decisions:
 uv sync --extra dev
 uv run pound-boat-review generate \
   --catalog pound/artifacts/england-catalog.pkl \
+  --graph pound/artifacts/england.pkl \
   --out pound/artifacts/boat-hire-review.json
 uv run pound-boat-review serve \
   --review pound/artifacts/boat-hire-review.json
 ```
 
-The generated JSON is a local ignored artifact. The reviewer opens at
+Generation keeps only named candidates within 250 m of any routing-eligible
+edge in the graph, preserves decisions for retained identities, and omits the
+rest from the active ignored JSON. The generated JSON is a local ignored
+artifact. The reviewer opens at
 `http://127.0.0.1:5000/`. Some websites block iframes; use the visible new-tab
 fallback when that happens.
 

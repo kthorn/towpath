@@ -41,6 +41,48 @@ def test_read_catalog_emits_all_supported_geometry_records_deterministically():
     assert by_identity[(OsmElementType.WAY, 2101)].geometry_source == "area"
 
 
+def test_read_catalog_excludes_artwork_metadata_tags(tmp_path):
+    source = tmp_path / "artwork.osm"
+    source.write_text(
+        '<?xml version="1.0"?><osm version="0.6">'
+        '<node id="1" lat="51.75" lon="-1.26">'
+        '<tag k="tourism" v="artwork"/><tag k="name" v="Boat Sculpture"/>'
+        "</node>"
+        '<node id="2" lat="51.75" lon="-1.26">'
+        '<tag k="tourism" v="attraction"/><tag k="artist_name" v="A. Artist"/>'
+        '<tag k="name" v="Artist Attraction"/></node>'
+        '<node id="3" lat="51.75" lon="-1.26">'
+        '<tag k="tourism" v="attraction"/><tag k="artwork_type" v="sculpture"/>'
+        '<tag k="name" v="Sculpture Attraction"/></node>'
+        "</osm>"
+    )
+
+    places = read_catalog(source)
+
+    assert not places
+    assert places.report["excluded_by_reason"]["artwork"] == 3
+
+
+def test_read_catalog_excludes_artwork_area_once(tmp_path):
+    """A closed way tagged artwork must be excluded once, not twice (source + area)."""
+    source = tmp_path / "artwork_area.osm"
+    source.write_text(
+        '<?xml version="1.0"?><osm version="0.6">'
+        '<node id="2" lat="51.751" lon="-1.261"/>'
+        '<node id="3" lat="51.752" lon="-1.26"/>'
+        '<node id="4" lat="51.751" lon="-1.259"/>'
+        '<way id="10">'
+        '<nd ref="2"/><nd ref="3"/><nd ref="4"/><nd ref="2"/>'
+        '<tag k="tourism" v="artwork"/><tag k="name" v="Area Sculpture"/>'
+        "</way>"
+        "</osm>"
+    )
+
+    places = read_catalog(source)
+    assert not places
+    assert places.report["excluded_by_reason"]["artwork"] == 1
+
+
 def test_read_catalog_assembles_linear_way_geometry(tmp_path):
     source = tmp_path / "linear.osm"
     source.write_text(

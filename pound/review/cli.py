@@ -8,11 +8,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from pound.catalog.artifact import load_catalog
-from pound.review.ranking import build_document
+from pound.graph.artifact import load_artifact
+from pound.graph.spatial import GraphSpatialIndex
+from pound.review.ranking import build_document, filter_catalog_to_network
 from pound.review.store import ReviewFileError, load_document, write_document
 from pound.review.web import create_app
 
 _DEFAULT_CATALOG = Path("pound/artifacts/england-catalog.pkl")
+_DEFAULT_GRAPH = Path("pound/artifacts/england.pkl")
 
 
 def _generate(args: argparse.Namespace) -> int:
@@ -26,6 +29,9 @@ def _generate(args: argparse.Namespace) -> int:
             return 1
 
     catalog = load_catalog(Path(args.catalog))
+    graph_artifact = load_artifact(Path(args.graph))
+    network_index = GraphSpatialIndex(graph_artifact.graph)
+    catalog = filter_catalog_to_network(catalog, network_index)
     document = build_document(
         catalog,
         previous=previous,
@@ -50,6 +56,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     generate = subparsers.add_parser("generate")
     generate.add_argument("--catalog", type=Path, default=_DEFAULT_CATALOG)
+    generate.add_argument("--graph", type=Path, default=_DEFAULT_GRAPH)
     generate.add_argument("--out", type=Path, required=True)
     generate.set_defaults(handler=_generate)
 

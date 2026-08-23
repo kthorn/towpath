@@ -23,6 +23,10 @@ def _review_url(filter_name: str, identity: str | None = None) -> str:
     return f"{url_for('index')}?{urlencode(query)}"
 
 
+def _google_search_url(name: str) -> str:
+    return f"https://www.google.com/search?{urlencode({'q': name})}"
+
+
 def _filter_records(records: list[ReviewRecord], filter_name: str) -> list[ReviewRecord]:
     if filter_name == "all":
         return records
@@ -43,6 +47,7 @@ def create_app(review_path: Path) -> Flask:
     store = ReviewStore(Path(review_path))
     app.extensions["boat_hire_review_store"] = store
     app.jinja_env.globals["review_url"] = _review_url
+    app.jinja_env.globals["google_search_url"] = _google_search_url
 
     @app.get("/")
     def index():

@@ -65,7 +65,7 @@ def _document(*, complete: bool = False) -> ReviewDocument:
                 decision=decisions[0],
                 website="https://hire.example/",
             ),
-            _record("node/2/marina", 2, "Second Marina", decision=decisions[1]),
+            _record("node/2/marina", 2, "Second Marina & Mooring", decision=decisions[1]),
             _record("node/3/marina", 3, "Reviewed Vacation", decision=decisions[2]),
             _record("node/4/marina", 4, "Reviewed Non Vacation", decision=decisions[3]),
             _record("node/5/marina", 5, "Reviewed Uncertain", decision=decisions[4]),
@@ -101,6 +101,7 @@ def test_home_shows_two_panes_and_record_metadata(client):
     assert b"Vacation hire" in response.data
     assert b"Canal &amp; Co" in response.data
     assert b"&lt;candidate&gt;" in response.data
+    assert b"Search Google for Canal Boat Hire" not in response.data
 
 
 def test_osm_attribution_is_visible_and_linked(client):
@@ -227,14 +228,17 @@ def test_previous_and_next_links_use_ranked_neighbors(client):
     assert b"identity=node%2F3%2Fmarina" in response.data
 
 
-def test_no_website_shows_osm_fallback(client):
+def test_no_website_shows_osm_and_google_fallbacks(client):
     response = client.get("/?filter=all&identity=node/2/marina")
 
     assert response.status_code == 200
     assert b"No website recorded" in response.data
     assert b"https://www.openstreetmap.org/node/2" in response.data
-    assert b'target="_blank"' in response.data
-    assert b'rel="noopener noreferrer"' in response.data
+    assert b"Search Google for Second Marina &amp; Mooring" in response.data
+    assert (
+        b'<a href="https://www.google.com/search?q=Second+Marina+%26+Mooring"'
+        b' target="_blank" rel="noopener noreferrer"'
+    ) in response.data
 
 
 def test_completed_unreviewed_view_has_completion_message(tmp_path):
