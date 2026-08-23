@@ -19,6 +19,7 @@ def _features():
 def test_build_returns_networkx_graph():
     g = build_graph(_features())
     assert isinstance(g, nx.Graph)
+    assert all(data["movable_bridge_ids"] == () for _, data in g.nodes(data=True))
 
 
 def test_build_excludes_derelict_ways():
@@ -60,3 +61,5 @@ def test_build_tunnel_flag():
     g = build_graph(_features())
     edge = next(d for _, _, d in g.edges(data=True) if d["osm_way_id"] == 1006)
     assert edge["has_tunnel"]
+    assert edge["movable_bridge_ids"] == ()
+    assert edge["tunnel_restrictions"] == ()

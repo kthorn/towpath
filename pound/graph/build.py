@@ -22,7 +22,8 @@ import math
 
 import networkx as nx
 
-from pound.ingest.ir import WaterwayFeatures, WaterwayKind, WayDimensions
+from pound.graph.locks import LOCK_SOURCE_TOLERANCE_M, project_point_to_edge
+from pound.ingest.ir import NodeKind, WaterwayFeatures, WaterwayKind, WayDimensions
 
 _ROUND = 7
 _ROUTABLE = {WaterwayKind.CANAL, WaterwayKind.RIVER, WaterwayKind.FAIRWAY, WaterwayKind.LOCK}
@@ -72,6 +73,26 @@ def _merge_dims(a: WayDimensions | None, b: WayDimensions | None) -> WayDimensio
     )
 
 
+def _sorted_union(existing: tuple, incoming: tuple) -> tuple:
+    return tuple(sorted(set(existing) | set(incoming)))
+
+
+def _tunnel_restrictions(way) -> tuple[tuple[int, str, str], ...]:
+    if not way.has_tunnel:
+        return ()
+    pairs: set[tuple[int, str, str]] = set()
+    for key, value in way.tags.items():
+        if (
+            (key in {"oneway", "oneway:boat"} and value != "no")
+            or (key == "opening_hours" and value)
+            or (key in {"access", "boat"} and value != "yes")
+            or (key.endswith(":conditional") and value)
+            or (key == "restriction" or key.startswith("restriction:"))
+        ):
+            pairs.add((way.osm_id, key, value))
+    return tuple(sorted(pairs))
+
+
 def build_graph(features: WaterwayFeatures) -> nx.Graph:
     """Build a noded graph from WaterwayFeatures keyed by synthetic internal uids.
 
@@ -95,7 +116,7 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
             uid = coord_idx[coord]
         if uid is None:
             uid = next(uid_counter)
-            g.add_node(uid, lat=coord[0], lon=coord[1], osm_node_ids=set())
+            g.add_node(uid, lat=coord[0], lon=coord[1], osm_node_ids=set(), movable_bridge_ids=())
             coord_idx[coord] = uid
         if sid is not None:
             osm_idx[sid] = uid
@@ -103,7 +124,7 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
             g.nodes[uid]["osm_node_ids"].add(sid)
         return uid
 
-    def _merge_edge(u, v, way, length_m, seg_geom):
+    def _merge_edge(u, v, way, length_m, seg_geom, movable_bridge_ids, tunnel_restrictions):
         d = g[u][v]
         existed_lock = d["kind"] == WaterwayKind.LOCK
         new_lock = way.kind == WaterwayKind.LOCK
@@ -124,6 +145,8 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
         # tunnel / movable bridge: logical OR.
         d["has_tunnel"] = bool(d.get("has_tunnel") or way.has_tunnel)
         d["has_movable_bridge"] = bool(d.get("has_movable_bridge") or way.has_movable_bridge)
+        d["movable_bridge_ids"] = _sorted_union(d["movable_bridge_ids"], movable_bridge_ids)
+        d["tunnel_restrictions"] = _sorted_union(d["tunnel_restrictions"], tunnel_restrictions)
         # length_m: coincident endpoints => equal by construction; keep existing.
         # locks: a LOCK-involving collision sets max(existing, 1) at merge time.
         if existed_lock or new_lock:
@@ -150,14 +173,45 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
             )
             for i in range(len(way.geometry))
         ]
-        for i in range(len(uids) - 1):
+        emittable_indexes = [i for i in range(len(uids) - 1) if uids[i] != uids[i + 1]]
+        bridge_segment_index = None
+        if way.has_movable_bridge and emittable_indexes:
+            has_matching_bridge_node = False
+            for node in features.nodes:
+                if node.kind != NodeKind.MOVABLE_BRIDGE:
+                    continue
+                if node.osm_id in way.node_ids:
+                    has_matching_bridge_node = True
+                    break
+                for source_index in range(len(way.geometry) - 1):
+                    projection = project_point_to_edge(
+                        [way.geometry[source_index], way.geometry[source_index + 1]],
+                        node.lat,
+                        node.lon,
+                    )
+                    if projection is not None and projection[1] <= LOCK_SOURCE_TOLERANCE_M:
+                        has_matching_bridge_node = True
+                        break
+                if has_matching_bridge_node:
+                    break
+            if not has_matching_bridge_node:
+                bridge_segment_index = emittable_indexes[(len(emittable_indexes) - 1) // 2]
+        tunnel_restrictions = _tunnel_restrictions(way)
+        for i in emittable_indexes:
             u, v = uids[i], uids[i + 1]
-            if u == v:
-                continue  # consecutive duplicate id/coord -> zero-length self-loop; skip
             length_m = _haversine_m(way.geometry[i], way.geometry[i + 1])
             seg_geom = [way.geometry[i], way.geometry[i + 1]]
+            movable_bridge_ids = (f"way:{way.osm_id}",) if i == bridge_segment_index else ()
             if g.has_edge(u, v):
-                _merge_edge(u, v, way, length_m, seg_geom)
+                _merge_edge(
+                    u,
+                    v,
+                    way,
+                    length_m,
+                    seg_geom,
+                    movable_bridge_ids,
+                    tunnel_restrictions,
+                )
             else:
                 g.add_edge(
                     u,
@@ -171,5 +225,40 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
                     has_movable_bridge=way.has_movable_bridge,
                     locks=0,
                     geometry=seg_geom,
+                    movable_bridge_ids=movable_bridge_ids,
+                    tunnel_restrictions=tunnel_restrictions,
                 )
+
+    for node in features.nodes:
+        if node.kind != NodeKind.MOVABLE_BRIDGE:
+            continue
+        bridge_id = f"node:{node.osm_id}"
+        node_coord = _node_key(node.lat, node.lon)
+        matched_uid = next(
+            (
+                uid
+                for uid, data in g.nodes(data=True)
+                if str(node.osm_id) in data["osm_node_ids"]
+                or _node_key(data["lat"], data["lon"]) == node_coord
+            ),
+            None,
+        )
+        if matched_uid is not None:
+            data = g.nodes[matched_uid]
+            data["movable_bridge_ids"] = _sorted_union(data["movable_bridge_ids"], (bridge_id,))
+            continue
+        best_edge = None
+        best_key = None
+        for u, v, edge_data in g.edges(data=True):
+            projection = project_point_to_edge(edge_data["geometry"], node.lat, node.lon)
+            if projection is None or projection[1] > LOCK_SOURCE_TOLERANCE_M:
+                continue
+            key = (projection[1], edge_data["length_m"], *sorted((u, v)))
+            if best_key is None or key < best_key:
+                best_key = key
+                best_edge = edge_data
+        if best_edge is not None:
+            best_edge["movable_bridge_ids"] = _sorted_union(
+                best_edge["movable_bridge_ids"], (bridge_id,)
+            )
     return g

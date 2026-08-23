@@ -12,7 +12,18 @@ from pound.ingest.ir import (
 )
 
 
-def _way(oid, kind, name, nodes, geom, dims=None, tags=None):
+def _way(
+    oid,
+    kind,
+    name,
+    nodes,
+    geom,
+    dims=None,
+    tags=None,
+    *,
+    has_tunnel=False,
+    has_movable_bridge=False,
+):
     return WaterwayWay(
         osm_id=oid,
         kind=kind,
@@ -21,6 +32,8 @@ def _way(oid, kind, name, nodes, geom, dims=None, tags=None):
         node_ids=nodes,
         geometry=geom,
         dimensions=dims or WayDimensions(),
+        has_tunnel=has_tunnel,
+        has_movable_bridge=has_movable_bridge,
     )
 
 
@@ -249,6 +262,108 @@ def test_collision_union_tightens_dimensions():
     assert d.max_beam_m == 2.0  # min
     assert d.max_draft_m == 0.8  # carried from the other way
     assert d.max_length_m == 18.0
+
+
+def test_bridge_tagged_multi_segment_way_marks_only_lower_middle_emittable_segment():
+    way = _way(
+        101,
+        WaterwayKind.CANAL,
+        "Bridge reach",
+        [1, 2, 3, 4],
+        [(51.75, -1.26), (51.751, -1.261), (51.752, -1.262), (51.753, -1.263)],
+        tags={"waterway": "canal", "bridge:movable": "swing"},
+        has_movable_bridge=True,
+    )
+    graph = build_graph(_features([way]))
+    u, v, data = next(
+        (u, v, data)
+        for u, v, data in graph.edges(data=True)
+        if data["movable_bridge_ids"] == ("way:101",)
+    )
+    assert {"2", "3"} <= graph.nodes[u]["osm_node_ids"] | graph.nodes[v]["osm_node_ids"]
+
+
+def test_bridge_node_suppresses_overlapping_way_event_without_node_refs():
+    way = _way(
+        101,
+        WaterwayKind.CANAL,
+        "Bridge reach",
+        [],
+        [(51.75, -1.26), (51.751, -1.261)],
+        tags={"waterway": "canal", "bridge": "movable"},
+        has_movable_bridge=True,
+    )
+    node = WaterwayNode(
+        osm_id=900,
+        lat=51.7505,
+        lon=-1.2605,
+        tags={"bridge": "movable"},
+        kind=NodeKind.MOVABLE_BRIDGE,
+    )
+    graph = build_graph(_features([way], [node]))
+    assert all("way:101" not in data["movable_bridge_ids"] for _, _, data in graph.edges(data=True))
+    assert {
+        bridge_id for _, data in graph.nodes(data=True) for bridge_id in data["movable_bridge_ids"]
+    } | {
+        bridge_id
+        for _, _, data in graph.edges(data=True)
+        for bridge_id in data["movable_bridge_ids"]
+    } == {"node:900"}
+
+
+def test_tunnel_way_emits_sorted_restrictions():
+    way = _way(
+        102,
+        WaterwayKind.CANAL,
+        "Tunnel reach",
+        [1, 2],
+        [(51.75, -1.26), (51.751, -1.261)],
+        tags={
+            "waterway": "canal",
+            "tunnel": "yes",
+            "oneway:boat": "yes",
+            "opening_hours": "Mo-Fr 09:00-17:00",
+        },
+        has_tunnel=True,
+    )
+
+    graph = build_graph(_features([way]))
+
+    assert next(data for _, _, data in graph.edges(data=True))["tunnel_restrictions"] == (
+        (102, "oneway:boat", "yes"),
+        (102, "opening_hours", "Mo-Fr 09:00-17:00"),
+    )
+
+
+def test_coincident_way_preserves_tunnel_restrictions():
+    tunnel = _way(
+        102,
+        WaterwayKind.CANAL,
+        "Tunnel reach",
+        [1, 2],
+        [(51.75, -1.26), (51.751, -1.261)],
+        tags={
+            "waterway": "canal",
+            "tunnel": "yes",
+            "oneway:boat": "yes",
+            "opening_hours": "Mo-Fr 09:00-17:00",
+        },
+        has_tunnel=True,
+    )
+    coincident = _way(
+        103,
+        WaterwayKind.CANAL,
+        "Surface reach",
+        [3, 4],
+        [(51.75, -1.26), (51.751, -1.261)],
+    )
+
+    graph = build_graph(_features([tunnel, coincident]))
+
+    assert next(data for _, _, data in graph.edges(data=True))["tunnel_restrictions"] == (
+        (102, "oneway:boat", "yes"),
+        (102, "opening_hours", "Mo-Fr 09:00-17:00"),
+    )
 
 
 # --- attach_locks flight-level chamber model (§3.5, OQ-A Model D) --------
