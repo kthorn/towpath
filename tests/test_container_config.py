@@ -25,11 +25,7 @@ def test_container_configuration_stages_only_the_deployment_artifact():
     ) in dockerfile
     assert "pound/artifacts" not in dockerignore
     assert "pound/artifacts/*" in dockerignore
-    data_rules = [
-        rule
-        for rule in dockerignore
-        if rule in {"pound/data/*", "!pound/data/boat-hire-enrichment.csv"}
-    ]
+    data_rules = [rule for rule in dockerignore if rule.lstrip("!").startswith("pound/data")]
     assert data_rules == ["pound/data/*", "!pound/data/boat-hire-enrichment.csv"]
     assert (
         'ENV PATH="/app/.venv/bin:${PATH}" \\\n'

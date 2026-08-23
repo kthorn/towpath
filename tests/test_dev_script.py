@@ -149,8 +149,45 @@ printf 'started\\n' >> "$DEV_LOG"
         check=False,
     )
 
-    assert process.returncode != 0
-    assert "POUND_BOAT_HIRE_ENRICHMENT_PATH is not set" in process.stdout
+    assert process.returncode == 1
+    assert process.stdout == "dev: POUND_BOAT_HIRE_ENRICHMENT_PATH is not set\n"
+    assert not log.exists()
+
+
+def test_dev_script_requires_existing_enrichment_file_before_launching_servers(
+    tmp_path: Path,
+) -> None:
+    server = """#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'started\\n' >> "$DEV_LOG"
+"""
+    script, log, _, environment = _prepare_launcher(tmp_path, server, server)
+    enrichment = tmp_path / "missing.csv"
+    env_file = tmp_path / ".env.sh"
+    env_file.write_text(
+        "\n".join(
+            (
+                f"export POUND_BOAT_HIRE_ENRICHMENT_PATH={shlex.quote(str(enrichment))}"
+                if line.startswith("export POUND_BOAT_HIRE_ENRICHMENT_PATH=")
+                else line
+            )
+            for line in env_file.read_text().splitlines()
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    process = subprocess.run(
+        [str(script)],
+        cwd=tmp_path,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+
+    assert process.returncode == 1
+    assert process.stdout == f"dev: boat-hire enrichment not found: {enrichment}\n"
     assert not log.exists()
 
 

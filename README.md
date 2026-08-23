@@ -192,7 +192,8 @@ fetched from `/api/canal-network`. This CSV filters the display overlay only;
 the graph, routing, candidates, POIs, and catalog remain complete. The network
 view provides geographic context for route planning. A reset button in the
 schedule form clears both endpoints and re-centers the map on this selected
-component overlay.
+component overlay. There is no full-network fallback and no runtime component
+switch.
 
 ### Route overlays and POI layers
 
