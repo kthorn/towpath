@@ -188,6 +188,39 @@ def test_selected_tunnel_restrictions_are_warnings():
     ]
 
 
+def test_empty_oneway_value_survives_artifact_validation_and_warns():
+    from pound.graph.artifact import prepare_artifact
+
+    graph = nx.Graph()
+    graph.add_node(1, lat=51.0, lon=-1.0, name="Start", osm_node_ids={"1"}, movable_bridge_ids=())
+    graph.add_node(2, lat=51.0, lon=-0.98, name="End", osm_node_ids={"2"}, movable_bridge_ids=())
+    graph.add_edge(
+        1,
+        2,
+        osm_way_id=77,
+        name="Tunnel",
+        kind="canal",
+        length_m=100.0,
+        dimensions=WayDimensions(),
+        has_tunnel=True,
+        has_movable_bridge=False,
+        locks=0,
+        geometry=[(51.0, -1.0), (51.0, -0.98)],
+        movable_bridge_ids=(),
+        tunnel_restrictions=((77, "oneway", ""),),
+    )
+    metadata = {
+        "source": "overpass",
+        "fetched_at": "2026-07-12T00:00:00Z",
+        "built_at": "2026-07-12T01:00:00Z",
+        "validation": {"self_loops": 0},
+        "poi_summary": {"retained": 0},
+    }
+    artifact = prepare_artifact(graph, [], metadata)
+    route = plan_route(ResolvedConstraints(start_uid=1, end_uid=2), graph=artifact.graph)
+    assert 'tunnel way 77: unmodeled restriction oneway=""' in route.warnings
+
+
 def test_locks_counted_on_lock_edge():
     (rc, g) = _resolved(days=1)
     r = plan_route(rc, graph=g)

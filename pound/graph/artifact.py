@@ -88,12 +88,11 @@ def _validate_tunnel_restrictions(field: str, value: Any) -> None:
             or not isinstance(item[1], str)
             or not item[1]
             or not isinstance(item[2], str)
-            or not item[2]
         ):
             raise _invalid(
                 field,
                 value,
-                "expected (integer OSM way ID, non-empty key, non-empty value) tuples",
+                "expected (integer OSM way ID, non-empty key, string value) tuples",
             )
     if value != tuple(sorted(set(value))):
         raise _invalid(field, value, "expected sorted unique tunnel restriction tuples")
