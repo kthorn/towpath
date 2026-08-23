@@ -1,15 +1,15 @@
-# Fly.io Scale-to-Zero Deployment Design
+# Fly.io Warm-Machine Deployment Design
 
-> **Status:** refined design
+> **Status:** approved for implementation
 > **Scope:** publish the existing graph-only Towpath web application for a few US Pacific users
 
 ## Goal
 
-Publish the current single-container FastAPI/Svelte application on Fly.io with the
-lowest practical idle cost. The first request after idle may be slow; if it errors
-or times out, scale-to-zero is rejected rather than masked. Correctness, low
-ongoing cost, and a simple manual deploy matter more than instant startup or high
-availability.
+Publish the current single-container FastAPI/Svelte application on Fly.io with one
+warm Machine for reliable use by a few US Pacific users. The observed scale-to-zero
+failure is not masked by retries or a fake readiness endpoint. Correctness and a
+simple manual deploy matter more than high availability; hosting-cost optimization
+is deferred for a later decision.
 
 ## Measured Constraints
 
@@ -28,12 +28,20 @@ leaves room above the observed startup peak while real full-graph routing is
 validated. It may be reduced only after real production-route checks show adequate
 headroom.
 
+## Scale-to-zero Result
+
+The deployed 8GB Machine cannot use Fly suspend, which is limited to smaller
+Machines. Normal stop/start did not meet acceptance: one no-retry health request
+returned `502` after 45.459173 seconds, while Fly logs recorded application startup
+roughly 183–272 seconds after a start. This is a real readiness failure, not a
+candidate for a health-check workaround.
+
 ## Decisions
 
 - Deploy one Fly Machine in **`sjc`** (San Jose), selected for US Pacific users.
-- Use Fly Proxy stop/start, with zero warm Machines. A request after several idle
-  minutes starts the existing Machine; a slow but successful first response is
-  acceptable.
+- Keep the one 8GB Machine warm with `min_machines_running = 1`. Do not use
+  suspend: Fly does not support it at this Machine size. `/api/health` remains
+  truthful and only responds after routing is ready.
 - Publish a public, unauthenticated URL. “A few friends” describes expected use,
   not an access-control boundary; add authentication only if you want it private.
 - Package the graph artifact into the immutable deployment image. Do not create a
@@ -45,6 +53,7 @@ headroom.
 - Deploy manually from the release worktree. Explicitly decline Fly's optional
   database, Redis, object storage, and GitHub workflow at launch. Do not add CI, a
   database, a volume, a second region, a spare HA Machine, or a metrics autoscaler.
+  Defer scale-to-zero and other hosting-cost experiments until a later decision.
 
 ## Packaging and Artifact Flow
 
@@ -59,7 +68,7 @@ Fly remote Docker build
   `- /app/pound/artifacts/england.pkl
         |
         v
-one stopped-or-started Fly Machine in sjc
+one warm Fly Machine in sjc
         |
         v
 Fly Proxy HTTPS -> FastAPI / API + static SPA
@@ -161,7 +170,7 @@ wait_timeout = "10m"
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
 [[http_service.checks]]
   method = "GET"
@@ -196,10 +205,11 @@ pass a server secret; the Maps key is intentionally public browser configuration
 
 ## Cost Boundaries
 
-Before launch, check Fly's current `sjc` pricing; budget **at least $55/month for
-always-running compute**, plus rootfs, egress, and any allocated network resources.
-This is not the expected cost for sporadic use. Stopped Machines are not charged
-for CPU or RAM; Fly charges their root filesystem at $0.15 per GB per 30 days.
+Budget about **$51/month for on-demand 8GB compute** in `sjc`, plus rootfs, egress,
+and any allocated network resources. This is the active warm-Machine configuration;
+do not change it for a speculative cost reduction. Fly charges a stopped Machine's
+root filesystem at $0.15 per GB per 30 days, but stopping is not part of this
+deployment.
 
 Fly does not provide billing alerts. Keep one Machine, no volume, and no
 autoscaler, then review the Fly dashboard's month-to-date cost during the first
@@ -246,10 +256,9 @@ domain or dedicated IPv4 address is needed for the initial deployment.
   its matching application code and graph artifact together. A rolling update of
   the one Machine has a cold-start outage by design. There is no database, volume,
   migration, or mutable user data to repair.
-- If the first post-idle request errors, times out, or the Fly Proxy does not hold
-  it through the measured startup time, do not add a keepalive or retry layer. Set
-  one warm Machine and re-evaluate its cost, or reconsider the host; this
-  scale-to-zero design is then not acceptable as written.
+- `min_machines_running = 1` keeps the sole Machine warm. If it stops or a
+  no-retry health request fails, treat that as a deployment failure; do not add a
+  fake readiness response or retry layer.
 - No silent fallback loads a different graph: the health response's
   `artifact_revision` is the deployment diagnostic.
 
@@ -275,30 +284,27 @@ domain or dedicated IPv4 address is needed for the initial deployment.
 4. Create the restricted Maps browser key for the generated Fly hostname. Export
    the three Vite values and run the exact `fly deploy --ha=false --build-arg …`
    command above; the committed 10-minute wait timeout applies.
-5. Request `https://<app>.fly.dev/api/health` first; this starts the Machine if it
-   stopped. Then run `fly ssh console -C 'find /app -path
+5. Confirm `fly machines list` shows exactly one **started** 8GB Machine in `sjc`.
+   Make exactly one no-retry request and verify its JSON response has
+   `status: healthy` and `artifact_revision == $expected_revision`:
+
+   ```bash
+   curl --fail --show-error --silent --max-time 300 \
+     https://<app>.fly.dev/api/health
+   ```
+
+   Then run `fly ssh console -C 'find /app -path
    "*/pound/artifacts/england.pkl" -type f -print'`; it must print only
-   `/app/pound/artifacts/england.pkl`, not a second copy in `.venv`. Confirm the
-   health response is `status: healthy` and its artifact revision equals
-   `$expected_revision`. Separately request `http://<app>.fly.dev/api/health` and
-   confirm a 3xx redirect to the HTTPS URL.
+   `/app/pound/artifacts/england.pkl`, not a second copy in `.venv`. Separately
+   request `http://<app>.fly.dev/api/health` and confirm a 3xx redirect to HTTPS.
 6. Run the README's Bletchley Park to Black Prince Holidays, Stoke Hammond manual
    browser acceptance check, including map, transfer, and canal overlays. Do not
    substitute `/api/health` for this check: it does not surface a canal-overlay
    geometry failure.
-7. Verify `fly machines list` shows exactly one Machine. After several idle
-   minutes, confirm it stops; then make exactly one request:
-
-   ```bash
-   curl --fail --show-error --silent --output /dev/null --max-time 300 \
-     --write-out 'status=%{http_code} elapsed=%{time_total}s\n' \
-     https://<app>.fly.dev/api/health
-   ```
-
-   Record its status and elapsed time. An error or timeout fails scale-to-zero
-   acceptance even if a later retry succeeds; set one warm Machine or reconsider
-   the host. Inspect logs and peak memory after a real route. Treat repeated restart
-   or OOM events as a failed deployment.
+7. After several idle minutes, run `fly machines list` again without making a
+   request. It must still show the same one **started** Machine. Inspect logs and
+   peak memory after a real route; repeated restart, OOM, or a stopped Machine is a
+   failed deployment.
 8. Review the Fly month-to-date bill after initial use and the Google Maps billing
    dashboard before sharing more broadly.
 
@@ -309,3 +315,5 @@ domain or dedicated IPv4 address is needed for the initial deployment.
 - GitHub Actions or any other CI deployment
 - A volume-backed artifact update path
 - More than one Machine, high availability, another region, or autoscaling
+- Scale-to-zero or another hosting-cost experiment; retain one warm Machine until
+  a new acceptance decision

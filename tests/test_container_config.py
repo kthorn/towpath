@@ -36,7 +36,7 @@ def test_container_configuration_stages_only_the_deployment_artifact():
     assert wheel["exclude"] == ["pound/artifacts/**"]
 
 
-def test_fly_configuration_matches_the_single_machine_scale_to_zero_contract():
+def test_fly_configuration_keeps_the_single_machine_warm():
     fly = tomllib.loads((ROOT / "fly.toml").read_text())
 
     assert set(fly) == {"app", "primary_region", "build", "deploy", "env", "http_service", "vm"}
@@ -50,7 +50,7 @@ def test_fly_configuration_matches_the_single_machine_scale_to_zero_contract():
         "force_https": True,
         "auto_stop_machines": "stop",
         "auto_start_machines": True,
-        "min_machines_running": 0,
+        "min_machines_running": 1,
         "checks": [
             {
                 "method": "GET",
