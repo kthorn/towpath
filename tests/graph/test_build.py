@@ -3,7 +3,13 @@ import json
 import networkx as nx
 
 from pound.graph.build import build_graph
-from pound.ingest.ir import WaterwayKind
+from pound.ingest.ir import (
+    AccessCaveat,
+    WaterwayFeatures,
+    WaterwayKind,
+    WaterwayWay,
+    WayDimensions,
+)
 from pound.ingest.overpass import parse
 from tests.fixtures import oxford_fixture_path
 
@@ -14,6 +20,24 @@ def _features():
             return parse(json.load(f)["elements"], None)
     except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
         raise RuntimeError(f"Failed to load Oxford fixture: {e}") from e
+
+
+def _way(osm_id, tags, geometry, node_ids):
+    return WaterwayWay(
+        osm_id=osm_id,
+        kind=WaterwayKind.CANAL,
+        name=None,
+        tags=tags,
+        node_ids=node_ids,
+        geometry=geometry,
+        dimensions=WayDimensions(),
+    )
+
+
+def _features_for(*ways):
+    return WaterwayFeatures(
+        ways=list(ways), nodes=[], source="test", fetched_at="2026-08-23T00:00:00Z", bbox=None
+    )
 
 
 def test_build_returns_networkx_graph():
@@ -63,3 +87,33 @@ def test_build_tunnel_flag():
     assert edge["has_tunnel"]
     assert edge["movable_bridge_ids"] == ()
     assert edge["tunnel_restrictions"] == ()
+
+
+def test_build_attaches_retained_access_caveats_to_each_emitted_segment():
+    graph = build_graph(
+        _features_for(
+            _way(
+                77,
+                {"waterway": "canal", "boat": "discouraged"},
+                [(51.0, -1.0), (51.001, -1.0), (51.002, -1.0)],
+                [1, 2, 3],
+            )
+        )
+    )
+    expected = (AccessCaveat(77, "boat", "discouraged", "discouraged"),)
+    assert [data["access_caveats"] for _, _, data in graph.edges(data=True)] == [expected, expected]
+
+
+def test_build_merges_sorted_unique_access_caveats_from_coincident_ways():
+    geometry = [(51.0, -1.0), (51.001, -1.0)]
+    graph = build_graph(
+        _features_for(
+            _way(11, {"waterway": "canal", "boat": "discouraged"}, geometry, [1, 2]),
+            _way(10, {"waterway": "canal", "access": "customers"}, geometry, [1, 2]),
+        )
+    )
+    edge = next(data for _, _, data in graph.edges(data=True))
+    assert edge["access_caveats"] == (
+        AccessCaveat(10, "access", "customers", "unknown"),
+        AccessCaveat(11, "boat", "discouraged", "discouraged"),
+    )

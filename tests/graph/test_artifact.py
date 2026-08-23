@@ -15,7 +15,7 @@ from pound.graph.artifact import (
     save_artifact,
     write_artifact,
 )
-from pound.ingest.ir import PointOfInterest
+from pound.ingest.ir import AccessCaveat, PointOfInterest
 
 
 def _graph() -> nx.Graph:
@@ -36,6 +36,7 @@ def _graph() -> nx.Graph:
         geometry=[(51.7520, -1.2577), (51.7520, -1.2560)],
         movable_bridge_ids=(),
         tunnel_restrictions=(),
+        access_caveats=(),
     )
     return graph
 
@@ -233,6 +234,7 @@ def test_load_rejects_directed_or_non_graph_payloads(tmp_path: Path, graph):
         ("edge", "geometry"),
         ("edge", "movable_bridge_ids"),
         ("edge", "tunnel_restrictions"),
+        ("edge", "access_caveats"),
     ],
 )
 def test_load_rejects_missing_required_graph_attributes(tmp_path: Path, where: str, attribute: str):
@@ -278,6 +280,57 @@ def test_load_rejects_malformed_edge_geometry(tmp_path: Path, geometry):
     _write(path, payload)
 
     _assert_rebuild_error(path, "geometry")
+
+
+def test_load_rejects_non_tuple_access_caveats(tmp_path: Path):
+    path = tmp_path / "graph.pkl"
+    payload = _valid_payload()
+    valid = AccessCaveat(200, "boat", "discouraged", "discouraged")
+    payload["graph"].edges[0, 1]["access_caveats"] = [valid]
+    _write(path, payload)
+
+    _assert_rebuild_error(path, "access_caveats")
+
+
+def test_load_rejects_duplicate_access_caveats(tmp_path: Path):
+    path = tmp_path / "graph.pkl"
+    payload = _valid_payload()
+    valid = AccessCaveat(200, "boat", "discouraged", "discouraged")
+    payload["graph"].edges[0, 1]["access_caveats"] = (valid, valid)
+    _write(path, payload)
+
+    _assert_rebuild_error(path, "access_caveats")
+
+
+def test_load_rejects_unsorted_access_caveats(tmp_path: Path):
+    path = tmp_path / "graph.pkl"
+    payload = _valid_payload()
+    valid = AccessCaveat(200, "boat", "discouraged", "discouraged")
+    payload["graph"].edges[0, 1]["access_caveats"] = (
+        AccessCaveat(201, "boat", "discouraged", "discouraged"),
+        valid,
+    )
+    _write(path, payload)
+
+    _assert_rebuild_error(path, "access_caveats")
+
+
+@pytest.mark.parametrize(
+    "caveat",
+    [
+        AccessCaveat(0, "boat", "discouraged", "discouraged"),
+        AccessCaveat(200, "boat", "discouraged", "unknown"),
+    ],
+)
+def test_load_rejects_access_caveats_outside_public_access_policy(
+    tmp_path: Path, caveat: AccessCaveat
+):
+    path = tmp_path / "graph.pkl"
+    payload = _valid_payload()
+    payload["graph"].edges[0, 1]["access_caveats"] = (caveat,)
+    _write(path, payload)
+
+    _assert_rebuild_error(path, "access_caveat")
 
 
 def test_load_rejects_duplicate_poi_identities(tmp_path: Path):

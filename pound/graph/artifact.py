@@ -16,7 +16,8 @@ from pydantic import ValidationError
 from shapely.geometry import Point
 
 from pound.graph.pois import _edge_line_wgs84, _routing_eligible, _to_bng
-from pound.ingest.ir import PointOfInterest
+from pound.ingest.filters import extract_access_caveats
+from pound.ingest.ir import AccessCaveat, PointOfInterest
 
 _PAYLOAD_FIELDS = {"graph", "pois", "metadata"}
 _METADATA_FIELDS = {
@@ -40,6 +41,7 @@ _EDGE_FIELDS = {
     "geometry",
     "movable_bridge_ids",
     "tunnel_restrictions",
+    "access_caveats",
 }
 _CORRIDOR_M = {
     "canal_service": 250.0,
@@ -98,6 +100,42 @@ def _validate_tunnel_restrictions(field: str, value: Any) -> None:
         raise _invalid(field, value, "expected sorted unique tunnel restriction tuples")
 
 
+def _validate_access_caveats(edge: tuple[int, int], caveats: Any) -> None:
+    if not isinstance(caveats, tuple):
+        raise _invalid(f"graph edge {edge} attribute access_caveats", caveats, "expected a tuple")
+    for caveat in caveats:
+        if type(caveat) is not AccessCaveat:
+            raise _invalid(f"graph edge {edge} access_caveat", caveat, "expected AccessCaveat")
+        if type(caveat.osm_way_id) is not int or caveat.osm_way_id <= 0:
+            raise _invalid(
+                f"graph edge {edge} access_caveat",
+                caveat,
+                "expected a positive OSM way id",
+            )
+        if (
+            caveat.tag not in {"boat", "access"}
+            or not isinstance(caveat.value, str)
+            or not caveat.value
+        ):
+            raise _invalid(
+                f"graph edge {edge} access_caveat",
+                caveat,
+                "expected a supported non-empty tag value",
+            )
+        if extract_access_caveats(caveat.osm_way_id, {caveat.tag: caveat.value}) != (caveat,):
+            raise _invalid(
+                f"graph edge {edge} access_caveat",
+                caveat,
+                "does not match public-access policy",
+            )
+    if caveats != tuple(sorted(set(caveats))):
+        raise _invalid(
+            f"graph edge {edge} attribute access_caveats",
+            caveats,
+            "expected sorted unique caveats",
+        )
+
+
 def _validate_graph(graph: Any) -> nx.Graph:
     if not isinstance(graph, nx.Graph) or graph.is_directed() or graph.is_multigraph():
         raise _invalid("graph", type(graph).__name__, "expected an undirected networkx.Graph")
@@ -144,6 +182,7 @@ def _validate_graph(graph: Any) -> nx.Graph:
             _finite_coordinate(
                 f"graph edge {(u, v)} geometry[{index}].lon", coordinate[1], -180, 180
             )
+        _validate_access_caveats((u, v), data["access_caveats"])
         if "lock_points" in data:
             lock_points = data["lock_points"]
             if not isinstance(lock_points, (list, tuple)):

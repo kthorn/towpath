@@ -25,6 +25,7 @@ def _graph() -> nx.Graph:
         geometry=[(51.7520, -1.2560), (51.7520, -1.2577)],
         movable_bridge_ids=(),
         tunnel_restrictions=(),
+        access_caveats=(),
     )
     return graph
 
