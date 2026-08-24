@@ -479,6 +479,17 @@ Unknown / ambiguous place names and un-routable constraints produce a clear
 error, not a traceback. A REST API will eventually supersede this CLI for
 product use; it is deliberately a test harness, not a planner.
 
+### Public waterway access
+
+Built routing artifacts exclude waterways explicitly tagged
+`boat=no|unsuitable|canoe|private|permit` or
+`access=no|private|permit`. Missing OSM access tags remain routable; selected
+`discouraged` or unrecognised explicit values appear as route warnings and
+access-segment evidence. This is not proof of a legal navigation right—verify
+local rules, permits, operating restrictions, and safe access before travel.
+Rebuild the artifact after upgrading Pound; older artifacts deliberately fail
+validation.
+
 ### Routing by uid
 
 `pound-plan` accepts a graph node **uid** (the integer `pound-locate` prints,

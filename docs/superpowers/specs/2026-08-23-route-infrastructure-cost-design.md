@@ -18,9 +18,13 @@ ingest to make both behaviours deterministic.
 - A bare `tunnel=yes` is routable and has neither a delay nor a warning.
 - Tunnel directional, timed, conditional, and other unimplemented restriction
   tags keep a route usable but produce warnings.
-- `access=no` excludes a waterway globally during ingest. The build must retain
-  disconnected components left by that exclusion for connectivity validation;
-  it must not delete them merely because they are disconnected.
+- Issue #12's public-by-explicit-tag artifact is a prerequisite. It excludes
+  `boat=no|unsuitable|canoe|private|permit` and `access=no|private|permit`
+  during ingest, retains selected `discouraged` or unknown explicit values as
+  `access_caveats`, and leaves missing tags eligible without warning. This issue
+  consumes that artifact; it does not extend `is_navigable`, duplicate the
+  filtering implementation or its tests, or add request-time access
+  authorization.
 - Pound will not add directed or timetable-aware routing in this issue.
 
 ## Source-tag policy
@@ -31,18 +35,20 @@ ways do not become routing events.
 
 | Source tag | Build behaviour | Route behaviour |
 | --- | --- | --- |
-| `boat=no`, `boat=unsuitable`, `boat=canoe` | Existing navigability filter excludes it | Never selectable |
-| `access=no` | Navigability filter excludes it globally | Never selectable |
+| `boat=no\|unsuitable\|canoe\|private\|permit` | Excluded by Issue #12's public artifact | Never selectable |
+| `access=no\|private\|permit` | Excluded by Issue #12's public artifact | Never selectable |
+| retained `discouraged` or unknown `boat`/`access` value | Preserved as an Issue #12 `access_caveats` record | Route remains selectable; emit the access warning |
 | `bridge:movable=*` or `bridge=movable` | Create one movable-bridge event | Add configured delay once when crossed |
 | `tunnel=yes` with no restriction tag | Preserve tunnel flag | No delay or warning |
 | `oneway`, `oneway:boat` on a tunnel | Preserve tag/value evidence | Route remains selectable; emit warning |
 | `opening_hours`, `*:conditional`, `restriction*`, or other access/direction restriction evidence on a tunnel | Preserve tag/value evidence | Route remains selectable; emit warning |
 
-`is_navigable` rejects `access=no` even when a contradictory `boat=yes` is
-present. `access=private`, `boat=private`, malformed values, and other values
-that are not explicitly excluded retain the current eligible-by-default
-behaviour. When such a value is restriction evidence on a tunnel, it is
-surfaced as a warning rather than silently interpreted.
+Issue #12 applies both deny lists before graph construction, including
+contradictory `boat=yes`/`access=private` and `boat=permit`/`access=yes`
+combinations. Missing tags remain eligible and silent. #16 preserves the
+resulting `access_caveats` and does not reinterpret access values or introduce a
+private-route authorization path; a retained non-`yes` value that is not already
+represented by an Issue #12 caveat may still be tunnel restriction evidence.
 
 The supported OSM convention is `oneway:boat` for boat-specific direction;
 conditional restrictions can use tags such as `oneway:conditional` and
@@ -53,10 +59,9 @@ requests have no departure time.
 
 ### Retention and filtering
 
-1. Extend the existing `is_navigable` / `filter_navigable_ways` path to reject
-   `access=no` in addition to the existing explicit non-navigable `boat` values.
-   It remains ordered after infrastructure-node pruning, so pruning can see all
-   prohibited ways before they disappear.
+1. Treat Issue #12's completed public-access filtering, `access_caveats`, and
+   strict artifact validation as prerequisites. Do not extend `is_navigable` or
+   `filter_navigable_ways`, copy its deny lists, or duplicate its filtering tests.
 2. Extend both source paths to retain and classify movable bridge nodes tagged
    `bridge:movable=*` and `bridge=movable`. In particular, add both node forms
    to the bulk `osmium tags-filter` expression; Overpass must request both
@@ -67,8 +72,10 @@ requests have no departure time.
 
 ### Bridge and tunnel annotations
 
-Graph construction initializes every node with an empty sorted
-`movable_bridge_ids` tuple and every edge with empty sorted
+Graph construction carries forward Issue #12's `access_caveats` tuple on every
+edge. The bridge and tunnel fields in this issue are additive to
+`access_caveats`, never a replacement. It initializes every node with an empty
+sorted `movable_bridge_ids` tuple and every edge with empty sorted
 `movable_bridge_ids` and `tunnel_restrictions` tuples. A tunnel restriction is
 an `(osm_way_id, key, value)` triple.
 
@@ -147,32 +154,39 @@ bridge-count field is required in route results.
 
 For `tunnel=yes` edges, the normalizer records restriction evidence from
 `oneway` or `oneway:boat` unless its value is explicitly `no`; nonempty
-`opening_hours`; `access` or `boat` values other than `yes`; any key ending in
-`:conditional`; and `restriction` or `restriction:*` keys. It preserves raw
-values rather than attempting to parse them. After selecting a path, the
-planner collects those annotations, deduplicates them by source way/tag/value,
-sorts them by `(osm_way_id, key, value)`, and emits the stable template
+`opening_hours`; `access` or `boat` values other than `yes`, except when the
+same retained value has a `discouraged` or `unknown` caveat already surfaced by
+Issue #12 in `access_segments`; any key ending in `:conditional`; and
+`restriction` or `restriction:*` keys. It preserves raw values rather than
+attempting to parse them. Other surviving non-`yes` values remain tunnel
+restriction evidence. After selecting a path, the planner collects those
+annotations, deduplicates them by source way/tag/value, sorts them by
+`(osm_way_id, key, value)`, and emits the stable template
 `tunnel way <id>: unmodeled restriction <key>=<JSON-quoted value>` through the
-existing `RouteResult.warnings` list.
+existing `RouteResult.warnings` list. Issue #12's access-caveat warnings remain
+in that list; the shared warning order is dimensions, access, tunnel, day
+budget.
 
 - Directional tags, including `oneway` and `oneway:boat`, warn but do not make
   an undirected route unavailable.
 - Time-dependent, conditional, malformed, and unknown values warn but do not
   receive a guessed delay.
-- A prohibited `access=no` way cannot reach this stage because ingest removed
-  it.
-- A tunnel without restriction evidence remains silent.
+- Issue #12's public-artifact deny-list values cannot reach this stage because
+  ingest removed them.
+- A tunnel without restriction evidence remains silent; an access caveat is
+  reported through the access warning, not duplicated as a tunnel warning.
 
-Restriction relations and non-`yes` tunnel values are not ingested as tunnel
-rules in this issue. The existing CLI and trip-summary warning renderers are
+Restriction relations and non-`yes` tunnel values are not ingested as
+operational tunnel rules in this issue; surviving non-`yes` values remain
+warning evidence only. The existing CLI and trip-summary warning renderers are
 reused; no parallel warning schema or UI subsystem is needed.
 
 ## Verification
 
 ### Python and ingest tests
 
-- Extend navigability tests for global `access=no` exclusion while preserving
-  the current handling of other access values.
+- Consume Issue #12's filtering and caveat tests as a prerequisite; do not
+  duplicate the public-access policy tests here.
 - Prove the bulk tag filter and both readers retain node- and way-form movable
   bridge features.
 - Cover bridge anchoring, one-event-per-physical-source behaviour, exact-node
@@ -181,7 +195,8 @@ reused; no parallel warning schema or UI subsystem is needed.
   field shape/order validation. Update strict graph/artifact fixtures that must
   carry the new required fields.
 - Cover bare tunnels, directional/timed/conditional/unknown restriction
-  warnings, and unavailable routes once `access=no` breaks the only path.
+  warnings, and routes over the public artifact without reimplementing access
+  filtering.
 - Build competing fixture paths where the default five-minute bridge delay
   selects a longer bridge-free route, while a zero override selects the shorter
   bridged route.
@@ -206,8 +221,8 @@ artifact belongs in the change.
 
 Update the engine design's cost-model section, CLI help/usage, README, and the
 navigability-filter docstring to state the five-minute default, the zero-disable
-override, global `access=no` filtering (which wins over `boat=yes`), and
-warning-only tunnel restriction policy.
+override, Issue #12's public-artifact access policy, and warning-only tunnel
+restriction policy.
 
 ## Non-goals
 
