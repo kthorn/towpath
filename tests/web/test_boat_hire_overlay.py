@@ -22,6 +22,7 @@ def _two_component_graph(route_graph: nx.Graph) -> nx.Graph:
         lat=52.001,
         lon=-2.001,
         osm_node_ids={"5"},
+        movable_bridge_ids=(),
         name="Omitted end",
         tags={"kind": "canal"},
     )
