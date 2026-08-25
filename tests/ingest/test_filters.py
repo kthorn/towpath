@@ -3,12 +3,14 @@ import pytest
 from pound.ingest.filters import (
     classify_node,
     classify_way,
+    extract_access_caveats,
     extract_dimensions,
     filter_navigable_ways,
     is_derelict,
     is_navigable,
 )
 from pound.ingest.ir import (
+    AccessCaveat,
     NodeKind,
     WaterwayFeatures,
     WaterwayKind,
@@ -124,27 +126,32 @@ def test_classify_node(tags, expected):
 
 
 @pytest.mark.parametrize(
-    "boat_value, expected",
+    ("tags", "expected"),
     [
-        ("no", False),
-        ("unsuitable", False),
-        ("canoe", False),
-        ("yes", True),
-        ("private", True),
-        ("permissive", True),
-        ("permit", True),
-        ("designated", True),
-        ("discouraged", True),
-        ("unknown", True),
-        ("unkmown", True),  # typo of "unknown" -> kept (literal-string blacklist)
-        (None, True),  # missing key -> kept (default navigable)
+        ({"boat": "no"}, False),
+        ({"boat": "unsuitable"}, False),
+        ({"boat": "canoe"}, False),
+        ({"boat": "private"}, False),
+        ({"boat": "permit"}, False),
+        ({"access": "no"}, False),
+        ({"access": "private"}, False),
+        ({"access": "permit"}, False),
+        ({"boat": "yes", "access": "private"}, False),
+        ({"boat": "permit", "access": "yes"}, False),
+        ({"boat": "yes"}, True),
+        ({"boat": "permissive"}, True),
+        ({"boat": "designated"}, True),
+        ({"access": "permissive"}, True),
+        ({"access": "designated"}, True),
+        ({"boat": "discouraged"}, True),
+        ({"access": "discouraged"}, True),
+        ({"boat": "unknown"}, True),
+        ({"access": "customers"}, True),
+        ({"boat": "No"}, True),
+        ({}, True),
     ],
 )
-def test_is_navigable(boat_value, expected):
-    tags = {} if boat_value is None else {"boat": boat_value}
-    if boat_value is None:
-        # also test the fully-empty tag dict path
-        assert is_navigable({}) is True
+def test_is_navigable_applies_the_public_access_deny_lists(tags, expected):
     assert is_navigable(tags) is expected
 
 
@@ -153,7 +160,6 @@ def test_is_navigable(boat_value, expected):
     [
         ({"access": "no", "boat": "yes"}, False),
         ({"access": "no", "boat": "private"}, False),
-        ({"access": "private", "boat": "yes"}, True),
     ],
 )
 def test_is_navigable_applies_access_no_before_boat(tags, expected):
@@ -165,9 +171,13 @@ def test_is_navigable_none_tags():
     assert is_navigable(None) is True
 
 
-def test_is_navigable_preserves_other_keys():
-    # the predicate reads `boat` only; a non-boat non-navigable tag is ignored
-    assert is_navigable({"waterway": "canal", "access": "private"}) is True
+def test_extract_access_caveats_keeps_only_retained_explicit_caveats():
+    assert extract_access_caveats(7, {"boat": "yes"}) == ()
+    assert extract_access_caveats(7, {"boat": "private"}) == ()
+    assert extract_access_caveats(7, {"boat": "discouraged", "access": "customers"}) == (
+        AccessCaveat(7, "access", "customers", "unknown"),
+        AccessCaveat(7, "boat", "discouraged", "discouraged"),
+    )
 
 
 # --- filter_navigable_ways ---
@@ -205,14 +215,25 @@ def test_filter_navigable_ways_drops_boat_no_keeps_yes_and_missing():
     assert [w.osm_id for w in out.ways] == [2, 3]
 
 
-def test_filter_navigable_ways_drops_unsuitable_and_canoe():
+def test_filter_navigable_ways_drops_non_public_boat_values():
     ways = [
         _way(1, WaterwayKind.CANAL, {"waterway": "canal", "boat": "unsuitable"}),
         _way(2, WaterwayKind.RIVER, {"waterway": "river", "boat": "canoe"}),
         _way(3, WaterwayKind.CANAL, {"waterway": "canal", "boat": "private"}),
+        _way(4, WaterwayKind.CANAL, {"waterway": "canal", "boat": "permit"}),
     ]
     out = filter_navigable_ways(_features(ways))
-    assert [w.osm_id for w in out.ways] == [3]
+    assert [w.osm_id for w in out.ways] == []
+
+
+def test_filter_navigable_ways_drops_non_public_access_values():
+    ways = [
+        _way(1, WaterwayKind.CANAL, {"waterway": "canal", "access": "no"}),
+        _way(2, WaterwayKind.CANAL, {"waterway": "canal", "access": "private"}),
+        _way(3, WaterwayKind.CANAL, {"waterway": "canal", "access": "permit"}),
+    ]
+    out = filter_navigable_ways(_features(ways))
+    assert [w.osm_id for w in out.ways] == []
 
 
 def test_filter_navigable_ways_drops_lock_yes_with_boat_no():
@@ -226,7 +247,7 @@ def test_filter_navigable_ways_drops_lock_yes_with_boat_no():
 
 
 def test_filter_navigable_ways_does_not_drop_derelict():
-    # is_derelict stays inline in the readers; filter_navigable_ways is boat-only.
+    # is_derelict stays inline in the readers; filter_navigable_ways is public-access-only.
     # A `disused:waterway=canal` way with `boat=yes` survives here (the reader's
     # inline is_derelict drops it later, but this function must NOT second-guess).
     ways = [

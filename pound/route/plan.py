@@ -12,6 +12,7 @@ bridge the CLI and Agent Core use.
 """
 
 import json
+from collections import Counter
 from dataclasses import dataclass
 
 import networkx as nx
@@ -28,6 +29,7 @@ from pound.schemas import (
     DayPlan,
     GeoJSONLineString,
     ResolvedConstraints,
+    RouteAccessSegment,
     RouteDayGeometry,
     RouteLeg,
     RouteLock,
@@ -84,6 +86,49 @@ def _traversal_time_min(graph, u, v, edge, bridge_delay_min: float) -> float:
     )
 
 
+def _access_segments(path: list[int], graph: nx.Graph) -> list[RouteAccessSegment]:
+    segments = []
+    for u, v in zip(path, path[1:], strict=False):
+        low, high = sorted((u, v))
+        for caveat in graph.edges[u, v].get("access_caveats", ()):
+            segments.append(
+                RouteAccessSegment(
+                    from_uid=low,
+                    to_uid=high,
+                    osm_way_id=caveat.osm_way_id,
+                    kind=caveat.kind,
+                    tag=caveat.tag,
+                    value=caveat.value,
+                )
+            )
+    return sorted(
+        segments,
+        key=lambda segment: (
+            segment.from_uid,
+            segment.to_uid,
+            segment.osm_way_id,
+            segment.tag,
+            segment.value,
+            segment.kind,
+        ),
+    )
+
+
+def _access_warnings(segments: list[RouteAccessSegment]) -> list[str]:
+    counts = Counter((segment.kind, segment.tag, segment.value) for segment in segments)
+    warnings = []
+    for (kind, tag, value), count in sorted(counts.items()):
+        if kind == "discouraged":
+            warnings.append(
+                f"Route uses {count} segment(s) tagged {tag}=discouraged; verify local access."
+            )
+        else:
+            warnings.append(
+                f"Route uses {count} segment(s) with unrecognized {tag}={json.dumps(value)}; "
+                "verify local access."
+            )
+    return warnings
+
 def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _ComputedRoute:
     """Compute the public route result together with its selected graph path."""
     # ResolvedConstraints carries the graph's own node handles — no coord->uid
@@ -126,6 +171,8 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
             f"(graph is not connected between these nodes)"
         ) from None
 
+    access_segments = _access_segments(path, graph)
+
     legs: list[RouteLeg] = []
     for u, v in zip(path, path[1:], strict=False):
         d = graph.edges[u, v]
@@ -149,7 +196,8 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
     warnings: list[str] = []
     if unknown_edges:
         warnings.append(f"draft/beam unknown on {len(set(unknown_edges))} segment(s)")
-    warnings.extend(_tunnel_warnings(path, graph))
+    warnings.extend(_access_warnings(access_segments))
+    warnings.extend(_tunnel_warnings(path, graph, access_segments))
 
     day_ranges = _day_path_ranges(legs, constraints.hours_per_day, constraints.days)
     days = _chunk_days(legs, constraints.hours_per_day, constraints.days)
@@ -169,6 +217,7 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
             total_minutes=total_minutes,
             amenities=[],
             warnings=warnings,
+            access_segments=access_segments,
             graph_source_date=graph.graph.get("fetched_at", ""),
         ),
         path=tuple(path),
@@ -176,11 +225,17 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
     )
 
 
-def _tunnel_warnings(path: list[int], graph: nx.Graph) -> list[str]:
+def _tunnel_warnings(
+    path: list[int], graph: nx.Graph, access_segments: list[RouteAccessSegment]
+) -> list[str]:
+    surfaced_access = {
+        (segment.osm_way_id, segment.tag, segment.value) for segment in access_segments
+    }
     restrictions = {
         item
         for u, v in zip(path, path[1:], strict=False)
         for item in graph.edges[u, v]["tunnel_restrictions"]
+        if item not in surfaced_access
     }
     return [
         f"tunnel way {way_id}: unmodeled restriction {key}={json.dumps(value)}"

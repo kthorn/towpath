@@ -23,6 +23,7 @@ import math
 import networkx as nx
 
 from pound.graph.locks import LOCK_SOURCE_TOLERANCE_M, project_point_to_edge
+from pound.ingest.filters import extract_access_caveats
 from pound.ingest.ir import NodeKind, WaterwayFeatures, WaterwayKind, WayDimensions
 
 _ROUND = 7
@@ -124,7 +125,9 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
             g.nodes[uid]["osm_node_ids"].add(sid)
         return uid
 
-    def _merge_edge(u, v, way, length_m, seg_geom, movable_bridge_ids, tunnel_restrictions):
+    def _merge_edge(
+        u, v, way, length_m, seg_geom, movable_bridge_ids, tunnel_restrictions, access_caveats
+    ):
         d = g[u][v]
         existed_lock = d["kind"] == WaterwayKind.LOCK
         new_lock = way.kind == WaterwayKind.LOCK
@@ -152,6 +155,7 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
         if existed_lock or new_lock:
             d["locks"] = max(d.get("locks", 0), 1)
         # geometry: keep the existing 2-point segment (coincident by construction).
+        d["access_caveats"] = tuple(sorted(set(d["access_caveats"]) | set(access_caveats)))
 
     for way in features.ways:
         if way.kind not in _ROUTABLE:
@@ -173,6 +177,7 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
             )
             for i in range(len(way.geometry))
         ]
+        access_caveats = extract_access_caveats(way.osm_id, way.tags)
         emittable_indexes = [i for i in range(len(uids) - 1) if uids[i] != uids[i + 1]]
         bridge_segment_index = None
         if way.has_movable_bridge and emittable_indexes:
@@ -211,6 +216,7 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
                     seg_geom,
                     movable_bridge_ids,
                     tunnel_restrictions,
+                    access_caveats,
                 )
             else:
                 g.add_edge(
@@ -227,6 +233,7 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
                     geometry=seg_geom,
                     movable_bridge_ids=movable_bridge_ids,
                     tunnel_restrictions=tunnel_restrictions,
+                    access_caveats=access_caveats,
                 )
 
     for node in features.nodes:

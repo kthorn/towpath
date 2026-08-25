@@ -39,6 +39,7 @@ def test_concurrent_routes_are_deterministic_and_do_not_mutate_graph(web_client:
     assert len(successes) == len(failures) == 3
     assert all(body == successes[0] for body in successes)
     assert all(body == failures[0] for body in failures)
+    assert all(body["route"]["access_segments"] == [] for body in successes)
     assert successes[0]["route"]["warnings"] == []
     assert failures[0]["detail"]["code"] == "route_unavailable"
     assert graph.graph == before_graph

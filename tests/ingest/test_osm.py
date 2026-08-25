@@ -17,6 +17,7 @@ from pound.ingest.osm import (
     stream_area_pois,
     stream_linear_pois,
 )
+from pound.ingest.profile import BuildProfiler
 from tests.fixtures import oxford_fixture_path
 
 pytestmark = pytest.mark.bulk
@@ -381,13 +382,19 @@ def test_read_england_applies_prune_then_filter_chain(monkeypatch, tmp_path):
     from pound.ingest import osm as _osm
 
     fixture_features = _osm.read_pbf(_tiny_pbf_path())
+    private_way = fixture_features.ways[0].model_copy(
+        update={"osm_id": 9998, "tags": {"waterway": "canal", "access": "private"}}
+    )
+    fixture_features = fixture_features.model_copy(
+        update={"ways": [*fixture_features.ways, private_way]}
+    )
 
     # Patch run_tags_filter (no-op — not needed since read_pbf is also patched)
     monkeypatch.setattr(_osm, "run_tags_filter", lambda in_pbf, out_pbf: None)
     # Patch read_pbf to return fixture features regardless of the filtered path
     # (the filtered path has a .pbf extension but would contain XML — this avoids
     # the format-detection issue while still testing the chain wiring).
-    monkeypatch.setattr(_osm, "read_pbf", lambda p: fixture_features.model_copy())
+    monkeypatch.setattr(_osm, "read_pbf", lambda _path: fixture_features.model_copy())
 
     stub_pbf = tmp_path / "stub.osm.pbf"
     stub_pbf.touch()
@@ -397,24 +404,36 @@ def test_read_england_applies_prune_then_filter_chain(monkeypatch, tmp_path):
     real_filter = _osm.filter_navigable_ways
     called_prune = []
     called_filter = []
+    call_order = []
 
     def spy_prune(features):
         called_prune.append(features)
+        call_order.append("prune")
         return real_prune(features)
 
     def spy_filter(features):
         called_filter.append(features)
+        call_order.append("filter")
         return real_filter(features)
 
     monkeypatch.setattr(_osm, "prune_non_navigable_infra", spy_prune)
     monkeypatch.setattr(_osm, "filter_navigable_ways", spy_filter)
 
     out = _osm.read_england(stub_pbf)
-    # chain functions were called
+    # chain functions were called in the required order
     assert len(called_prune) == 1
     assert len(called_filter) == 1
-    # without any boat=no ways, output matches fixture
-    assert {w.osm_id for w in out.ways} == {w.osm_id for w in fixture_features.ways}
+    assert call_order == ["prune", "filter"]
+    assert 9998 not in {way.osm_id for way in out.ways}
+
+    monkeypatch.setattr(
+        _osm, "read_waterway_features", lambda *_args, **_kwargs: fixture_features.model_copy()
+    )
+    out = _osm.read_england_waterways(stub_pbf, BuildProfiler())
+    assert len(called_prune) == 2
+    assert len(called_filter) == 2
+    assert call_order == ["prune", "filter", "prune", "filter"]
+    assert 9998 not in {way.osm_id for way in out.ways}
 
 
 def test_wkt_geometry_runtime_error_is_reported_as_unusable():

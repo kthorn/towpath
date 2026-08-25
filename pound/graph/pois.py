@@ -25,6 +25,7 @@ from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points
 from shapely.strtree import STRtree
 
+from pound.ingest.filters import is_navigable
 from pound.ingest.ir import PoiCandidate, PoiCategory, PointOfInterest
 
 _TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
@@ -35,7 +36,6 @@ _CORRIDOR_M = {
     PoiCategory.PROVISIONS: 1000.0,
     PoiCategory.TRANSPORT: 1000.0,
 }
-_NON_NAVIGABLE_BOAT_VALUES = {"no", "unsuitable", "canoe"}
 
 
 @dataclass(frozen=True)
@@ -66,8 +66,11 @@ def _to_wgs84(geometry):
 def _routing_eligible(data: dict[str, Any]) -> bool:
     if data.get("navigable") is False or data.get("routing_eligible") is False:
         return False
-    tags = data.get("tags") or {}
-    return data.get("boat", tags.get("boat")) not in _NON_NAVIGABLE_BOAT_VALUES
+    tags = dict(data.get("tags") or {})
+    for key in ("boat", "access"):
+        if key in data:
+            tags[key] = data[key]
+    return is_navigable(tags)
 
 
 def _edge_line_wgs84(graph: nx.Graph, u: int, v: int, data: dict[str, Any]) -> LineString:

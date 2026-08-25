@@ -123,6 +123,8 @@ pound/
 | canal centreline | `waterway=canal` | routable edge |
 | navigable river | `waterway=river` (+ navigation tags) | routable edge |
 | fairway | `waterway=fairway` | routable edge |
+| public boat access | `boat=no\|unsuitable\|canoe\|private\|permit` | exclude from built artifact |
+| public access | `access=no\|private\|permit` | exclude from built artifact |
 | **derelict/disused** | `waterway=derelict_canal`, `disused:*`, `abandoned:*` | EXCLUDE |
 | lock chamber | `waterway=lock` (short way) and/or `lock=yes` | lock edge → time penalty |
 | lock gate | node `waterway=lock_gate` | lock counting |
@@ -247,6 +249,12 @@ surface only as route warnings naming the unmodeled key.
 
 This matches the boater "lock-miles" heuristic. Keep all constants in one place
 and document them; the checker (§7) recomputes from the same constants.
+
+**Public-access artifact policy:** the artifact applies public-access filtering
+before request-time dimension eligibility. It excludes `boat=no|unsuitable|canoe|private|permit`
+and `access=no|private|permit`; missing `boat` and `access` tags are not hard
+exclusions. Retained `discouraged` or unrecognised values are reported as access
+caveats after path selection.
 
 **Eligibility filter (before pathfinding):** drop edges where the boat exceeds
 `max_beam / max_length / max_draft / max_height` (when the constraint provides

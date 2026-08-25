@@ -31,6 +31,7 @@ def test_route_returns_geojson_and_route(web_client: TestClient):
     }
     assert response.json()["route"]["start"] == "Start"
     assert response.json()["route"]["end"] == "End"
+    assert response.json()["route"]["access_segments"] == []
 
 
 @pytest.mark.parametrize(

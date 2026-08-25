@@ -68,6 +68,21 @@ class RouteLeg(BaseModel):
     flagged_unknown_dims: bool = False  # edge(s) lacked dimension tags
 
 
+class RouteAccessSegment(BaseModel):
+    from_uid: int = Field(ge=0)
+    to_uid: int = Field(ge=0)
+    osm_way_id: int = Field(gt=0)
+    kind: Literal["discouraged", "unknown"]
+    tag: Literal["boat", "access"]
+    value: str
+
+    @model_validator(mode="after")
+    def require_canonical_edge(self):
+        if self.from_uid >= self.to_uid:
+            raise ValueError("access segment edge must use ascending endpoint uids")
+        return self
+
+
 class DayPlan(BaseModel):
     day: int
     legs: list[RouteLeg]
@@ -86,6 +101,7 @@ class RouteResult(BaseModel):
     total_minutes: int
     amenities: list[Amenity]
     warnings: list[str] = []  # e.g. "draft unknown on 3 segments"
+    access_segments: list[RouteAccessSegment] = Field(default_factory=list)
     graph_source_date: str  # provenance from the artifact
 
 

@@ -119,6 +119,7 @@ def route_graph() -> nx.Graph:
         has_movable_bridge=False,
         movable_bridge_ids=(),
         tunnel_restrictions=(),
+        access_caveats=(),
         tags={"stable": True},
     )
     graph.add_edge(
@@ -135,6 +136,7 @@ def route_graph() -> nx.Graph:
         has_movable_bridge=False,
         movable_bridge_ids=(),
         tunnel_restrictions=(),
+        access_caveats=(),
         tags={"stable": True},
     )
     return graph

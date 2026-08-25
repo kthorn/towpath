@@ -85,6 +85,7 @@ const route = {
 		total_minutes: 420,
 		amenities: [],
 		warnings: ["Low bridge clearance"],
+		access_segments: [],
 		graph_source_date: "today",
 	},
 	geometry: {
