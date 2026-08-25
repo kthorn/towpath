@@ -25,6 +25,13 @@ def test_container_configuration_stages_only_the_deployment_artifact():
     ) in dockerfile
     assert "pound/artifacts" not in dockerignore
     assert "pound/artifacts/*" in dockerignore
+    data_rules = [rule for rule in dockerignore if rule.lstrip("!").startswith("pound/data")]
+    assert data_rules == ["pound/data/*", "!pound/data/boat-hire-enrichment.csv"]
+    assert (
+        'ENV PATH="/app/.venv/bin:${PATH}" \\\n'
+        "    POUND_STATIC_DIR=/app/web/dist \\\n"
+        "    POUND_BOAT_HIRE_ENRICHMENT_PATH=/app/pound/data/boat-hire-enrichment.csv"
+    ) in dockerfile
     assert "!pound/artifacts/england.pkl" in dockerignore
     assert ".env*" in dockerignore
     assert "web/.env*" in dockerignore

@@ -14,7 +14,8 @@ dist
 web/dist
 web/node_modules
 node_modules
-pound/data
+pound/data/*
+!pound/data/boat-hire-enrichment.csv
 reviews
 progress.md
 docs

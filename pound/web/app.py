@@ -18,6 +18,7 @@ from pound.catalog.spatial import CatalogSpatialIndex
 from pound.graph.artifact import GraphArtifact, InvalidArtifactError, load_artifact
 from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.api import router as api_router
+from pound.web.boat_hire import load_boat_hire_seeds, select_boat_hire_overlay
 from pound.web.config import WebSettings
 from pound.web.network import prepare_network_geometry
 
@@ -49,8 +50,14 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         app.state.settings = runtime_settings
         app.state.spatial_index = GraphSpatialIndex(artifact.graph)
         app.state.poi_spatial_index = PoiSpatialIndex(artifact.pois)
+        seeds = load_boat_hire_seeds(runtime_settings.boat_hire_enrichment_path)
+        overlay_graph = select_boat_hire_overlay(
+            app.state.graph,
+            app.state.spatial_index,
+            seeds,
+        )
         try:
-            app.state.network_lines = prepare_network_geometry(app.state.graph)
+            app.state.network_lines = prepare_network_geometry(overlay_graph)
             app.state.network_error = None
         except Exception as exc:
             app.state.network_lines = ()

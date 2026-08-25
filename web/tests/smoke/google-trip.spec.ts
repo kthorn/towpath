@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test';
 
 const prerequisitesPresent = process.env.GOOGLE_MAPS_SMOKE === '1'
   && Boolean(process.env.VITE_GOOGLE_MAPS_API_KEY)
-  && Boolean(process.env.POUND_ARTIFACT_PATH);
+  && Boolean(process.env.POUND_ARTIFACT_PATH)
+  && Boolean(process.env.POUND_BOAT_HIRE_ENRICHMENT_PATH);
 
 async function selectPlace(page: import('@playwright/test').Page, label: RegExp, query: string) {
   const field = page.locator('.place-search-field').filter({ hasText: label });

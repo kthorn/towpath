@@ -57,6 +57,7 @@ variables works without an application factory flag:
 
 ```bash
 POUND_ARTIFACT_PATH=/absolute/path/to/pound/artifacts/england.pkl \
+POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/pound/data/boat-hire-enrichment.csv \
 POUND_STATIC_DIR=web/dist \
 uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000 --reload
 ```
@@ -92,6 +93,9 @@ scenario below. Keep generated artifacts outside version control.
 FastAPI supports these environment variables:
 
 - `POUND_ARTIFACT_PATH` (required): graph artifact loaded once at startup.
+- `POUND_BOAT_HIRE_ENRICHMENT_PATH` (required): curated CSV seeds the displayed
+  boat-hire network overlay only; the graph, routing, candidates, POIs, and
+  catalog remain complete.
 - `POUND_STATIC_DIR` (default `web/dist`): production frontend files.
 - `POUND_CANDIDATE_POOL_SIZE` (default `20`): geometric candidates considered.
 - `POUND_GOOGLE_DESTINATION_LIMIT` (default `10`): candidates returned for the
@@ -155,7 +159,9 @@ docker build -t pound-map \
   --build-arg VITE_TRANSFER_MODE='WALK' .
 ```
 
-Run the single FastAPI/frontend image with the artifact mounted read-only:
+The image includes the versioned curated boat-hire CSV and sets its required
+`POUND_BOAT_HIRE_ENRICHMENT_PATH`. Rebuild the image to deploy CSV changes;
+keep the routing artifact as a separate read-only mount:
 
 ```bash
 docker run --rm -p 8000:8000 \
@@ -180,10 +186,14 @@ safe mooring, pedestrian entrance, or vehicle drop-off.
 
 ### Canal network view
 
-On startup and after a trip reset, the map displays the full canal network as
-translucent lines fetched from `/api/canal-network`. The network view provides a
-geographic context for route planning. A reset button in the schedule form
-clears both endpoints and re-centers the map on the full network.
+On startup and after a trip reset, the map displays the selected full-graph
+components containing a non-excluded curated boat-hire base as translucent lines
+fetched from `/api/canal-network`. This CSV filters the display overlay only;
+the graph, routing, candidates, POIs, and catalog remain complete. The network
+view provides geographic context for route planning. A reset button in the
+schedule form clears both endpoints and re-centers the map on this selected
+component overlay. There is no full-network fallback and no runtime component
+switch.
 
 ### Route overlays and POI layers
 
@@ -407,6 +417,7 @@ FastAPI:
 
 ```bash
 POUND_ARTIFACT_PATH=/absolute/path/to/pound/artifacts/england.pkl \
+POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/pound/data/boat-hire-enrichment.csv \
 POUND_CATALOG_PATH=/absolute/path/to/england-catalog.pkl \
 POUND_STATIC_DIR=web/dist \
 uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000

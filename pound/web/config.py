@@ -16,6 +16,7 @@ class WebSettings:
 
     artifact_path: Path
     static_dir: Path
+    boat_hire_enrichment_path: Path
     candidate_pool_size: int = 20
     google_destination_limit: int = 10
     minimum_candidate_spacing_m: float = 250.0
@@ -65,10 +66,15 @@ class WebSettings:
         if not artifact_path:
             raise RuntimeError("POUND_ARTIFACT_PATH is required")
 
+        boat_hire_enrichment_path = os.environ.get("POUND_BOAT_HIRE_ENRICHMENT_PATH")
+        if not boat_hire_enrichment_path:
+            raise RuntimeError("POUND_BOAT_HIRE_ENRICHMENT_PATH is required")
+
         catalog_path = os.environ.get("POUND_CATALOG_PATH")
         return cls(
             artifact_path=Path(artifact_path),
             static_dir=Path(os.environ.get("POUND_STATIC_DIR", "web/dist")),
+            boat_hire_enrichment_path=Path(boat_hire_enrichment_path),
             catalog_path=Path(catalog_path) if catalog_path else None,
             candidate_pool_size=int(os.environ.get("POUND_CANDIDATE_POOL_SIZE", "20")),
             google_destination_limit=int(os.environ.get("POUND_GOOGLE_DESTINATION_LIMIT", "10")),

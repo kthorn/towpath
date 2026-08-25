@@ -3,7 +3,8 @@ import { defineConfig } from '@playwright/test';
 const smokeEnabled = process.env.GOOGLE_MAPS_SMOKE === '1';
 const hasBrowserKey = Boolean(process.env.VITE_GOOGLE_MAPS_API_KEY);
 const hasArtifact = Boolean(process.env.POUND_ARTIFACT_PATH);
-const runLiveSmoke = smokeEnabled && hasBrowserKey && hasArtifact;
+const hasBoatHireEnrichment = Boolean(process.env.POUND_BOAT_HIRE_ENRICHMENT_PATH);
+const runLiveSmoke = smokeEnabled && hasBrowserKey && hasArtifact && hasBoatHireEnrichment;
 
 export default defineConfig({
   testDir: './tests/smoke',

@@ -17,6 +17,10 @@ command -v uv >/dev/null 2>&1 || die "uv is required"
 command -v npm >/dev/null 2>&1 || die "npm is required"
 [[ -n "${POUND_ARTIFACT_PATH:-}" ]] || die "POUND_ARTIFACT_PATH is not set"
 [[ -f "$POUND_ARTIFACT_PATH" ]] || die "artifact not found: $POUND_ARTIFACT_PATH"
+[[ -n "${POUND_BOAT_HIRE_ENRICHMENT_PATH:-}" ]] || \
+	die "POUND_BOAT_HIRE_ENRICHMENT_PATH is not set"
+[[ -f "$POUND_BOAT_HIRE_ENRICHMENT_PATH" ]] || \
+	die "boat-hire enrichment not found: $POUND_BOAT_HIRE_ENRICHMENT_PATH"
 [[ -d "$repo_root/web" ]] || die "frontend directory not found: $repo_root/web"
 
 backend_pid=""

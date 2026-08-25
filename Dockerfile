@@ -30,7 +30,8 @@ RUN useradd --create-home --uid 10001 pound \
 USER pound
 
 ENV PATH="/app/.venv/bin:${PATH}" \
-    POUND_STATIC_DIR=/app/web/dist
+    POUND_STATIC_DIR=/app/web/dist \
+    POUND_BOAT_HIRE_ENRICHMENT_PATH=/app/pound/data/boat-hire-enrichment.csv
 EXPOSE 8000
 
 CMD ["uvicorn", "pound.web.app:app", "--host", "0.0.0.0", "--port", "8000"]

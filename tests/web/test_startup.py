@@ -18,11 +18,24 @@ from pound.graph.artifact import InvalidArtifactError, load_artifact, save_artif
 from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.app import _load_web_artifact, create_app
 from pound.web.config import WebSettings
-from tests.web.conftest import artifact_metadata, catalog_place
+from tests.web.conftest import artifact_metadata, catalog_place, write_boat_hire_enrichment
 
 
 def _settings(artifact_path: Path, static_dir: Path) -> WebSettings:
-    return WebSettings(artifact_path=artifact_path, static_dir=static_dir)
+    return WebSettings(
+        artifact_path=artifact_path,
+        static_dir=static_dir,
+        boat_hire_enrichment_path=write_boat_hire_enrichment(
+            artifact_path.with_name("boat-hire.csv"),
+            rows=[
+                {
+                    "source_provider_id": "test-provider",
+                    "location_id": "base:test",
+                    "exclude": "true",
+                }
+            ],
+        ),
+    )
 
 
 def _write_blob(path: Path, blob: object) -> None:
@@ -37,9 +50,18 @@ def test_settings_from_env_requires_artifact_path(monkeypatch: pytest.MonkeyPatc
         WebSettings.from_env()
 
 
+def test_settings_from_env_requires_boat_hire_enrichment_path(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("POUND_ARTIFACT_PATH", "/tmp/graph.pkl")
+    monkeypatch.delenv("POUND_BOAT_HIRE_ENRICHMENT_PATH", raising=False)
+
+    with pytest.raises(RuntimeError, match="POUND_BOAT_HIRE_ENRICHMENT_PATH"):
+        WebSettings.from_env()
+
+
 def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("POUND_ARTIFACT_PATH", "/tmp/graph.pkl")
     monkeypatch.setenv("POUND_STATIC_DIR", "/tmp/client")
+    monkeypatch.setenv("POUND_BOAT_HIRE_ENRICHMENT_PATH", "/tmp/boat-hire.csv")
     monkeypatch.setenv("POUND_CANDIDATE_POOL_SIZE", "30")
     monkeypatch.setenv("POUND_GOOGLE_DESTINATION_LIMIT", "12")
     monkeypatch.setenv("POUND_MINIMUM_CANDIDATE_SPACING_M", "125.5")
@@ -55,6 +77,7 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
     assert settings == WebSettings(
         artifact_path=Path("/tmp/graph.pkl"),
         static_dir=Path("/tmp/client"),
+        boat_hire_enrichment_path=Path("/tmp/boat-hire.csv"),
         catalog_path=Path("/tmp/catalog.pkl"),
         candidate_pool_size=30,
         google_destination_limit=12,
@@ -86,6 +109,7 @@ def test_settings_reject_invalid_tuning(field: str, value: int | float, tmp_path
     values: dict[str, Any] = {
         "artifact_path": tmp_path / "graph.pkl",
         "static_dir": tmp_path / "static",
+        "boat_hire_enrichment_path": write_boat_hire_enrichment(tmp_path / "boat-hire.csv"),
     }
     values[field] = value
 
@@ -209,6 +233,16 @@ def test_startup_loads_catalog_after_routing_artifact(tmp_path: Path):
     settings = WebSettings(
         artifact_path=artifact_path,
         static_dir=tmp_path / "static",
+        boat_hire_enrichment_path=write_boat_hire_enrichment(
+            tmp_path / "boat-hire.csv",
+            rows=[
+                {
+                    "source_provider_id": "test-provider",
+                    "location_id": "base:test",
+                    "exclude": "true",
+                }
+            ],
+        ),
         catalog_path=catalog_path,
     )
 
@@ -259,17 +293,28 @@ def test_incompatible_catalog_schema_degrades_without_breaking_startup(
     settings = WebSettings(
         artifact_path=artifact_path,
         static_dir=tmp_path / "static",
+        boat_hire_enrichment_path=write_boat_hire_enrichment(
+            tmp_path / "boat-hire.csv",
+            rows=[
+                {
+                    "source_provider_id": "test-provider",
+                    "location_id": "base:test",
+                    "exclude": "true",
+                }
+            ],
+        ),
         catalog_path=catalog_path,
     )
 
     with TestClient(create_app(settings)) as client:
+        app = cast(FastAPI, client.app)
         assert client.get("/api/health").json() == {
             "status": "degraded",
             "artifact_revision": "route-revision",
             "catalog_revision": None,
             "catalog_status": "unavailable",
         }
-        assert client.app.state.graph.number_of_nodes() == 0
+        assert app.state.graph.number_of_nodes() == 0
 
 
 def test_corrupt_catalog_degrades_health_without_breaking_routing_startup(tmp_path: Path):
@@ -280,6 +325,16 @@ def test_corrupt_catalog_degrades_health_without_breaking_routing_startup(tmp_pa
     settings = WebSettings(
         artifact_path=artifact_path,
         static_dir=tmp_path / "static",
+        boat_hire_enrichment_path=write_boat_hire_enrichment(
+            tmp_path / "boat-hire.csv",
+            rows=[
+                {
+                    "source_provider_id": "test-provider",
+                    "location_id": "base:test",
+                    "exclude": "true",
+                }
+            ],
+        ),
         catalog_path=catalog_path,
     )
 
@@ -303,6 +358,16 @@ def test_missing_catalog_degrades_health_without_breaking_routing_startup(tmp_pa
     settings = WebSettings(
         artifact_path=artifact_path,
         static_dir=tmp_path / "static",
+        boat_hire_enrichment_path=write_boat_hire_enrichment(
+            tmp_path / "boat-hire.csv",
+            rows=[
+                {
+                    "source_provider_id": "test-provider",
+                    "location_id": "base:test",
+                    "exclude": "true",
+                }
+            ],
+        ),
         catalog_path=catalog_path,
     )
 
