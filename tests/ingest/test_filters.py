@@ -148,6 +148,18 @@ def test_is_navigable(boat_value, expected):
     assert is_navigable(tags) is expected
 
 
+@pytest.mark.parametrize(
+    "tags, expected",
+    [
+        ({"access": "no", "boat": "yes"}, False),
+        ({"access": "no", "boat": "private"}, False),
+        ({"access": "private", "boat": "yes"}, True),
+    ],
+)
+def test_is_navigable_applies_access_no_before_boat(tags, expected):
+    assert is_navigable(tags) is expected
+
+
 def test_is_navigable_none_tags():
     # boundary: tags is None
     assert is_navigable(None) is True

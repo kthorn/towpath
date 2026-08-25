@@ -443,6 +443,8 @@ uv run pound-plan Oxford Banbury --days 3
 uv run pound-plan Oxford Banbury --days 3 --artifact pound/artifacts/england.pkl
 # boat constraints:
 uv run pound-plan Oxford Banbury --days 3 --boat-beam 2.0 --boat-draft 0.8
+# disable movable-bridge delay for a what-if route comparison:
+uv run pound-plan Oxford Banbury --days 3 --movable-bridge-delay-min 0
 ```
 
 `--days` is optional: omit it and the day count is inferred from `--hours-per-day`
@@ -450,6 +452,17 @@ uv run pound-plan Oxford Banbury --days 3 --boat-beam 2.0 --boat-draft 0.8
 header + totals + per-day summary + warnings; add `--verbose` for the
 node-to-node leg list, or `--locks` to fold a per-day lock count into the day
 summary (how many locks each day's cruise works through).
+
+Movable bridges add the backend five-minute delay per bridge unless
+`--movable-bridge-delay-min` overrides it (any non-negative minutes; `0`
+disables the delay entirely). Omit the flag and the five-minute default
+applies. The browser route form persists only that optional override — blank
+uses the same backend default. Route warnings list tunnel restrictions Pound
+does **not** evaluate — direction (`oneway` / `oneway:boat`), opening hours,
+conditional tags, and `access`/`boat` restrictions — plus any unknown-dimension
+segments. `access=no` waterways are excluded from the network at build time;
+the resulting disconnected component is reported by build validation rather
+than deleted.
 
 Unknown / ambiguous place names and un-routable constraints produce a clear
 error, not a traceback. A REST API will eventually supersede this CLI for

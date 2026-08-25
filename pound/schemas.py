@@ -7,7 +7,7 @@ coordinating with labyrinth-core / labyrinth-agent.
 import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
 
 from pound.catalog.metadata import CatalogMetadata
 
@@ -17,6 +17,7 @@ class CanalConstraints(BaseModel):
     end: str | None = None  # None => ring / round trip
     days: int | None = Field(gt=0, default=None)  # None => infer from hours_per_day (no cap)
     hours_per_day: float = Field(gt=0, default=6.0)
+    movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
     boat_length_m: float | None = Field(gt=0, default=None)
     boat_beam_m: float | None = Field(gt=0, default=None)
     boat_draft_m: float | None = Field(gt=0, default=None)
@@ -42,6 +43,7 @@ class ResolvedConstraints(BaseModel):
     end_uid: int
     days: int | None = Field(gt=0, default=None)  # None => infer from hours_per_day (no cap)
     hours_per_day: float = Field(gt=0, default=6.0)
+    movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
     boat_length_m: float | None = Field(gt=0, default=None)
     boat_beam_m: float | None = Field(gt=0, default=None)
     boat_draft_m: float | None = Field(gt=0, default=None)

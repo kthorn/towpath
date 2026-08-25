@@ -9,9 +9,9 @@ from pound.schemas import ResolvedConstraints
 
 def _three_node_graph() -> nx.Graph:
     graph = nx.Graph(fetched_at="2026-07-11T00:00:00Z")
-    graph.add_node(1, lat=51.0, lon=-1.0, name="Start")
-    graph.add_node(2, lat=51.1, lon=-1.1, name="Middle")
-    graph.add_node(3, lat=51.2, lon=-1.2, name="End")
+    graph.add_node(1, lat=51.0, lon=-1.0, name="Start", movable_bridge_ids=())
+    graph.add_node(2, lat=51.1, lon=-1.1, name="Middle", movable_bridge_ids=())
+    graph.add_node(3, lat=51.2, lon=-1.2, name="End", movable_bridge_ids=())
     dimensions = WayDimensions()
     graph.add_edge(
         1,
@@ -21,6 +21,8 @@ def _three_node_graph() -> nx.Graph:
         dimensions=dimensions,
         osm_way_id=12,
         geometry=[(51.0, -1.0), (51.1, -1.1)],
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
     )
     graph.add_edge(
         2,
@@ -30,6 +32,8 @@ def _three_node_graph() -> nx.Graph:
         dimensions=dimensions,
         osm_way_id=23,
         geometry=[(51.2, -1.2), (51.1, -1.1)],
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
     )
     return graph
 
@@ -73,8 +77,8 @@ def test_to_geojson_swaps_internal_lat_lon_coordinates():
 
 def test_reverse_route_orients_high_precision_variable_length_geometry():
     graph = nx.Graph(fetched_at="2026-07-11T00:00:00Z")
-    graph.add_node(1, lat=51.1234568, lon=-1.1234568, name="Start")
-    graph.add_node(2, lat=51.2234568, lon=-1.2234568, name="End")
+    graph.add_node(1, lat=51.1234568, lon=-1.1234568, name="Start", movable_bridge_ids=())
+    graph.add_node(2, lat=51.2234568, lon=-1.2234568, name="End", movable_bridge_ids=())
     graph.add_edge(
         1,
         2,
@@ -87,6 +91,8 @@ def test_reverse_route_orients_high_precision_variable_length_geometry():
             (51.173456789, -1.173456789),
             (51.223456789, -1.223456789),
         ],
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
     )
 
     response = plan_canal_route(ResolvedConstraints(start_uid=2, end_uid=1), graph=graph)

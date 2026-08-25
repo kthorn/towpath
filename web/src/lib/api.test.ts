@@ -125,6 +125,7 @@ describe('createPoundApi', () => {
       boat_beam_m: null,
       boat_draft_m: null,
       boat_height_m: null,
+      movable_bridge_delay_min: 0,
     };
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify(routeResponse), {

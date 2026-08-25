@@ -7,6 +7,7 @@ export interface BoatSettings {
   boat_beam_m: number | null;
   boat_draft_m: number | null;
   boat_height_m: number | null;
+  movable_bridge_delay_min: number | null;
 }
 
 export type SettingsSaveResult = 'persistent' | 'session-only';
@@ -22,6 +23,7 @@ const emptySettings = (): BoatSettings => ({
   boat_beam_m: null,
   boat_draft_m: null,
   boat_height_m: null,
+  movable_bridge_delay_min: null,
 });
 
 const fields = [
@@ -45,6 +47,11 @@ function validateSettings(parsed: unknown): BoatSettings {
     }
     settings[field] = candidate;
   }
+  const delay = record.movable_bridge_delay_min ?? null;
+  if (delay !== null && (
+    typeof delay !== 'number' || !Number.isFinite(delay) || delay < 0
+  )) throw new Error('Invalid boat settings');
+  settings.movable_bridge_delay_min = delay;
   return settings;
 }
 

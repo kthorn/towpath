@@ -20,8 +20,8 @@ from pound.ingest.ir import PointOfInterest
 
 def _graph() -> nx.Graph:
     graph = nx.Graph()
-    graph.add_node(0, lat=51.7520, lon=-1.2577, osm_node_ids={"100"})
-    graph.add_node(1, lat=51.7520, lon=-1.2560, osm_node_ids={"101"})
+    graph.add_node(0, lat=51.7520, lon=-1.2577, osm_node_ids={"100"}, movable_bridge_ids=())
+    graph.add_node(1, lat=51.7520, lon=-1.2560, osm_node_ids={"101"}, movable_bridge_ids=())
     graph.add_edge(
         0,
         1,
@@ -34,6 +34,8 @@ def _graph() -> nx.Graph:
         has_movable_bridge=False,
         locks=0,
         geometry=[(51.7520, -1.2577), (51.7520, -1.2560)],
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
     )
     return graph
 
@@ -223,13 +225,46 @@ def test_load_rejects_directed_or_non_graph_payloads(tmp_path: Path, graph):
 
 @pytest.mark.parametrize(
     ("where", "attribute"),
-    [("node", "lat"), ("node", "lon"), ("node", "osm_node_ids"), ("edge", "geometry")],
+    [
+        ("node", "lat"),
+        ("node", "lon"),
+        ("node", "osm_node_ids"),
+        ("node", "movable_bridge_ids"),
+        ("edge", "geometry"),
+        ("edge", "movable_bridge_ids"),
+        ("edge", "tunnel_restrictions"),
+    ],
 )
 def test_load_rejects_missing_required_graph_attributes(tmp_path: Path, where: str, attribute: str):
     path = tmp_path / "graph.pkl"
     payload = _valid_payload()
     data = payload["graph"].nodes[0] if where == "node" else payload["graph"].edges[0, 1]
     del data[attribute]
+    _write(path, payload)
+
+    _assert_rebuild_error(path, attribute)
+
+
+@pytest.mark.parametrize(
+    ("where", "attribute", "value"),
+    [
+        ("node", "movable_bridge_ids", ("",)),
+        ("edge", "movable_bridge_ids", ["way:200"]),
+        ("edge", "tunnel_restrictions", ((True, "oneway", "yes"),)),
+        (
+            "edge",
+            "tunnel_restrictions",
+            ((200, "opening_hours", "Mo-Fr 09:00-17:00"), (200, "oneway:boat", "yes")),
+        ),
+    ],
+)
+def test_load_rejects_malformed_bridge_and_tunnel_annotations(
+    tmp_path: Path, where: str, attribute: str, value: object
+):
+    path = tmp_path / "graph.pkl"
+    payload = _valid_payload()
+    data = payload["graph"].nodes[0] if where == "node" else payload["graph"].edges[0, 1]
+    data[attribute] = value
     _write(path, payload)
 
     _assert_rebuild_error(path, attribute)

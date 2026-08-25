@@ -27,7 +27,7 @@ _METADATA_FIELDS = {
     "validation",
     "poi_summary",
 }
-_NODE_FIELDS = {"lat", "lon", "osm_node_ids"}
+_NODE_FIELDS = {"lat", "lon", "osm_node_ids", "movable_bridge_ids"}
 _EDGE_FIELDS = {
     "osm_way_id",
     "name",
@@ -38,6 +38,8 @@ _EDGE_FIELDS = {
     "has_movable_bridge",
     "locks",
     "geometry",
+    "movable_bridge_ids",
+    "tunnel_restrictions",
 }
 _CORRIDOR_M = {
     "canal_service": 250.0,
@@ -67,6 +69,35 @@ def _finite_coordinate(field: str, value: Any, lower: float, upper: float) -> No
         raise _invalid(field, value, f"expected a finite value from {lower} through {upper}")
 
 
+def _validate_sorted_bridge_ids(field: str, value: Any) -> None:
+    if not isinstance(value, tuple) or any(not isinstance(item, str) or not item for item in value):
+        raise _invalid(field, value, "expected sorted unique non-empty bridge IDs")
+    if value != tuple(sorted(set(value))):
+        raise _invalid(field, value, "expected sorted unique bridge IDs")
+
+
+def _validate_tunnel_restrictions(field: str, value: Any) -> None:
+    if not isinstance(value, tuple):
+        raise _invalid(field, value, "expected sorted unique tunnel restriction tuples")
+    for item in value:
+        if (
+            not isinstance(item, tuple)
+            or len(item) != 3
+            or isinstance(item[0], bool)
+            or not isinstance(item[0], int)
+            or not isinstance(item[1], str)
+            or not item[1]
+            or not isinstance(item[2], str)
+        ):
+            raise _invalid(
+                field,
+                value,
+                "expected (integer OSM way ID, non-empty key, string value) tuples",
+            )
+    if value != tuple(sorted(set(value))):
+        raise _invalid(field, value, "expected sorted unique tunnel restriction tuples")
+
+
 def _validate_graph(graph: Any) -> nx.Graph:
     if not isinstance(graph, nx.Graph) or graph.is_directed() or graph.is_multigraph():
         raise _invalid("graph", type(graph).__name__, "expected an undirected networkx.Graph")
@@ -79,6 +110,9 @@ def _validate_graph(graph: Any) -> nx.Graph:
             )
         _finite_coordinate(f"graph node {uid} lat", data["lat"], -90, 90)
         _finite_coordinate(f"graph node {uid} lon", data["lon"], -180, 180)
+        _validate_sorted_bridge_ids(
+            f"graph node {uid} attribute movable_bridge_ids", data["movable_bridge_ids"]
+        )
     for u, v, data in graph.edges(data=True):
         missing = _EDGE_FIELDS - data.keys()
         if missing:
@@ -86,6 +120,12 @@ def _validate_graph(graph: Any) -> nx.Graph:
             raise _invalid(
                 f"graph edge {(u, v)} attribute {attribute}", None, "required attribute missing"
             )
+        _validate_sorted_bridge_ids(
+            f"graph edge {(u, v)} attribute movable_bridge_ids", data["movable_bridge_ids"]
+        )
+        _validate_tunnel_restrictions(
+            f"graph edge {(u, v)} attribute tunnel_restrictions", data["tunnel_restrictions"]
+        )
         geometry = data["geometry"]
         if not isinstance(geometry, (list, tuple)) or len(geometry) < 2:
             raise _invalid(

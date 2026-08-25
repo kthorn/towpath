@@ -40,6 +40,8 @@ w/abandoned:waterway
 w/lock=yes
 n/waterway=lock_gate,mooring
 n/lock=yes
+n/bridge:movable
+n/bridge=movable
 n/leisure=marina
 n/place
 nwr/waterway=water_point,sanitary_station,fuel
@@ -411,8 +413,12 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
                 if len(geom) >= 2:
                     ways.append(
                         WaterwayWay(
-                            osm_id=w.id, kind=kind, name=tags.get("name"), tags=tags,
-                            node_ids=node_ids, geometry=geom,
+                            osm_id=w.id,
+                            kind=kind,
+                            name=tags.get("name"),
+                            tags=tags,
+                            node_ids=node_ids,
+                            geometry=geom,
                             dimensions=filters.extract_dimensions(tags),
                             has_tunnel=tags.get("tunnel") == "yes",
                             has_movable_bridge=(
@@ -431,8 +437,14 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
                     if geometry_wkt is None:
                         diagnostics.record("invalid_geometry", f"way/{w.id}")
                     else:
-                        emit(OsmElementType.WAY, w.id, tags, geometry_wkt,
-                             "derived_path", classifications)
+                        emit(
+                            OsmElementType.WAY,
+                            w.id,
+                            tags,
+                            geometry_wkt,
+                            "derived_path",
+                            classifications,
+                        )
                 else:
                     pending_areas.add((OsmElementType.WAY, w.id), node_count=len(w.nodes))
         elif object_name == "Node":
@@ -443,13 +455,20 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
                     diagnostic.reason, f"node/{n.id}:{diagnostic.key}={diagnostic.value}"
                 )
             if classifications and n.location.valid:
-                emit(OsmElementType.NODE, n.id, tags, wkt_factory.create_point(n), "point",
-                     classifications)
+                emit(
+                    OsmElementType.NODE,
+                    n.id,
+                    tags,
+                    wkt_factory.create_point(n),
+                    "point",
+                    classifications,
+                )
             kind = filters.classify_node(tags)
             if kind is not None and n.location.valid:
                 nodes.append(
-                    WaterwayNode(osm_id=n.id, lat=n.location.lat, lon=n.location.lon,
-                                 tags=tags, kind=kind)
+                    WaterwayNode(
+                        osm_id=n.id, lat=n.location.lat, lon=n.location.lon, tags=tags, kind=kind
+                    )
                 )
         elif object_name == "Relation":
             classifications = classify_poi(tags)
@@ -485,8 +504,10 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
     ordered_candidates = sorted(
         candidates.values(),
         key=lambda candidate: (
-            candidate.osm_type.value, candidate.osm_id,
-            candidate.category.value, candidate.kind,
+            candidate.osm_type.value,
+            candidate.osm_id,
+            candidate.category.value,
+            candidate.kind,
         ),
     )
     candidates.clear()

@@ -1,5 +1,8 @@
 import json
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from pound.graph.artifact import save_artifact
 from pound.graph.build import build_graph
@@ -100,6 +103,41 @@ def test_pound_plan_accepts_uid_start_and_end(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Oxford" in out
     assert "Hayfield" in out
+
+
+def test_pound_plan_forwards_zero_movable_bridge_delay_for_uid_route(tmp_path):
+    artifact = _build_oxford_artifact(tmp_path / "oxford.pkl")
+    from pound.graph.artifact import load_artifact
+    from pound.route.resolve import resolve_place
+
+    graph = load_artifact(artifact).graph
+    start_uid = resolve_place("Oxford", graph)
+    end_uid = resolve_place("Hayfield", graph)
+    with patch("pound.route.cli.plan_route", wraps=cli.plan_route) as planner:
+        assert (
+            cli.main(
+                [
+                    str(start_uid),
+                    str(end_uid),
+                    "--movable-bridge-delay-min",
+                    "0",
+                    "--artifact",
+                    str(artifact),
+                ]
+            )
+            == 0
+        )
+    assert planner.call_args.args[0].movable_bridge_delay_min == 0.0
+
+
+def test_pound_plan_rejects_nonfinite_movable_bridge_delay_before_loading_artifact(capsys):
+    with patch("pound.route.cli.load_artifact") as loader:
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main(["1", "2", "--movable-bridge-delay-min", "inf", "--artifact", "missing.pkl"])
+
+    assert excinfo.value.code == 2
+    assert "must be a finite non-negative number" in capsys.readouterr().err
+    loader.assert_not_called()
 
 
 def test_pound_plan_mixes_uid_start_and_name_end(tmp_path, capsys):

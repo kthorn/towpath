@@ -44,19 +44,42 @@ def artifact_metadata(revision: str, *, source: str = "test") -> dict:
 @pytest.fixture
 def route_graph() -> nx.Graph:
     graph = nx.Graph(fetched_at="2026-07-11T00:00:00Z", marker={"stable": True})
-    graph.add_node(1, lat=51.0, lon=-1.0, osm_node_ids={"1"}, name="Start", tags={"kind": "canal"})
+    graph.add_node(
+        1,
+        lat=51.0,
+        lon=-1.0,
+        osm_node_ids={"1"},
+        movable_bridge_ids=(),
+        name="Start",
+        tags={"kind": "canal"},
+    )
     graph.add_node(
         2,
         lat=51.001,
         lon=-1.001,
         osm_node_ids={"2"},
+        movable_bridge_ids=(),
         name="Middle",
         tags={"kind": "canal"},
     )
     graph.add_node(
-        3, lat=51.002, lon=-1.002, osm_node_ids={"3"}, name="End", tags={"kind": "canal"}
+        3,
+        lat=51.002,
+        lon=-1.002,
+        osm_node_ids={"3"},
+        movable_bridge_ids=(),
+        name="End",
+        tags={"kind": "canal"},
     )
-    graph.add_node(4, lat=52.0, lon=-2.0, osm_node_ids={"4"}, name="Island", tags={"kind": "canal"})
+    graph.add_node(
+        4,
+        lat=52.0,
+        lon=-2.0,
+        osm_node_ids={"4"},
+        movable_bridge_ids=(),
+        name="Island",
+        tags={"kind": "canal"},
+    )
     dimensions = WayDimensions(max_beam_m=3.0)
     graph.add_edge(
         1,
@@ -70,6 +93,8 @@ def route_graph() -> nx.Graph:
         geometry=[(51.0, -1.0), (51.001, -1.001)],
         has_tunnel=False,
         has_movable_bridge=False,
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
         tags={"stable": True},
     )
     graph.add_edge(
@@ -84,6 +109,8 @@ def route_graph() -> nx.Graph:
         geometry=[(51.001, -1.001), (51.002, -1.002)],
         has_tunnel=False,
         has_movable_bridge=False,
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
         tags={"stable": True},
     )
     return graph

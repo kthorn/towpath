@@ -1,3 +1,5 @@
+import pytest
+
 from pound.ingest.ir import (
     NodeKind,
     WaterwayFeatures,
@@ -41,13 +43,14 @@ def _features(ways, nodes):
     )
 
 
-def test_lock_gate_on_single_boat_no_way_is_dropped():
-    # way 1 carries node 100 at its start; boat=no.
+@pytest.mark.parametrize("tags", [{"boat": "no"}, {"access": "no", "boat": "yes"}])
+def test_lock_gate_on_single_boat_no_way_is_dropped(tags):
+    # way 1 carries node 100 at its start; boat=no or access=no.
     ways = [
         _way(
             1,
             WaterwayKind.CANAL,
-            {"waterway": "canal", "boat": "no"},
+            {"waterway": "canal", **tags},
             [(51.0, -1.0), (51.001, -1.0)],
             [100, 101],
         ),

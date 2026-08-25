@@ -3,7 +3,9 @@
   <node id="1" lat="51.7500000" lon="-1.2600000" version="1">
     <tag k="place" v="city"/><tag k="name" v="Oxford"/>
   </node>
-  <node id="2" lat="51.7520000" lon="-1.2620000" version="1"/>
+  <node id="2" lat="51.7520000" lon="-1.2620000" version="1">
+    <tag k="bridge" v="movable"/>
+  </node>
   <node id="3" lat="51.7540000" lon="-1.2640000" version="1"/>
   <node id="4" lat="51.7540000" lon="-1.2640000" version="1">
     <tag k="place" v="hamlet"/><tag k="name" v="Hayfield"/>

@@ -22,6 +22,7 @@ is only printed with `--verbose`.
 """
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -40,6 +41,16 @@ def _is_uid(tok: str) -> bool:
     return tok.isdigit()
 
 
+def _finite_nonnegative(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a finite non-negative number") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be a finite non-negative number")
+    return parsed
+
+
 def _resolve_start_end(
     start_tok: str,
     end_tok: str,
@@ -51,6 +62,7 @@ def _resolve_start_end(
     boat_beam_m: float | None,
     boat_draft_m: float | None,
     boat_height_m: float | None,
+    movable_bridge_delay_min: float | None,
 ) -> CanalConstraints | ResolvedConstraints:
     """Build the routing constraints, auto-detecting uid vs name per token.
 
@@ -78,6 +90,7 @@ def _resolve_start_end(
         boat_beam_m=boat_beam_m,
         boat_draft_m=boat_draft_m,
         boat_height_m=boat_height_m,
+        movable_bridge_delay_min=movable_bridge_delay_min,
     )
 
     if start_is_uid or end_is_uid:
@@ -147,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--boat-draft", type=float, default=None)
     p.add_argument("--boat-length", type=float, default=None)
     p.add_argument("--boat-height", type=float, default=None)
+    p.add_argument("--movable-bridge-delay-min", type=_finite_nonnegative, default=None)
     p.add_argument("--artifact", default=str(_DEFAULT_ARTIFACT))
     args = p.parse_args(argv)
 
@@ -169,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
             boat_beam_m=args.boat_beam,
             boat_draft_m=args.boat_draft,
             boat_height_m=args.boat_height,
+            movable_bridge_delay_min=args.movable_bridge_delay_min,
         )
     except ValidationError as e:
         print(str(e), file=sys.stderr)
