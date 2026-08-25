@@ -328,6 +328,50 @@ def test_route_reports_selected_access_caveats_without_mutating_graph():
     assert {(u, v): data for u, v, data in graph.edges(data=True)} == before
 
 
+def test_route_omits_caveats_from_unselected_edges():
+    graph = _infrastructure_graph(3)
+    dimensions = WayDimensions()
+    graph.add_edge(
+        1,
+        3,
+        length_m=100.0,
+        locks=0,
+        dimensions=dimensions,
+        osm_way_id=13,
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
+        access_caveats=(),
+    )
+    graph.add_edge(
+        1,
+        2,
+        length_m=1_000.0,
+        locks=0,
+        dimensions=dimensions,
+        osm_way_id=12,
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
+        access_caveats=(AccessCaveat(12, "boat", "discouraged", "discouraged"),),
+    )
+    graph.add_edge(
+        2,
+        3,
+        length_m=1_000.0,
+        locks=0,
+        dimensions=dimensions,
+        osm_way_id=23,
+        movable_bridge_ids=(),
+        tunnel_restrictions=(),
+        access_caveats=(),
+    )
+
+    route = plan_route(ResolvedConstraints(start_uid=1, end_uid=3), graph=graph)
+
+    assert [(leg.from_place, leg.to_place) for leg in route.legs] == [("1", "3")]
+    assert route.access_segments == []
+    assert route.warnings == []
+
+
 def test_public_filter_removes_private_shortcut_before_route_planning():
     def way(osm_id, tags, node_ids, geometry):
         return WaterwayWay(
