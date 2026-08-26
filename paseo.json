@@ -1,0 +1,5 @@
+{
+  "worktree": {
+    "setup": ["uv sync --extra dev --extra bulk"]
+  }
+}
