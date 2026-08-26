@@ -1,6 +1,7 @@
 import csv
 import math
 from pathlib import Path
+from typing import TypedDict, Unpack
 
 import networkx as nx
 import pytest
@@ -217,8 +218,26 @@ def _reachable_graph() -> nx.Graph:
     return graph
 
 
-def _reachability_kwargs(**changes: float | None) -> dict[str, float | None]:
-    kwargs: dict[str, float | None] = {
+class _ReachabilityKwargs(TypedDict):
+    cutoff_min: float
+    movable_bridge_delay_min: float
+    boat_length_m: float | None
+    boat_beam_m: float | None
+    boat_draft_m: float | None
+    boat_height_m: float | None
+
+
+class _ReachabilityOverrides(TypedDict, total=False):
+    cutoff_min: float
+    movable_bridge_delay_min: float
+    boat_length_m: float | None
+    boat_beam_m: float | None
+    boat_draft_m: float | None
+    boat_height_m: float | None
+
+
+def _reachability_kwargs(**changes: Unpack[_ReachabilityOverrides]) -> _ReachabilityKwargs:
+    kwargs: _ReachabilityKwargs = {
         "cutoff_min": 25.0,
         "boat_length_m": None,
         "boat_beam_m": 2.5,
