@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 
 import networkx as nx
 
-from pound.graph.spatial import GraphSpatialIndex
 from pound.route.cost import is_eligible, traversal_time_min
 
 BOAT_HIRE_ENRICHMENT_FIELDS: tuple[str, ...] = (
@@ -244,32 +243,3 @@ def select_boat_hire_reachability(
         if u in distances and v in distances and edge_is_eligible(data)
     ]
     return graph.edge_subgraph(reached_edges)
-
-
-def select_boat_hire_overlay(
-    graph: nx.Graph,
-    spatial_index: GraphSpatialIndex,
-    seeds: tuple[BoatHireSeed, ...],
-) -> nx.Graph:
-    """Return a node-induced view of every full-graph component containing a seed."""
-    component_by_node = {
-        node: component for component in nx.connected_components(graph) for node in component
-    }
-    selected_nodes: set[int] = set()
-    for seed in seeds:
-        try:
-            edge, _projected, distance_m = spatial_index.project_to_nearest_edge(
-                seed.latitude, seed.longitude
-            )
-        except ValueError as exc:
-            raise ValueError(f"Could not project boat-hire seed {seed.identity}") from exc
-        limit_m = BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M.get(
-            seed.identity,
-            BOAT_HIRE_OVERLAY_DISTANCE_M,
-        )
-        if not math.isfinite(distance_m) or distance_m > limit_m:
-            raise ValueError(
-                f"Boat-hire seed {seed.identity} is farther than {limit_m:g} m from a routing edge"
-            )
-        selected_nodes.update(component_by_node[edge[0]])
-    return graph.subgraph(selected_nodes)

@@ -7,8 +7,10 @@ from pound.catalog.manifest import CATALOG_KINDS
 from pound.catalog.spatial import CatalogQueryLimitError
 from pound.ingest.pois import RETAINED_POI_KINDS
 from pound.route.candidates import nearest_coord_candidates, select_spaced_candidates
+from pound.route.cost import resolve_movable_bridge_delay
 from pound.route.plan import RouteUnavailableError, plan_canal_route
 from pound.schemas import (
+    BoatHireBase,
     CanalCandidatesResponse,
     CanalNetworkResponse,
     CanalRouteResponse,
@@ -20,6 +22,9 @@ from pound.schemas import (
     RoutePoisRequest,
     RoutePoisResponse,
 )
+from pound.web.boat_hire import select_boat_hire_reachability
+from pound.web.config import MAX_NETWORK_TRAVEL_MINUTES
+from pound.web.network import prepare_network_geometry
 
 router = APIRouter(prefix="/api")
 
@@ -33,6 +38,20 @@ class CanalCandidatesRequest(BaseModel):
     lon: float = Field(ge=-180, le=180)
 
 
+class CanalNetworkRequest(BaseModel):
+    """Strict schedule and boat constraints for a bounded network overlay."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    days: int = Field(gt=0, le=365)
+    hours_per_day: FiniteFloat = Field(gt=0, le=24)
+    boat_length_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_beam_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_draft_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_height_m: FiniteFloat | None = Field(gt=0, default=None)
+    movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
+
+
 class CanalRouteRequest(BaseModel):
     """Artifact-scoped node handles and constraints accepted by the route API."""
 
@@ -42,12 +61,12 @@ class CanalRouteRequest(BaseModel):
     end_uid: int
     artifact_revision: str
     days: int | None = Field(gt=0, default=None)
-    hours_per_day: float = Field(gt=0, default=6.0)
+    hours_per_day: FiniteFloat = Field(gt=0, default=6.0)
     movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
-    boat_length_m: float | None = Field(gt=0, default=None)
-    boat_beam_m: float | None = Field(gt=0, default=None)
-    boat_draft_m: float | None = Field(gt=0, default=None)
-    boat_height_m: float | None = Field(gt=0, default=None)
+    boat_length_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_beam_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_draft_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_height_m: FiniteFloat | None = Field(gt=0, default=None)
 
 
 class APIError(BaseModel):
@@ -63,19 +82,58 @@ def _error(status_code: int, *, code: str, message: str, fields: list[str] | Non
     return HTTPException(status_code=status_code, detail=detail.model_dump())
 
 
-@router.get("/canal-network", response_model=CanalNetworkResponse)
-def canal_network(request: Request) -> CanalNetworkResponse:
-    """Return the startup-prepared canal network overlay."""
+@router.post("/canal-network", response_model=CanalNetworkResponse)
+def canal_network(body: CanalNetworkRequest, request: Request) -> CanalNetworkResponse:
+    """Return the one-way, time-reachable canal network from active hire bases."""
 
-    if request.app.state.network_error is not None or not request.app.state.network_lines:
+    if request.app.state.network_unavailable:
         raise _error(
             503,
             code="network_unavailable",
             message="The canal network overlay is unavailable.",
         )
+
+    travel_minutes = body.days * body.hours_per_day * 60
+    if travel_minutes > MAX_NETWORK_TRAVEL_MINUTES:
+        raise _error(
+            413,
+            code="network_query_budget_exceeded",
+            message="The requested travel time exceeds the network overlay limit.",
+            fields=["days", "hours_per_day"],
+        )
+
+    overlay_graph = select_boat_hire_reachability(
+        request.app.state.graph,
+        request.app.state.boat_hire_anchors,
+        cutoff_min=travel_minutes,
+        boat_length_m=body.boat_length_m,
+        boat_beam_m=body.boat_beam_m,
+        boat_draft_m=body.boat_draft_m,
+        boat_height_m=body.boat_height_m,
+        movable_bridge_delay_min=resolve_movable_bridge_delay(body.movable_bridge_delay_min),
+    )
+    try:
+        lines = prepare_network_geometry(overlay_graph)
+    except Exception as exc:
+        raise _error(
+            503,
+            code="network_unavailable",
+            message="The canal network overlay is unavailable.",
+        ) from exc
+
+    bases = [
+        BoatHireBase(
+            identity=anchor.seed.identity,
+            operator=anchor.seed.operator,
+            name=anchor.seed.name,
+            coordinate=Coordinate(lat=anchor.seed.latitude, lon=anchor.seed.longitude),
+        )
+        for anchor in request.app.state.boat_hire_anchors
+    ]
     return CanalNetworkResponse(
         artifact_revision=request.app.state.artifact_revision,
-        lines=list(request.app.state.network_lines),
+        lines=list(lines),
+        bases=bases,
     )
 
 

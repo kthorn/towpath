@@ -197,6 +197,8 @@ def test_startup_attaches_artifact_state_and_loads_once(tmp_path: Path):
             assert app.state.metadata is app.state.artifact.metadata
             assert app.state.artifact_revision == "revision-7"
             assert app.state.settings is settings
+            assert app.state.boat_hire_anchors == ()
+            assert app.state.network_unavailable is True
             assert isinstance(app.state.spatial_index, GraphSpatialIndex)
             assert isinstance(app.state.poi_spatial_index, PoiSpatialIndex)
             assert client.get("/api/health").json() == {

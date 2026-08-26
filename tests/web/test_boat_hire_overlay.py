@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from pound.graph.artifact import save_artifact
 from pound.graph.spatial import GraphSpatialIndex
 from pound.web.app import create_app
-from pound.web.boat_hire import select_boat_hire_overlay
+from pound.web.boat_hire import snap_boat_hire_bases
 from pound.web.config import WebSettings
 from tests.web.conftest import artifact_metadata, write_boat_hire_enrichment
 
@@ -51,7 +51,33 @@ def _settings(
     )
 
 
-def test_overlay_filters_network_without_filtering_routing_graph(
+def _network_request(**changes: object) -> dict[str, object]:
+    payload: dict[str, object] = {"days": 7, "hours_per_day": 6}
+    payload.update(changes)
+    return payload
+
+
+def _active_row(
+    provider: str,
+    location: str,
+    *,
+    provider_name: str = "",
+    location_name: str = "",
+) -> dict[str, str]:
+    return {
+        "record_type": "company_base",
+        "source_provider_id": provider,
+        "source_provider_name": provider_name,
+        "location_id": location,
+        "location_name": location_name,
+        "latitude": "51.0",
+        "longitude": "-1.0",
+        "osm_url": "https://www.openstreetmap.org/node/1",
+        "exclude": "",
+    }
+
+
+def test_network_filters_display_without_filtering_routing_graph(
     tmp_path: Path, route_graph: nx.Graph
 ):
     graph = _two_component_graph(route_graph)
@@ -62,13 +88,13 @@ def test_overlay_filters_network_without_filtering_routing_graph(
     with (
         patch("pound.web.app.GraphSpatialIndex", wraps=GraphSpatialIndex) as build_index,
         patch(
-            "pound.web.app.select_boat_hire_overlay",
-            wraps=select_boat_hire_overlay,
-        ) as select_overlay,
+            "pound.web.app.snap_boat_hire_bases",
+            wraps=snap_boat_hire_bases,
+        ) as snap_bases,
         TestClient(create_app(settings)) as client,
     ):
         app = cast(FastAPI, client.app)
-        overlay = client.get("/api/canal-network")
+        overlay = client.post("/api/canal-network", json=_network_request())
         route = client.post(
             "/api/canal-route",
             json={
@@ -90,9 +116,45 @@ def test_overlay_filters_network_without_filtering_routing_graph(
     assert app.state.graph is app.state.artifact.graph
     assert set(app.state.graph.nodes) == expected_nodes
     assert set(app.state.graph.edges) == expected_edges
-    build_index.assert_called_once_with(app.state.graph)
-    assert select_overlay.call_args.args[0] is app.state.graph
-    assert select_overlay.call_args.args[1] is app.state.spatial_index
+    assert build_index.call_count == 1
+    assert snap_bases.call_count == 1
+    assert app.state.boat_hire_anchors
+    assert app.state.network_unavailable is False
+
+
+def test_network_returns_active_bases_in_csv_order(tmp_path: Path, route_graph: nx.Graph):
+    settings = _settings(
+        tmp_path,
+        route_graph,
+        rows=[
+            _active_row(
+                "provider-a",
+                "base:a",
+                provider_name="Operator A",
+                location_name="Base A",
+            ),
+            _active_row("provider-b", "base:b", provider_name="Operator B"),
+        ],
+    )
+
+    with TestClient(create_app(settings)) as client:
+        response = client.post("/api/canal-network", json=_network_request())
+
+    assert response.status_code == 200
+    assert response.json()["bases"] == [
+        {
+            "identity": "provider-a/base:a",
+            "operator": "Operator A",
+            "name": "Base A",
+            "coordinate": {"lat": 51.0, "lon": -1.0},
+        },
+        {
+            "identity": "provider-b/base:b",
+            "operator": "Operator B",
+            "name": "base:b",
+            "coordinate": {"lat": 51.0, "lon": -1.0},
+        },
+    ]
 
 
 @pytest.mark.parametrize(
@@ -137,7 +199,7 @@ def test_invalid_active_seeds_abort_startup(
             pass
 
 
-def test_all_excluded_overlay_is_unavailable_but_routing_remains_available(
+def test_all_excluded_bases_are_unavailable_but_routing_remains_available(
     tmp_path: Path, route_graph: nx.Graph
 ):
     settings = _settings(
@@ -153,7 +215,7 @@ def test_all_excluded_overlay_is_unavailable_but_routing_remains_available(
     )
 
     with TestClient(create_app(settings)) as client:
-        overlay = client.get("/api/canal-network")
+        overlay = client.post("/api/canal-network", json=_network_request())
         route = client.post(
             "/api/canal-route",
             json={
