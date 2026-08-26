@@ -1,4 +1,5 @@
 import type {
+  BoatHireBase,
   CanalCandidate,
   CatalogPlace,
   GeoJSONLineString,
@@ -174,12 +175,30 @@ function lockContent(documentRef: Document, label: string): HTMLElement {
   return content;
 }
 
+function hireBaseContent(documentRef: Document, label: string): HTMLElement {
+  const content = documentRef.createElement('span');
+  content.className = 'pound-hire-base-marker';
+  content.setAttribute('role', 'img');
+  content.setAttribute('aria-label', label);
+  content.textContent = 'B';
+  return content;
+}
+
 function addInfoField(documentRef: Document, root: HTMLElement, label: string, value: string): void {
   const row = documentRef.createElement('div');
   const name = documentRef.createElement('strong');
   name.textContent = `${label}: `;
   row.append(name, documentRef.createTextNode(value));
   root.append(row);
+}
+
+function hireBaseInfoContent(documentRef: Document, base: BoatHireBase, close: () => void): HTMLElement {
+  const root = documentRef.createElement('article');
+  root.className = 'pound-info-window';
+  addCloseButton(documentRef, root, close);
+  addInfoField(documentRef, root, 'Operator', base.operator);
+  addInfoField(documentRef, root, 'Base', base.name);
+  return root;
 }
 
 function distance(meters: number): string {
@@ -310,6 +329,9 @@ export function createGoogleMapView(
   const landRoutes: Partial<Record<EndpointSlot, PolylineInstance>> = {};
   const networkLines: PolylineInstance[] = [];
   let networkGeometries: GeoJSONLineString[] = [];
+  const hireBaseMarkers: MarkerInstance[] = [];
+  const hireBaseMarkerListeners: RemovableListener[] = [];
+  const hireBaseCoordinates: GoogleLatLngLiteral[] = [];
   const catalogMarkers: MarkerInstance[] = [];
   const poiMarkers: MarkerInstance[] = [];
   const lockMarkers: MarkerInstance[] = [];
@@ -465,10 +487,32 @@ export function createGoogleMapView(
         }));
       }
     },
+    hireBases(bases) {
+      closeInfoWindow();
+      removeMarkerGroup(hireBaseMarkers, hireBaseMarkerListeners);
+      hireBaseCoordinates.length = 0;
+      for (const base of bases) {
+        const label = `${base.operator} — ${base.name}`;
+        const coordinate = toGoogleLatLng(base.coordinate);
+        hireBaseCoordinates.push(coordinate);
+        const marker = facade.createMarker({
+          map,
+          position: coordinate,
+          title: label,
+          content: hireBaseContent(documentRef, label),
+          gmpClickable: true,
+        });
+        hireBaseMarkers.push(marker);
+        bindMarker(marker, label, () => hireBaseInfoContent(documentRef, base, closeInfoWindow), hireBaseMarkerListeners);
+      }
+    },
     fitNetwork() {
-      const points = networkGeometries.flatMap((line) =>
-        line.coordinates.map(([lon, lat]) => toGoogleLatLng({ lat, lon })),
-      );
+      const points = [
+        ...hireBaseCoordinates,
+        ...networkGeometries.flatMap((line) =>
+          line.coordinates.map(([lon, lat]) => toGoogleLatLng({ lat, lon })),
+        ),
+      ];
       if (points.length) facade.fitBounds(map, points);
     },
     catalogPlaces(places: CatalogPlace[]) {
@@ -572,6 +616,7 @@ export function createGoogleMapView(
       catalogMarkerListeners.length = 0;
       poiMarkerListeners.length = 0;
       lockMarkerListeners.length = 0;
+      hireBaseMarkerListeners.length = 0;
       removeListeners(infoWindowListeners);
       closeInfoWindow();
       removeTooltips();
@@ -581,6 +626,8 @@ export function createGoogleMapView(
       removeMarkerGroup(catalogMarkers, []);
       removeMarkerGroup(poiMarkers, []);
       removeMarkerGroup(lockMarkers, []);
+      removeMarkerGroup(hireBaseMarkers, []);
+      hireBaseCoordinates.length = 0;
       clearDay();
       clearLandSlot('origin');
       clearLandSlot('destination');

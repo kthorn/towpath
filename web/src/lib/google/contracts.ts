@@ -1,5 +1,6 @@
 import type {
   CanalCandidate,
+  BoatHireBase,
   CatalogPlace,
   GeoJSONLineString,
   LatLon,
@@ -52,6 +53,7 @@ export interface MapView {
   land(slot: EndpointSlot, route: LandRoute | null): void;
   canal(geometry: GeoJSONLineString | null): void;
   network(lines: GeoJSONLineString[]): void;
+  hireBases(bases: BoatHireBase[]): void;
   fitNetwork(): void;
   catalogPlaces(places: CatalogPlace[]): void;
   pois(pois: RoutePoi[]): void;

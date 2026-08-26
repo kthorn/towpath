@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPoundApi, PoundApiError } from './api';
 import type {
   CanalCandidatesResponse,
-  CanalNetworkResponse,
+  CanalNetworkRequest,
   CanalRouteResponse,
   CatalogPlacesRequest,
   CatalogPlacesResponse,
@@ -23,14 +23,6 @@ const candidatesResponse: CanalCandidatesResponse = {
       display_name: 'Grand Union Canal',
     },
   ],
-};
-
-const networkResponse: CanalNetworkResponse = {
-  artifact_revision: 'artifact-123',
-  lines: [{
-    type: 'LineString',
-    coordinates: [[-0.742, 51.997], [-0.7, 52.0]],
-  }],
 };
 
 const routeResponse: CanalRouteResponse = {
@@ -101,18 +93,23 @@ describe('createPoundApi', () => {
     });
   });
 
-  it('gets the full canal network', async () => {
+  it('posts the network reachability request', async () => {
+    const request: CanalNetworkRequest = {
+      days: 7, hours_per_day: 6,
+      boat_length_m: null, boat_beam_m: null, boat_draft_m: null,
+      boat_height_m: null, movable_bridge_delay_min: null,
+    };
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify(networkResponse), {
+      new Response(JSON.stringify({ artifact_revision: 'artifact-123', lines: [], bases: [] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
     );
 
-    const result = await createPoundApi(fetchFn).canalNetwork();
-
-    expect(result).toEqual(networkResponse);
-    expect(fetchFn).toHaveBeenCalledWith('/api/canal-network', { method: 'GET' });
+    await createPoundApi(fetchFn).canalNetwork(request);
+    expect(fetchFn).toHaveBeenCalledWith('/api/canal-network', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
+    });
   });
 
   it('posts route constraints and parses the complete route response', async () => {

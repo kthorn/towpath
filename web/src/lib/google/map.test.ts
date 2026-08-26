@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { CanalCandidate, CatalogPlace, GeoJSONLineString } from '../types';
+import type { BoatHireBase, CanalCandidate, CatalogPlace, GeoJSONLineString } from '../types';
 import { createGoogleMapView, type MapFacade } from './map';
 
 function candidate(uid: number): CanalCandidate {
@@ -10,6 +10,16 @@ function candidate(uid: number): CanalCandidate {
     coordinate: { lat: 52 + uid, lon: -1 - uid },
     straight_line_distance_m: 10,
     display_name: `Candidate ${uid}`,
+  };
+}
+
+function hireBase(overrides: Partial<BoatHireBase> = {}): BoatHireBase {
+  return {
+    identity: 'operator/base-one',
+    operator: 'Canal Holidays',
+    name: 'Base One',
+    coordinate: { lat: 51, lon: -1 },
+    ...overrides,
   };
 }
 
@@ -198,7 +208,64 @@ describe('Google map adapter', () => {
     expect(polylines[2].setMap).toHaveBeenCalledWith(null);
   });
 
-  it('does not fit an empty network', () => {
+  it('fits hire bases when the network has no lines', () => {
+    const { view, facade } = setup();
+    view.network([]);
+    view.hireBases([hireBase()]);
+    view.fitNetwork();
+    expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [{ lat: 51, lng: -1 }]);
+  });
+
+  it('renders hire-base markers with hover labels and operator/base popups', () => {
+    const { view, element, facade, markers, markerListeners, infoWindow } = setup();
+    view.hireBases([hireBase()]);
+
+    const marker = markers[0];
+    expect(marker.title).toBe('Canal Holidays — Base One');
+    expect(marker.content).toHaveClass('pound-hire-base-marker');
+    expect(marker.content).toHaveTextContent('B');
+    expect(marker.content).toHaveAttribute('role', 'img');
+    expect(marker.content).toHaveAttribute('aria-label', 'Canal Holidays — Base One');
+
+    markerListeners.find(({ event }) => event === 'mouseenter')?.callback({} as never);
+    expect(element).toHaveTextContent('Canal Holidays — Base One');
+    expect(element.querySelector('[role="tooltip"]')).toHaveTextContent('Canal Holidays — Base One');
+
+    markerListeners.find(({ event }) => event === 'click')?.callback({} as never);
+    const content = vi.mocked(infoWindow.setContent).mock.calls.at(-1)?.[0] as HTMLElement;
+    expect(content).toHaveTextContent('Operator: Canal Holidays');
+    expect(content).toHaveTextContent('Base: Base One');
+    expect(infoWindow.open).toHaveBeenCalledWith(expect.objectContaining({ anchor: marker }));
+    expect(vi.mocked(facade.createMarker).mock.calls[0][0].content).not.toHaveTextContent('Base One');
+  });
+
+  it('closes and clears replaced hire-base markers and listeners', () => {
+    const { view, markers, markerListeners, infoWindow } = setup();
+    view.hireBases([hireBase()]);
+    const oldMarker = markers[0];
+    const oldListeners = markerListeners.filter(({ marker }) => marker === oldMarker);
+    markerListeners.find(({ marker, event }) => marker === oldMarker && event === 'click')?.callback({} as never);
+    infoWindow.close.mockClear();
+
+    view.hireBases([hireBase({ identity: 'operator/base-two', name: 'Base Two' })]);
+
+    expect(infoWindow.close).toHaveBeenCalledOnce();
+    expect(oldMarker.map).toBeNull();
+    expect(oldListeners.every(({ remove }) => remove.mock.calls.length > 0)).toBe(true);
+    expect(markers[1].map).not.toBeNull();
+  });
+
+  it('clears hire-base markers and listeners on destroy', () => {
+    const { view, markers, markerListeners, infoWindow } = setup();
+    view.hireBases([hireBase()]);
+    view.destroy();
+
+    expect(markers[0].map).toBeNull();
+    expect(markerListeners.every(({ remove }) => remove.mock.calls.length > 0)).toBe(true);
+    expect(infoWindow.close).toHaveBeenCalled();
+  });
+
+  it('does not fit an empty network without hire bases', () => {
     const { view, facade } = setup();
     view.network([]);
     view.fitNetwork();
