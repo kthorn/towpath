@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { TripStore } from '../lib/stores/trip';
   import type { BoatSettingsStore } from '../lib/stores/boat-settings';
-  let { store, settings, onReset, days = $bindable<string | number>(''), hours = $bindable<string | number>('6') }: {
+  import { parseSchedule } from '../lib/schedule';
+  let { store, settings, onReset, days = $bindable<string | number>(7), hours = $bindable<string | number>(6) }: {
     store: TripStore;
     settings: BoatSettingsStore;
     onReset: () => void;
@@ -10,21 +11,11 @@
   } = $props();
   let error = $state('');
   let submissionGeneration = 0;
-  const optional = (value: string | number) => String(value).trim() === '' ? null : Number(value);
-  function positiveOptional(label: string, value: string | number): number | null {
-    const number = optional(value);
-    if (number !== null && (!Number.isFinite(number) || number <= 0)) throw new Error(`${label} must be greater than 0.`);
-    return number;
-  }
   async function submit() {
     const generation = ++submissionGeneration;
     error = '';
     try {
-      const hoursPerDay = Number(hours);
-      if (String(hours).trim() === '' || !Number.isFinite(hoursPerDay) || hoursPerDay <= 0) throw new Error('Hours per day must be greater than 0.');
-      const dayCount = positiveOptional('Days', days);
-      if (dayCount !== null && !Number.isInteger(dayCount)) throw new Error('Days must be a whole number greater than 0.');
-      await store.planCanalRoute({ days: dayCount, hours_per_day: hoursPerDay, ...$settings });
+      await store.planCanalRoute({ ...parseSchedule(days, hours), ...$settings });
     }
     catch (cause) {
       if (generation === submissionGeneration) error = cause instanceof Error ? cause.message : String(cause);
@@ -40,8 +31,8 @@
 <form novalidate onsubmit={(event) => { event.preventDefault(); submit(); }}>
   <h2>Schedule</h2>
   <div class="constraint-grid">
-    <label>Days (optional)<input type="number" min="1" bind:value={days} /></label>
-    <label>Hours per day<input type="number" required min="0.1" step="0.5" bind:value={hours} /></label>
+    <label>Days<input type="number" required min="1" max="365" bind:value={days} /></label>
+    <label>Hours per day<input type="number" required min="0.1" max="24" step="0.5" bind:value={hours} /></label>
   </div>
   <div class="constraint-actions">
     <button type="submit">Plan canal route</button>

@@ -10,14 +10,25 @@
   import type { AppDependencies } from './lib/app';
   import type { EndpointSlot } from './lib/google/contracts';
   import { createNavigation, type AppRoute } from './lib/navigation';
+  import { parseSchedule } from './lib/schedule';
   import { createBoatSettingsStore, type SettingsSaveResult } from './lib/stores/boat-settings';
 
   let { dependencies }: { dependencies: AppDependencies } = $props();
   const store = $derived(dependencies.store);
   const boatSettings = createBoatSettingsStore();
   let active = $state<EndpointSlot>('origin');
-  let plannerSession = $state({ days: '' as string | number, hours: '6' as string | number });
+  let plannerSession = $state({ days: 7 as string | number, hours: 6 as string | number });
   let searchKey = $state(0);
+  const networkRequest = $derived.by(() => {
+    try {
+      return { ...parseSchedule(plannerSession.days, plannerSession.hours), ...$boatSettings };
+    } catch {
+      return null;
+    }
+  });
+  $effect(() => {
+    if (networkRequest) store.setNetworkRequest(networkRequest);
+  });
 
   const navigation = createNavigation();
   let saveFeedback = $state<SettingsSaveResult | null>(null);
@@ -44,7 +55,7 @@
 
   function resetTrip() {
     dependencies.store.reset();
-    plannerSession = { days: '', hours: '6' };
+    plannerSession = { days: 7, hours: 6 };
     searchKey += 1;
   }
 
@@ -76,9 +87,13 @@
     <div class="map-column">
       <fieldset class="map-target"><legend>Map click sets</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set destination from map</label></fieldset>
 		<MapCanvas load={dependencies.loadMapView} onclick={(coordinate) => dependencies.store.setEndpointCoordinate(active, coordinate)} onready={(view) => dependencies.store.setMapView(view)} />
-		{#if $store.networkError}
-			<p class="network-status" role="status">Canal network overlay is unavailable: {$store.networkError}</p>
-		{/if}
+    {#if $store.networkError}
+      <p class="network-status" role="status">
+        {$store.hasNetworkOverlay
+          ? `Canal network overlay could not be updated: ${$store.networkError}`
+          : `Canal network overlay is unavailable: ${$store.networkError}`}
+      </p>
+    {/if}
 	</div>
     <div class="planner-column">
 		{#key searchKey}
