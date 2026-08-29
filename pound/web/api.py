@@ -317,7 +317,7 @@ def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlace
     full_route_bng = (
         wgs84_to_bng(LineString(body.route_geometry.coordinates))
         if is_segment_query and body.route_geometry is not None
-        else route_bng
+        else None
     )
     day_bng = (
         wgs84_to_bng(LineString(body.day_geometry.coordinates))
@@ -344,7 +344,7 @@ def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlace
 
     context_result = None
     try:
-        if is_segment_query and full_route_bng is not None:
+        if is_segment_query and body.route_geometry is not None:
             context_result = query_source(
                 policy=CatalogQueryPolicy("none", None),
                 route_geometry=full_route_bng,

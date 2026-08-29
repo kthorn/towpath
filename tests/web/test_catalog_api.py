@@ -72,6 +72,30 @@ def test_catalog_places_preserves_route_day_and_waterway_context_for_segment(
     assert place["waterway_distance_m"] == pytest.approx(0, abs=10)
 
 
+def test_catalog_places_segment_only_keeps_other_context_distances_null(
+    web_client: TestClient,
+):
+    response = web_client.post(
+        "/api/catalog-places",
+        json=_request(
+            web_client,
+            route_geometry=None,
+            segment_geometry={
+                "type": "LineString",
+                "coordinates": [[-1.1, 51.001], [-0.9, 51.001]],
+            },
+            policy={"basis": "segment", "radius_m": 2_000},
+        ),
+    )
+
+    assert response.status_code == 200
+    place = response.json()["places"][0]
+    assert place["distance_to_segment_m"] == pytest.approx(111, abs=10)
+    assert place["distance_to_full_route_m"] is None
+    assert place["distance_to_selected_geometry_m"] is None
+    assert place["waterway_distance_m"] is None
+
+
 @pytest.mark.parametrize(
     ("changes", "fields"),
     [
