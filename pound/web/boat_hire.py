@@ -159,11 +159,11 @@ def load_boat_hire_seeds(path: Path) -> tuple[BoatHireSeed, ...]:
                 f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) has "
                 f"unsupported exclude value {exclude!r}"
             )
-        record_type = row["record_type"] or "company_base"
+        record_type = row["record_type"]
         if record_type not in _ALLOWED_RECORD_TYPES:
             raise ValueError(
                 f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) has "
-                f"unsupported record_type {row['record_type']!r}"
+                f"unsupported record_type {record_type!r}"
             )
         if exclude == "true":
             continue

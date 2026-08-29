@@ -163,6 +163,7 @@ def test_network_returns_active_bases_in_csv_order(tmp_path: Path, route_graph: 
         (
             [
                 {
+                    "record_type": "company_base",
                     "source_provider_id": "test-provider",
                     "location_id": "base:test",
                     "latitude": "not-a-coordinate",
@@ -175,6 +176,7 @@ def test_network_returns_active_bases_in_csv_order(tmp_path: Path, route_graph: 
         (
             [
                 {
+                    "record_type": "company_base",
                     "source_provider_id": "test-provider",
                     "location_id": "base:test",
                     "latitude": "0.0",
@@ -207,6 +209,7 @@ def test_all_excluded_bases_are_unavailable_but_routing_remains_available(
         route_graph,
         rows=[
             {
+                "record_type": "company_base",
                 "source_provider_id": "test-provider",
                 "location_id": "base:test",
                 "exclude": "true",

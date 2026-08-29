@@ -61,7 +61,15 @@ def write_boat_hire_enrichment(
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=BOAT_HIRE_ENRICHMENT_FIELDS)
         writer.writeheader()
-        writer.writerows(rows if rows is not None else [default])
+        if rows is None:
+            writer.writerows([default])
+        else:
+            merged = []
+            for row in rows:
+                m = default.copy()
+                m.update(row)
+                merged.append(m)
+            writer.writerows(merged)
     return path
 
 

@@ -133,6 +133,7 @@ def test_loader_accepts_evidence_only_drifters_map_row(tmp_path: Path):
     [
         ({"exclude": "yes"}, "exclude"),
         ({"source_provider_id": ""}, "source_provider_id"),
+        ({"record_type": ""}, "record_type"),
         ({"latitude": "nan"}, "latitude"),
         ({"longitude": "181"}, "longitude"),
         ({"osm_url": "http://example.test/base", "evidence_url": ""}, "evidence"),

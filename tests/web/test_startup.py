@@ -29,6 +29,7 @@ def _settings(artifact_path: Path, static_dir: Path) -> WebSettings:
             artifact_path.with_name("boat-hire.csv"),
             rows=[
                 {
+                    "record_type": "company_base",
                     "source_provider_id": "test-provider",
                     "location_id": "base:test",
                     "exclude": "true",
@@ -239,6 +240,7 @@ def test_startup_loads_catalog_after_routing_artifact(tmp_path: Path):
             tmp_path / "boat-hire.csv",
             rows=[
                 {
+                    "record_type": "company_base",
                     "source_provider_id": "test-provider",
                     "location_id": "base:test",
                     "exclude": "true",
@@ -299,6 +301,7 @@ def test_incompatible_catalog_schema_degrades_without_breaking_startup(
             tmp_path / "boat-hire.csv",
             rows=[
                 {
+                    "record_type": "company_base",
                     "source_provider_id": "test-provider",
                     "location_id": "base:test",
                     "exclude": "true",
@@ -331,6 +334,7 @@ def test_corrupt_catalog_degrades_health_without_breaking_routing_startup(tmp_pa
             tmp_path / "boat-hire.csv",
             rows=[
                 {
+                    "record_type": "company_base",
                     "source_provider_id": "test-provider",
                     "location_id": "base:test",
                     "exclude": "true",
@@ -364,6 +368,7 @@ def test_missing_catalog_degrades_health_without_breaking_routing_startup(tmp_pa
             tmp_path / "boat-hire.csv",
             rows=[
                 {
+                    "record_type": "company_base",
                     "source_provider_id": "test-provider",
                     "location_id": "base:test",
                     "exclude": "true",
