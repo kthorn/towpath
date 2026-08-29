@@ -355,6 +355,24 @@ describe('Google map adapter', () => {
     }
   });
 
+  it('detects in-place mutation of a hire-base coordinate and replaces markers', () => {
+    const { view, markers, markerListeners, infoWindow } = setup();
+    const base = hireBase();
+    const bases = [base];
+    view.hireBases(bases, null);
+    const oldMarker = markers[0];
+    const oldListeners = markerListeners.filter(({ marker }) => marker === oldMarker);
+    infoWindow.close.mockClear();
+    base.coordinate.lat = 52;
+    base.coordinate.lon = -2;
+    view.hireBases(bases, null);
+    expect(infoWindow.close).toHaveBeenCalledOnce();
+    expect(oldMarker.map).toBeNull();
+    expect(oldListeners.every(({ remove }) => remove.mock.calls.length > 0)).toBe(true);
+    expect(markers[1].map).not.toBeNull();
+    expect(markers[1].position).toEqual({ lat: 52, lng: -2 });
+  });
+
   it('keeps hire-base subscribers through marker replacement', () => {
     const { view, markers, markerListeners } = setup();
     const selected = vi.fn();

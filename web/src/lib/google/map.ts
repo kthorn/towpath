@@ -59,6 +59,7 @@ export interface MapFacade {
     anchorLeft?: string;
     anchorTop?: string;
     gmpClickable?: boolean;
+    zIndex?: number;
   }): MarkerInstance;
   addMarkerListener(
     marker: MarkerInstance,
@@ -489,7 +490,7 @@ export function createGoogleMapView(
       if (placeMarkers[slot]) placeMarkers[slot]!.map = null;
       delete placeMarkers[slot];
       if (coordinate) {
-        placeMarkers[slot] = facade.createMarker({ map, position: toGoogleLatLng(coordinate), title: slot });
+        placeMarkers[slot] = facade.createMarker({ map, position: toGoogleLatLng(coordinate), title: slot, zIndex: 5 });
       }
     },
     candidates(slot, candidates: CanalCandidate[], selectedUid?: number) {
@@ -551,7 +552,7 @@ export function createGoogleMapView(
       }
       closeInfoWindow();
       removeMarkerGroup(hireBaseMarkers, hireBaseMarkerListeners);
-      hireBaseRecords = bases.slice();
+      hireBaseRecords = bases.map((base) => ({ identity: base.identity, operator: base.operator, name: base.name, coordinate: { lat: base.coordinate.lat, lon: base.coordinate.lon } }));
       hireBaseContents.length = 0;
       hireBaseCoordinates.length = 0;
       for (const base of hireBaseRecords) {
@@ -636,8 +637,8 @@ export function createGoogleMapView(
       highlightedDay.push(...casedLine(path, '#0ea5e9', 9, 7));
       const points = [toGoogleLatLng(dayGeometry.start), toGoogleLatLng(dayGeometry.end)];
       dayWaypointMarkers.push(
-        facade.createMarker({ map, position: points[0], title: `Day ${dayGeometry.day} start` }),
-        facade.createMarker({ map, position: points[1], title: `Day ${dayGeometry.day} end` }),
+        facade.createMarker({ map, position: points[0], title: `Day ${dayGeometry.day} start`, zIndex: 7 }),
+        facade.createMarker({ map, position: points[1], title: `Day ${dayGeometry.day} end`, zIndex: 7 }),
       );
       facade.fitBounds(map, path);
     },
