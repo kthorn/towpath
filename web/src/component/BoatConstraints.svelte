@@ -30,6 +30,10 @@
 
 <form novalidate onsubmit={(event) => { event.preventDefault(); submit(); }}>
   <h2>Schedule</h2>
+  <p>
+    The map shows the one-way cruising reach from any hire base for the selected Days and Hours per
+    day, capped at 168 cruising hours.
+  </p>
   <div class="constraint-grid">
     <label>Days<input type="number" required min="1" max="365" bind:value={days} /></label>
     <label>Hours per day<input type="number" required min="0.1" max="24" step="0.5" bind:value={hours} /></label>

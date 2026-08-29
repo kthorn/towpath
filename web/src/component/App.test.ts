@@ -418,6 +418,11 @@ describe("trip planning interface", () => {
 		expect(hours).toHaveValue(6);
 		expect(hours).toBeRequired();
 		expect(hours).toHaveAttribute("max", "24");
+		expect(
+			screen.getByText(
+				/The map shows the one-way cruising reach from any hire base for the selected Days and Hours per day, capped at 168 cruising hours\./,
+			),
+		).toBeVisible();
 		await fireEvent.input(days, { target: { value: "4" } });
 		await fireEvent.input(hours, { target: { value: "7" } });
 		await fireEvent.click(screen.getByRole("button", { name: "Reset trip" }));
