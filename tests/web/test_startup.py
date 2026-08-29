@@ -72,6 +72,7 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("POUND_CATALOG_MAX_RADIUS_M", "1500")
     monkeypatch.setenv("POUND_CATALOG_MAX_ROUTE_VERTICES", "2000")
     monkeypatch.setenv("POUND_CATALOG_QUERY_WORK_BUDGET", "5000")
+    monkeypatch.setenv("POUND_PLACES_MAX_TARGETS", "32")
 
     settings = WebSettings.from_env()
 
@@ -88,6 +89,7 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
         catalog_max_radius_m=1500,
         catalog_max_route_vertices=2000,
         catalog_query_work_budget=5000,
+        places_max_targets=32,
     )
 
 
@@ -104,6 +106,8 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
         ("catalog_max_route_vertices", 0),
         ("catalog_query_work_budget", 0),
         ("catalog_query_work_budget", MAX_CATALOG_QUERY_WORK + 1),
+        ("places_max_targets", 0),
+        ("places_max_targets", 65),
     ],
 )
 def test_settings_reject_invalid_tuning(field: str, value: int | float, tmp_path: Path):

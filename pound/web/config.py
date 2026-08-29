@@ -8,6 +8,7 @@ from pathlib import Path
 from pound.catalog.manifest import MAX_CATALOG_KINDS, MAX_CATALOG_RADIUS_M
 from pound.catalog.spatial import MAX_CATALOG_QUERY_WORK, MAX_CATALOG_VIEWPORT_SPAN_DEGREES
 from pound.schemas import MAX_CATALOG_ROUTE_COORDINATES
+from pound.web.places import MAX_PLACES_TARGETS
 
 MAX_NETWORK_TRAVEL_MINUTES = 10_080
 
@@ -28,6 +29,7 @@ class WebSettings:
     catalog_max_radius_m: float = MAX_CATALOG_RADIUS_M
     catalog_max_route_vertices: int = MAX_CATALOG_ROUTE_COORDINATES
     catalog_query_work_budget: int = MAX_CATALOG_QUERY_WORK
+    places_max_targets: int = MAX_PLACES_TARGETS
 
     def __post_init__(self) -> None:
         if self.candidate_pool_size <= 0:
@@ -59,6 +61,8 @@ class WebSettings:
             raise ValueError(
                 f"catalog_query_work_budget must be from 1 through {MAX_CATALOG_QUERY_WORK}"
             )
+        if not 0 < self.places_max_targets <= MAX_PLACES_TARGETS:
+            raise ValueError(f"places_max_targets must be from 1 through {MAX_PLACES_TARGETS}")
 
     @classmethod
     def from_env(cls) -> "WebSettings":
@@ -94,4 +98,5 @@ class WebSettings:
             catalog_query_work_budget=int(
                 os.environ.get("POUND_CATALOG_QUERY_WORK_BUDGET", "100000")
             ),
+            places_max_targets=int(os.environ.get("POUND_PLACES_MAX_TARGETS", "64")),
         )

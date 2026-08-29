@@ -1,10 +1,11 @@
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from pound import schemas
 from pound.catalog.metadata import CatalogMetadata
 from pound.schemas import (
     Amenity,
+    BoatHireProvenance,
     CanalConstraints,
     CanalRouteResponse,
     CatalogPlaceResponse,
@@ -12,6 +13,11 @@ from pound.schemas import (
     Coordinate,
     DayPlan,
     GeoJSONLineString,
+    GeoJSONPoint,
+    OsmProvenance,
+    PlaceResponse,
+    PlacesRequest,
+    PlacesResponse,
     ResolvedConstraints,
     RouteAccessSegment,
     RouteDayGeometry,
@@ -407,6 +413,227 @@ def test_catalog_request_rejects_segment_geometry_for_other_policies(basis):
                 },
                 policy={"basis": basis, "radius_m": radius_m},
             )
+        )
+
+
+def _viewport_places_payload(**changes):
+    payload = {
+        "mode": "viewport",
+        "kinds": ["pub"],
+        "bounds": {"south": 51.0, "west": -1.5, "north": 52.0, "east": -0.5},
+        "policy": {"basis": "none"},
+    }
+    payload.update(changes)
+    return payload
+
+
+def _nearby_places_payload(**changes):
+    payload = {
+        "mode": "nearby",
+        "kinds": ["pub"],
+        "radius_m": 1_000.0,
+        "targets": [{"id": "stop", "geometry": {"type": "Point", "coordinates": [-1.0, 52.0]}}],
+    }
+    payload.update(changes)
+    return payload
+
+
+def test_nearby_places_request_accepts_point_and_line_targets():
+    request = TypeAdapter(PlacesRequest).validate_python(
+        {
+            "mode": "nearby",
+            "kinds": ["pub", "boat_hire"],
+            "radius_m": 1_000.0,
+            "targets": [
+                {"id": "stop", "geometry": {"type": "Point", "coordinates": [-1.0, 52.0]}},
+                {
+                    "id": "day",
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [[-1.0, 52.0], [-1.1, 52.1]],
+                    },
+                },
+            ],
+        }
+    )
+
+    assert request.mode == "nearby"
+    assert len(request.targets) == 2
+    assert request.targets[0].geometry.coordinates == (-1.0, 52.0)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"targets": []},
+        {"kinds": []},
+        {
+            "targets": [
+                {"id": "same", "geometry": {"type": "Point", "coordinates": [-1.0, 52.0]}},
+                {"id": "same", "geometry": {"type": "Point", "coordinates": [-1.1, 52.1]}},
+            ]
+        },
+    ],
+)
+def test_nearby_places_request_rejects_empty_or_duplicate_selection(changes):
+    payload = _nearby_places_payload()
+    payload.update(changes)
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(PlacesRequest).validate_python(payload)
+
+
+def test_viewport_places_request_requires_route_for_day_geometry():
+    payload = _viewport_places_payload(
+        day_geometry={
+            "type": "LineString",
+            "coordinates": [[-1.0, 51.0], [-1.1, 51.1]],
+        }
+    )
+
+    with pytest.raises(ValidationError, match="day_geometry"):
+        TypeAdapter(PlacesRequest).validate_python(payload)
+
+
+def test_viewport_places_request_accepts_route_without_day_geometry():
+    request = TypeAdapter(PlacesRequest).validate_python(
+        _viewport_places_payload(
+            route_geometry={
+                "type": "LineString",
+                "coordinates": [[-1.0, 51.0], [-1.1, 51.1]],
+            }
+        )
+    )
+
+    assert request.route_geometry is not None
+    assert request.day_geometry is None
+
+
+@pytest.mark.parametrize("field", ["segment_geometry", "day", "catalog_revision"])
+def test_viewport_places_request_forbids_legacy_fields(field):
+    payload = _viewport_places_payload(**{field: None})
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(PlacesRequest).validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    ("policy", "route_geometry"),
+    [
+        ({"basis": "route", "radius_m": 1_000.0}, None),
+        ({"basis": "waterway"}, None),
+        ({"basis": "none", "radius_m": 1_000.0}, None),
+    ],
+)
+def test_viewport_places_request_rejects_invalid_policy_matrix(policy, route_geometry):
+    payload = _viewport_places_payload(policy=policy, route_geometry=route_geometry)
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(PlacesRequest).validate_python(payload)
+
+
+def test_viewport_places_request_rejects_reversed_or_oversized_bounds():
+    for bounds in (
+        {"south": 52.0, "west": -1.5, "north": 51.0, "east": -0.5},
+        {"south": 51.0, "west": -1.5, "north": 62.0, "east": -0.5},
+    ):
+        with pytest.raises(ValidationError):
+            TypeAdapter(PlacesRequest).validate_python(_viewport_places_payload(bounds=bounds))
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [[float("nan"), 52.0], [float("inf"), 52.0], [-181.0, 52.0], [-1.0, 91.0]],
+)
+def test_geojson_point_rejects_nonfinite_or_out_of_range_coordinates(coordinates):
+    with pytest.raises(ValidationError):
+        GeoJSONPoint.model_validate({"type": "Point", "coordinates": coordinates})
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [
+        [[-1.0, 52.0], [float("nan"), 52.1]],
+        [[-1.0, 52.0], [181.0, 52.1]],
+        [[-1.0, 52.0], [-1.1, 91.0]],
+    ],
+)
+def test_geojson_linestring_rejects_nonfinite_or_out_of_range_coordinates(coordinates):
+    with pytest.raises(ValidationError):
+        schemas.GeoJSONLineString.model_validate({"type": "LineString", "coordinates": coordinates})
+
+
+def test_places_request_rejects_more_than_10000_viewport_geometry_coordinates():
+    route_coordinates = [[-1.0, 52.0]] * 5_000
+    day_coordinates = [[-1.0, 52.0]] * 5_001
+    request_payload = _viewport_places_payload(
+        route_geometry={"type": "LineString", "coordinates": route_coordinates},
+        day_geometry={"type": "LineString", "coordinates": day_coordinates},
+    )
+
+    with pytest.raises(ValidationError, match="10,000"):
+        TypeAdapter(PlacesRequest).validate_python(request_payload)
+
+
+def test_places_request_rejects_more_than_10000_nearby_geometry_coordinates():
+    line_coordinates = [[-1.0, 52.0]] * 5_000
+    request_payload = _nearby_places_payload(
+        targets=[
+            {"id": "first", "geometry": {"type": "LineString", "coordinates": line_coordinates}},
+            {
+                "id": "second",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[-1.0, 52.0]] * 5_001,
+                },
+            },
+        ]
+    )
+
+    with pytest.raises(ValidationError, match="10,000"):
+        TypeAdapter(PlacesRequest).validate_python(request_payload)
+
+
+def test_places_response_uses_structured_provenance_and_only_places():
+    osm = PlaceResponse(
+        kind="pub",
+        name="The Towpath",
+        coordinate=Coordinate(lat=52.0, lon=-1.0),
+        provenance=OsmProvenance(
+            source="osm",
+            osm_type="way",
+            osm_id=42,
+            metadata=CatalogMetadata(name="The Towpath"),
+        ),
+    )
+    hire = PlaceResponse(
+        kind="boat_hire",
+        name="Canal Basin",
+        coordinate=Coordinate(lat=52.0, lon=-1.0),
+        provenance=BoatHireProvenance(
+            source="boat_hire",
+            provider_id="provider",
+            provider_name="Provider Ltd",
+            location_id="base",
+            location_name="Canal Basin",
+        ),
+    )
+    response = PlacesResponse(places=[osm, hire])
+
+    assert response.model_dump().keys() == {"places"}
+    assert response.places[0].provenance.source == "osm"
+    assert response.places[1].provenance.source == "boat_hire"
+
+
+def test_places_response_rejects_unknown_provenance_source():
+    with pytest.raises(ValidationError):
+        PlaceResponse.model_validate(
+            {
+                "kind": "pub",
+                "name": "The Towpath",
+                "coordinate": {"lat": 52.0, "lon": -1.0},
+                "provenance": {"source": "unknown"},
+            }
         )
 
 

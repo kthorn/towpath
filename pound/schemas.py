@@ -5,10 +5,11 @@ coordinating with labyrinth-core / labyrinth-agent.
 """
 
 import math
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
 
+from pound.catalog.manifest import CATALOG_KINDS, MAX_CATALOG_KINDS, MAX_CATALOG_RADIUS_M
 from pound.catalog.metadata import CatalogMetadata
 
 
@@ -123,11 +124,58 @@ class CanalCandidatesResponse(BaseModel):
     candidates: list[CanalCandidate]
 
 
+MAX_ROUTE_POI_COORDINATES = 10_000
+MAX_CATALOG_ROUTE_COORDINATES = MAX_ROUTE_POI_COORDINATES
+MAX_CATALOG_TEXT_LENGTH = 256
+
+
+class GeoJSONPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    type: Literal["Point"] = "Point"
+    coordinates: tuple[float, float]
+
+    @field_validator("coordinates", mode="before")
+    @classmethod
+    def accept_json_coordinate_array(cls, coordinates):
+        return tuple(coordinates) if isinstance(coordinates, list) else coordinates
+
+    @field_validator("coordinates")
+    @classmethod
+    def validate_coordinates(cls, coordinates: tuple[float, float]):
+        longitude, latitude = coordinates
+        if not math.isfinite(longitude) or not -180 <= longitude <= 180:
+            raise ValueError("Point longitude must be finite and within -180 through 180")
+        if not math.isfinite(latitude) or not -90 <= latitude <= 90:
+            raise ValueError("Point latitude must be finite and within -90 through 90")
+        return coordinates
+
+
 class GeoJSONLineString(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     type: Literal["LineString"] = "LineString"
     coordinates: list[tuple[float, float]]
+
+    @field_validator("coordinates", mode="before")
+    @classmethod
+    def accept_json_coordinate_arrays(cls, coordinates):
+        if not isinstance(coordinates, list):
+            return coordinates
+        return [
+            tuple(coordinate) if isinstance(coordinate, list) else coordinate
+            for coordinate in coordinates
+        ]
+
+    @field_validator("coordinates")
+    @classmethod
+    def validate_coordinates(cls, coordinates: list[tuple[float, float]]):
+        for longitude, latitude in coordinates:
+            if not math.isfinite(longitude) or not -180 <= longitude <= 180:
+                raise ValueError("LineString longitude must be finite and within -180 through 180")
+            if not math.isfinite(latitude) or not -90 <= latitude <= 90:
+                raise ValueError("LineString latitude must be finite and within -90 through 90")
+        return coordinates
 
 
 class MapBounds(BaseModel):
@@ -141,6 +189,206 @@ class MapBounds(BaseModel):
     east: float = Field(ge=-180, le=180)
 
 
+_MAX_PLACES_VIEWPORT_SPAN_DEGREES = 10.0
+_MAX_PLACES_TARGETS = 64
+
+
+def _validate_place_kinds(kinds: list[str]) -> list[str]:
+    unknown_kinds = set(kinds) - (CATALOG_KINDS | {"boat_hire"})
+    if unknown_kinds:
+        raise ValueError(f"unknown place kinds: {sorted(unknown_kinds)}")
+    return kinds
+
+
+class PlacesQueryPolicy(BaseModel):
+    """Explicit proximity basis for a bounded places viewport query."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    basis: Literal["route", "waterway", "none"]
+    radius_m: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        le=MAX_CATALOG_RADIUS_M,
+    )
+
+    @model_validator(mode="after")
+    def validate_radius_for_basis(self):
+        if self.basis == "none" and self.radius_m is not None:
+            raise ValueError("none policy must not specify a radius")
+        if self.basis != "none" and self.radius_m is None:
+            raise ValueError(f"{self.basis} policy requires a radius")
+        return self
+
+
+class ViewportPlacesRequest(BaseModel):
+    """Strict, bounded input for a viewport places query."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    mode: Literal["viewport"]
+    kinds: list[str] = Field(min_length=1, max_length=MAX_CATALOG_KINDS)
+    bounds: MapBounds
+    text: str | None = Field(default=None, max_length=MAX_CATALOG_TEXT_LENGTH)
+    route_geometry: GeoJSONLineString | None = None
+    day_geometry: GeoJSONLineString | None = None
+    policy: PlacesQueryPolicy
+
+    @field_validator("kinds")
+    @classmethod
+    def validate_kinds(cls, kinds: list[str]) -> list[str]:
+        return _validate_place_kinds(kinds)
+
+    @field_validator("route_geometry", "day_geometry")
+    @classmethod
+    def validate_lines(cls, geometry: GeoJSONLineString | None):
+        if geometry is not None and len(geometry.coordinates) < 2:
+            raise ValueError("LineString geometry must contain at least two coordinates")
+        return geometry
+
+    @model_validator(mode="after")
+    def validate_request(self):
+        if self.bounds.south > self.bounds.north:
+            raise ValueError("bounds south must not exceed north")
+        if self.bounds.west > self.bounds.east:
+            raise ValueError("bounds west must not exceed east")
+        if (
+            max(
+                self.bounds.north - self.bounds.south,
+                self.bounds.east - self.bounds.west,
+            )
+            > _MAX_PLACES_VIEWPORT_SPAN_DEGREES
+        ):
+            raise ValueError("places viewport span exceeds the configured query budget")
+        if self.day_geometry is not None and self.route_geometry is None:
+            raise ValueError("day_geometry requires route_geometry")
+        if self.policy.basis == "route" and self.route_geometry is None:
+            raise ValueError("route policy requires route_geometry")
+        coordinate_count = sum(
+            len(geometry.coordinates)
+            for geometry in (self.route_geometry, self.day_geometry)
+            if geometry is not None
+        )
+        if coordinate_count > MAX_ROUTE_POI_COORDINATES:
+            raise ValueError(
+                "places geometry cannot contain more than "
+                f"{MAX_ROUTE_POI_COORDINATES:,} coordinates in total"
+            )
+        return self
+
+
+class NearbyTarget(BaseModel):
+    """One caller-named Point or LineString proximity target."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: str = Field(min_length=1, max_length=128)
+    geometry: GeoJSONPoint | GeoJSONLineString
+
+    @field_validator("geometry")
+    @classmethod
+    def validate_lines(cls, geometry: GeoJSONPoint | GeoJSONLineString):
+        if isinstance(geometry, GeoJSONLineString) and len(geometry.coordinates) < 2:
+            raise ValueError("LineString geometry must contain at least two coordinates")
+        return geometry
+
+
+class NearbyPlacesRequest(BaseModel):
+    """Strict, bounded input for a batch of nearby places targets."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    mode: Literal["nearby"]
+    kinds: list[str] = Field(min_length=1, max_length=MAX_CATALOG_KINDS)
+    text: str | None = Field(default=None, max_length=MAX_CATALOG_TEXT_LENGTH)
+    radius_m: FiniteFloat = Field(ge=0, le=MAX_CATALOG_RADIUS_M)
+    targets: list[NearbyTarget] = Field(min_length=1, max_length=_MAX_PLACES_TARGETS)
+
+    @field_validator("kinds")
+    @classmethod
+    def validate_kinds(cls, kinds: list[str]) -> list[str]:
+        return _validate_place_kinds(kinds)
+
+    @model_validator(mode="after")
+    def validate_targets(self):
+        target_ids = [target.id for target in self.targets]
+        if len(target_ids) != len(set(target_ids)):
+            raise ValueError("nearby target IDs must be unique")
+        coordinate_count = sum(
+            1 if isinstance(target.geometry, GeoJSONPoint) else len(target.geometry.coordinates)
+            for target in self.targets
+        )
+        if coordinate_count > MAX_ROUTE_POI_COORDINATES:
+            raise ValueError(
+                "nearby geometry cannot contain more than "
+                f"{MAX_ROUTE_POI_COORDINATES:,} coordinates in total"
+            )
+        return self
+
+
+PlacesRequest = Annotated[
+    ViewportPlacesRequest | NearbyPlacesRequest,
+    Field(discriminator="mode"),
+]
+
+
+class OsmProvenance(BaseModel):
+    """Structured identity and normalized metadata for an OSM place."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    source: Literal["osm"]
+    osm_type: Literal["node", "way", "relation"]
+    osm_id: int = Field(gt=0)
+    metadata: CatalogMetadata
+
+
+class BoatHireProvenance(BaseModel):
+    """Validated provider and location provenance for a curated hire place."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    source: Literal["boat_hire"]
+    provider_id: str
+    provider_name: str
+    location_id: str
+    location_name: str
+    provider_url: str | None = None
+    osm_url: str | None = None
+    evidence_url: str | None = None
+    booking_url: str | None = None
+
+
+PlaceProvenance = Annotated[
+    OsmProvenance | BoatHireProvenance,
+    Field(discriminator="source"),
+]
+
+
+class PlaceResponse(BaseModel):
+    """A place with source provenance and explicit nullable query context."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    kind: str = Field(min_length=1)
+    name: str | None
+    coordinate: Coordinate
+    target_id: str | None = None
+    distance_to_target_m: FiniteFloat | None = Field(default=None, ge=0)
+    distance_to_full_route_m: FiniteFloat | None = Field(default=None, ge=0)
+    distance_to_selected_geometry_m: FiniteFloat | None = Field(default=None, ge=0)
+    waterway_distance_m: FiniteFloat | None = Field(default=None, ge=0)
+    provenance: PlaceProvenance
+
+
+class PlacesResponse(BaseModel):
+    """Complete bounded places results."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    places: list[PlaceResponse]
+
+
 class RoutePoi(BaseModel):
     """A retained POI projected into the route overlay response."""
 
@@ -149,11 +397,6 @@ class RoutePoi(BaseModel):
     name: str | None
     coordinate: Coordinate
     distance_to_route_m: float = Field(ge=0)
-
-
-MAX_ROUTE_POI_COORDINATES = 10_000
-MAX_CATALOG_ROUTE_COORDINATES = MAX_ROUTE_POI_COORDINATES
-MAX_CATALOG_TEXT_LENGTH = 256
 
 
 class CatalogQueryPolicyModel(BaseModel):
