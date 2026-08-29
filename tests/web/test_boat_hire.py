@@ -13,6 +13,7 @@ from pound.web.boat_hire import (
     BOAT_HIRE_ENRICHMENT_FIELDS,
     BoatHireAnchor,
     BoatHireSeed,
+    OsmIdentity,
     load_boat_hire_seeds,
     select_boat_hire_reachability,
     snap_boat_hire_bases,
@@ -57,13 +58,54 @@ def test_loader_includes_blank_and_false_rows_but_ignores_true_rows(tmp_path: Pa
         tmp_path,
         _row(location_id="blank", exclude=""),
         _row(location_id="false", exclude="false"),
-        _row(location_id="excluded", exclude="true", latitude="", longitude=""),
+        _row(
+            location_id="excluded",
+            exclude="true",
+            latitude="not-a-coordinate",
+            source_provider_website="http://example.test/bad",
+            osm_url="http://example.test/bad",
+            evidence_url="http://example.test/bad",
+            booking_url="http://example.test/bad",
+        ),
     )
 
-    assert load_boat_hire_seeds(path) == (
-        BoatHireSeed("provider", "blank", 51.0, -1.0),
-        BoatHireSeed("provider", "false", 51.0, -1.0),
-    )
+    seeds = load_boat_hire_seeds(path)
+    assert [(s.source_provider_id, s.location_id, s.latitude, s.longitude) for s in seeds] == [
+        ("provider", "blank", 51.0, -1.0),
+        ("provider", "false", 51.0, -1.0),
+    ]
+
+
+def test_loader_rejects_unknown_record_type(tmp_path: Path):
+    with pytest.raises(ValueError, match="record_type"):
+        load_boat_hire_seeds(_csv(tmp_path, _row(record_type="company-base")))
+
+
+def test_loader_retains_public_company_base_fields(tmp_path: Path):
+    seed = load_boat_hire_seeds(
+        _csv(
+            tmp_path,
+            _row(
+                source_provider_name="Provider Ltd",
+                source_provider_website="https://provider.test/",
+                location_name="Canal Basin",
+                osm_url="https://www.openstreetmap.org/way/42",
+                evidence_url="https://provider.test/bases",
+                booking_url="https://provider.test/book",
+            ),
+        )
+    )[0]
+    assert seed.record_type == "company_base"
+    assert seed.osm_identity == OsmIdentity("way", 42)
+    assert seed.source_provider_website == "https://provider.test/"
+    assert seed.evidence_url == "https://provider.test/bases"
+    assert seed.booking_url == "https://provider.test/book"
+
+
+def test_loader_keeps_review_rows_for_overlay_but_not_public_eligibility(tmp_path: Path):
+    seed = load_boat_hire_seeds(_csv(tmp_path, _row(record_type="review_positive")))[0]
+    assert seed.record_type == "review_positive"
+    assert not seed.is_public_place
 
 
 def test_loader_accepts_evidence_only_drifters_map_row(tmp_path: Path):
@@ -76,7 +118,14 @@ def test_loader_accepts_evidence_only_drifters_map_row(tmp_path: Path):
         ),
     )
 
-    assert load_boat_hire_seeds(path) == (BoatHireSeed("drifters", "base:one", 51.0, -1.0),)
+    seeds = load_boat_hire_seeds(path)
+    assert len(seeds) == 1
+    assert seeds[0].source_provider_id == "drifters"
+    assert seeds[0].location_id == "base:one"
+    assert seeds[0].latitude == 51.0
+    assert seeds[0].longitude == -1.0
+    assert seeds[0].osm_url == ""
+    assert seeds[0].evidence_url == "https://www.drifters.co.uk/uk-canal-map/"
 
 
 @pytest.mark.parametrize(
@@ -106,10 +155,11 @@ def test_loader_accepts_distinct_pairs_that_collide_as_joined_display_strings(tm
         _row(source_provider_id="a", location_id="b/c"),
     )
 
-    assert load_boat_hire_seeds(path) == (
-        BoatHireSeed("a/b", "c", 51.0, -1.0),
-        BoatHireSeed("a", "b/c", 51.0, -1.0),
-    )
+    seeds = load_boat_hire_seeds(path)
+    assert [(s.source_provider_id, s.location_id, s.latitude, s.longitude) for s in seeds] == [
+        ("a/b", "c", 51.0, -1.0),
+        ("a", "b/c", 51.0, -1.0),
+    ]
 
 
 def test_loader_rejects_surplus_row_cells(tmp_path: Path):
@@ -171,7 +221,13 @@ def test_loader_selects_review_positive_row_regardless_of_provenance(tmp_path: P
         _row(record_type="review_positive", enrichment_status="arbitrary"),
     )
 
-    assert load_boat_hire_seeds(path) == (BoatHireSeed("provider", "base:one", 51.0, -1.0),)
+    seeds = load_boat_hire_seeds(path)
+    assert len(seeds) == 1
+    assert seeds[0].record_type == "review_positive"
+    assert seeds[0].source_provider_id == "provider"
+    assert seeds[0].location_id == "base:one"
+    assert seeds[0].latitude == 51.0
+    assert seeds[0].longitude == -1.0
 
 
 def _seed(name: str, latitude: float = 51.0) -> BoatHireSeed:
