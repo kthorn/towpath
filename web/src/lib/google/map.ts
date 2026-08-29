@@ -71,6 +71,7 @@ export interface MapFacade {
     strokeColor: string;
     strokeWeight: number;
     strokeOpacity?: number;
+    zIndex?: number;
   }): PolylineInstance;
   fitBounds(map: MapInstance, points: GoogleLatLngLiteral[]): void;
   getBounds(map: MapInstance): MapBounds | undefined;
@@ -349,9 +350,24 @@ export function createGoogleMapView(
   infoWindowListeners.push(infoWindow.addListener('closeclick', () => {
     infoWindowOpen = false;
   }));
-  let canalRoute: PolylineInstance | undefined;
+  const canalRoute: PolylineInstance[] = [];
   let canalPath: GoogleLatLngLiteral[] = [];
-  let highlightedDay: PolylineInstance | undefined;
+  const highlightedDay: PolylineInstance[] = [];
+
+  const removePolylines = (lines: PolylineInstance[]) => {
+    for (const line of lines.splice(0)) line.setMap(null);
+  };
+  const casedLine = (
+    path: GoogleLatLngLiteral[],
+    color: string,
+    weight: number,
+    zIndex: number,
+  ) => [
+    facade.createPolyline({
+      map, path, strokeColor: '#e0f2fe', strokeWeight: weight + 4, zIndex,
+    }),
+    facade.createPolyline({ map, path, strokeColor: color, strokeWeight: weight, zIndex: zIndex + 1 }),
+  ];
 
   const removeTooltip = (tooltip: HTMLElement) => {
     tooltip.remove();
@@ -419,8 +435,7 @@ export function createGoogleMapView(
     removeTooltips();
   };
   const clearDay = () => {
-    highlightedDay?.setMap(null);
-    highlightedDay = undefined;
+    removePolylines(highlightedDay);
     removeMarkers(dayWaypointMarkers);
   };
   const clearLandSlot = (slot: EndpointSlot) => {
@@ -462,29 +477,21 @@ export function createGoogleMapView(
       }
     },
     canal(geometry) {
-      canalRoute?.setMap(null);
-      canalRoute = undefined;
+      removePolylines(canalRoute);
       canalPath = [];
       element.removeAttribute('data-canal-overlay');
       if (geometry) {
         canalPath = geoJsonToGooglePath(geometry);
-        canalRoute = facade.createPolyline({ map, path: canalPath, strokeColor: '#0891b2', strokeWeight: 6 });
+        canalRoute.push(...casedLine(canalPath, '#0369a1', 7, 3));
         element.setAttribute('data-canal-overlay', 'visible');
         facade.fitBounds(map, canalPath);
       }
     },
     network(lines) {
-      for (const line of networkLines) line.setMap(null);
-      networkLines.length = 0;
+      removePolylines(networkLines);
       networkGeometries = lines;
       for (const line of lines) {
-        networkLines.push(facade.createPolyline({
-          map,
-          path: geoJsonToGooglePath(line),
-          strokeColor: '#0e7490',
-          strokeWeight: 3,
-          strokeOpacity: 0.55,
-        }));
+        networkLines.push(...casedLine(geoJsonToGooglePath(line), '#0284c7', 4, 1));
       }
     },
     hireBases(bases) {
@@ -567,7 +574,7 @@ export function createGoogleMapView(
         return;
       }
       const path = geoJsonToGooglePath(dayGeometry.geometry);
-      highlightedDay = facade.createPolyline({ map, path, strokeColor: '#0891b2', strokeWeight: 8 });
+      highlightedDay.push(...casedLine(path, '#0ea5e9', 9, 5));
       const points = [toGoogleLatLng(dayGeometry.start), toGoogleLatLng(dayGeometry.end)];
       dayWaypointMarkers.push(
         facade.createMarker({ map, position: points[0], title: `Day ${dayGeometry.day} start` }),
@@ -631,11 +638,9 @@ export function createGoogleMapView(
       clearDay();
       clearLandSlot('origin');
       clearLandSlot('destination');
-      for (const line of networkLines) line.setMap(null);
-      networkLines.length = 0;
+      removePolylines(networkLines);
       networkGeometries = [];
-      canalRoute?.setMap(null);
-      canalRoute = undefined;
+      removePolylines(canalRoute);
     },
   };
 }

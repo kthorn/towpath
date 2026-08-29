@@ -45,3 +45,10 @@ test('cancel returns to planner without saving a changed draft', async ({ page }
   await page.getByRole('link', { name: 'Settings' }).click();
   await expect(page.getByLabel('Boat length (m)')).toHaveValue('');
 });
+
+test('Enter in cruising time submits the route form', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('Days').fill('7');
+  await page.getByLabel('Days').press('Enter');
+  await expect(page.locator('#route-actions').getByRole('alert')).toBeVisible();
+});

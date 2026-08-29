@@ -403,6 +403,31 @@ describe("trip planning interface", () => {
 		});
 	});
 
+	it("places cruising-time inputs above the map while keeping route actions with the planner", () => {
+		render(App, { props: { dependencies: setup().dependencies } });
+		const main = screen.getByRole("main");
+		const schedule = screen.getByRole("group", { name: "Cruising time" });
+		const map = main.querySelector(".map-column");
+		const planner = main.querySelector(".planner-column");
+
+		expect(schedule.parentElement).toBe(main);
+		expect(schedule.compareDocumentPosition(map!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+		expect(schedule).not.toContainElement(
+			screen.getByRole("button", { name: /plan canal route/i }),
+		);
+		expect(planner).toContainElement(
+			screen.getByRole("button", { name: /plan canal route/i }),
+		);
+		const days = screen.getByLabelText('Days');
+		const hours = screen.getByLabelText('Hours per day');
+		expect(days).toHaveAttribute('form', 'route-actions');
+		expect(hours).toHaveAttribute('form', 'route-actions');
+		expect(screen.getByRole('button', { name: 'Plan canal route' }).closest('form')).toHaveAttribute(
+			'id',
+			'route-actions',
+		);
+	});
+
 	it("defaults and resets the required schedule controls", async () => {
 		const { dependencies, store, selects } = setup();
 		render(App, { props: { dependencies } });

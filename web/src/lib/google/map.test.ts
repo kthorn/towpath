@@ -169,13 +169,15 @@ describe('Google map adapter', () => {
     expect(element).not.toHaveAttribute('data-origin-land-overlay');
 
     expect(polylines[0].setMap).toHaveBeenCalledWith(null);
-    expect(polylines[1].setMap).not.toHaveBeenCalled();
-    expect(polylines[1].options.path).toEqual([{ lat: 52.5, lng: -1.5 }, { lat: 52.6, lng: -1.6 }]);
+    expect(polylines[1].options).toMatchObject({ strokeColor: '#e0f2fe', strokeWeight: 11, zIndex: 3 });
+    expect(polylines[2].options).toMatchObject({ strokeColor: '#0369a1', strokeWeight: 7, zIndex: 4 });
+    expect(polylines[2].options.path).toEqual([{ lat: 52.5, lng: -1.5 }, { lat: 52.6, lng: -1.6 }]);
     expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [{ lat: 52.5, lng: -1.5 }, { lat: 52.6, lng: -1.6 }]);
 
     view.canal(null);
     expect(element).not.toHaveAttribute('data-canal-overlay');
     expect(polylines[1].setMap).toHaveBeenCalledWith(null);
+    expect(polylines[2].setMap).toHaveBeenCalledWith(null);
   });
 
   it('draws, replaces, fits, and destroys full network polylines', () => {
@@ -189,14 +191,15 @@ describe('Google map adapter', () => {
     ];
 
     view.network(lines);
-    expect(facade.createPolyline).toHaveBeenCalledTimes(2);
-    expect(polylines[0].options).toMatchObject({ strokeColor: '#0e7490', strokeWeight: 3, strokeOpacity: 0.55 });
-    expect(polylines[1].options).toMatchObject({ strokeColor: '#0e7490', strokeWeight: 3, strokeOpacity: 0.55 });
+    expect(facade.createPolyline).toHaveBeenCalledTimes(4);
+    expect(polylines[0].options).toMatchObject({ strokeColor: '#e0f2fe', strokeWeight: 8, zIndex: 1 });
+    expect(polylines[1].options).toMatchObject({ strokeColor: '#0284c7', strokeWeight: 4, zIndex: 2 });
+    expect(polylines[2].options).toMatchObject({ strokeColor: '#e0f2fe', strokeWeight: 8, zIndex: 1 });
+    expect(polylines[3].options).toMatchObject({ strokeColor: '#0284c7', strokeWeight: 4, zIndex: 2 });
 
     view.network(replacement);
-    expect(polylines[0].setMap).toHaveBeenCalledWith(null);
-    expect(polylines[1].setMap).toHaveBeenCalledWith(null);
-    expect(facade.createPolyline).toHaveBeenCalledTimes(3);
+    expect(polylines.slice(0, 4).every((line) => line.setMap.mock.calls.some(([map]) => map === null))).toBe(true);
+    expect(facade.createPolyline).toHaveBeenCalledTimes(6);
 
     view.fitNetwork();
     expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [
@@ -205,7 +208,8 @@ describe('Google map adapter', () => {
     ]);
 
     view.destroy();
-    expect(polylines[2].setMap).toHaveBeenCalledWith(null);
+    expect(polylines[4].setMap).toHaveBeenCalledWith(null);
+    expect(polylines[5].setMap).toHaveBeenCalledWith(null);
   });
 
   it('fits hire bases when the network has no lines', () => {
@@ -295,7 +299,8 @@ describe('Google map adapter', () => {
 
     expect(markers.some((marker) => marker.title === 'The Pub')).toBe(true);
     expect(markers.some((marker) => marker.title === 'Lock (approximate) — day 1')).toBe(true);
-    expect(polylines.at(-1)?.options.strokeWeight).toBe(8);
+    expect(polylines[0].options).toMatchObject({ strokeColor: '#e0f2fe', strokeWeight: 13, zIndex: 5 });
+    expect(polylines[1].options).toMatchObject({ strokeColor: '#0ea5e9', strokeWeight: 9, zIndex: 6 });
     expect(facade.fitBounds).toHaveBeenCalled();
   });
 
@@ -320,7 +325,8 @@ describe('Google map adapter', () => {
     ]);
 
     view.day(null);
-    expect(polylines.at(-1)?.setMap).toHaveBeenCalledWith(null);
+    expect(polylines[2].setMap).toHaveBeenCalledWith(null);
+    expect(polylines[3].setMap).toHaveBeenCalledWith(null);
     expect(facade.fitBounds).toHaveBeenLastCalledWith(expect.anything(), [
       { lat: 51, lng: -1 },
       { lat: 51.5, lng: -1.5 },

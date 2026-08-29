@@ -62,8 +62,32 @@ main {
 	gap: 1rem;
 }
 .planner-page > h1,
-.save-status {
+.save-status,
+.schedule-bar {
 	grid-column: 1 / -1;
+}
+.schedule-bar {
+	margin: 0;
+	padding: 1rem;
+	background: white;
+	border: 1px solid #dbe2dd;
+	border-radius: 12px;
+	box-shadow: 0 2px 10px #173c300c;
+}
+.schedule-bar legend {
+	padding: 0;
+	font-size: 1.05rem;
+	font-weight: 700;
+}
+.schedule-content {
+	display: grid;
+	grid-template-columns: minmax(240px, 1fr) minmax(300px, 0.7fr);
+	gap: 1rem;
+	align-items: end;
+}
+.schedule-content p {
+	margin: 0;
+	color: #536861;
 }
 .settings-page {
 	max-width: 760px;
@@ -359,6 +383,7 @@ footer {
 	.planner-column {
 		grid-row: auto;
 	}
+	.schedule-content,
 	.constraint-grid {
 		grid-template-columns: 1fr;
 	}
