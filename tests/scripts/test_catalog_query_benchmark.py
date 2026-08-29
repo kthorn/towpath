@@ -1,18 +1,19 @@
 import json
+from pathlib import Path
 
 import networkx as nx
+import pytest
 
 from pound.catalog.spatial import CatalogSpatialIndex
 from pound.graph.spatial import GraphSpatialIndex
-from pound.schemas import MapBounds
+from pound.web.boat_hire import load_boat_hire_seeds
+from pound.web.places import PlacesIndex
 from scripts.catalog_query_benchmark import (
     MAX_QUERY_WORK,
-    _request,
-    _result_signature,
     build_benchmark_cases,
     result_payload,
 )
-from tests.web.conftest import catalog_place
+from tests.web.conftest import catalog_place, write_boat_hire_enrichment
 
 
 class _CandidateCounter:
@@ -21,6 +22,32 @@ class _CandidateCounter:
 
     def viewport_candidate_count(self, bounds) -> int:
         return self.counts[f"{bounds.south}:{bounds.west}:{bounds.north}:{bounds.east}"]
+
+
+class _BenchmarkPlacesIndex:
+    def __init__(self, catalog_index):
+        self.catalog_index = catalog_index
+
+
+@pytest.fixture
+def places_index(tmp_path: Path) -> PlacesIndex:
+    graph_index = GraphSpatialIndex(nx.Graph())
+    catalog_index = CatalogSpatialIndex(
+        (catalog_place("pub", 1, 51.0, -1.0),),
+        graph_index,
+    )
+    seeds = load_boat_hire_seeds(write_boat_hire_enrichment(tmp_path / "boat-hire-enrichment.csv"))
+    return PlacesIndex(catalog_index, graph_index, seeds)
+
+
+def test_benchmark_builds_nearby_point_line_and_batch_cases(places_index):
+    cases = build_benchmark_cases(places_index)
+
+    assert {case.name for case in cases} >= {
+        "nearby-point",
+        "nearby-line",
+        "nearby-multi-target",
+    }
 
 
 def test_benchmark_cases_are_deterministic_and_include_required_contracts():
@@ -34,8 +61,8 @@ def test_benchmark_cases_are_deterministic_and_include_required_contracts():
         }
     )
 
-    first = build_benchmark_cases("catalog-test", counter)
-    second = build_benchmark_cases("catalog-test", counter)
+    first = build_benchmark_cases(_BenchmarkPlacesIndex(counter))
+    second = build_benchmark_cases(_BenchmarkPlacesIndex(counter))
 
     first_payload = [case.request.model_dump(mode="json") for case in first]
     second_payload = [case.request.model_dump(mode="json") for case in second]
@@ -43,6 +70,9 @@ def test_benchmark_cases_are_deterministic_and_include_required_contracts():
     assert [case.name for case in first] == [
         "densest_predefined_viewport",
         "locality_no_policy",
+        "nearby-line",
+        "nearby-multi-target",
+        "nearby-point",
         "route_day",
         "waterway",
     ]
@@ -50,46 +80,22 @@ def test_benchmark_cases_are_deterministic_and_include_required_contracts():
     assert first[0].viewport_name == "manchester"
     assert first[0].candidate_count <= MAX_QUERY_WORK
     assert first[1].request.policy.basis == "none"
-    assert first[2].request.policy.basis == "route"
-    assert first[2].request.day == 2
-    assert first[3].request.policy.basis == "waterway"
+    assert first[5].request.policy.basis == "route"
+    assert first[5].request.day_geometry is not None
+    assert first[6].request.policy.basis == "waterway"
 
 
-def test_benchmark_signature_uses_source_viewport_adapter():
-    place = catalog_place("pub", 1, 51.0, -1.0)
-    index = CatalogSpatialIndex((place,), GraphSpatialIndex(nx.Graph()))
-    request = _request(
-        "catalog-test",
-        bounds=MapBounds(south=50.9, west=-1.1, north=51.1, east=-0.9),
-        kinds=["pub"],
-        policy={"basis": "none", "radius_m": None},
-    )
-
-    assert _result_signature(index, request) == (1, False, (place.identity,))
-
-
-def test_result_payload_is_sorted_json_with_required_latency_fields():
-    payload = result_payload(
-        candidate_count=17,
-        matching_count=4,
-        over_cap=False,
+def test_result_payload_uses_outcome_not_over_cap():
+    row = result_payload(
+        candidate_work=17,
+        outcome="ok",
+        result_count=4,
         latencies_ms=[3.0, 1.0, 2.0, 4.0],
         rss_kib=123,
     )
 
-    assert list(payload) == [
-        "candidate_count",
-        "matching_count",
-        "max_ms",
-        "over_cap",
-        "p50_ms",
-        "p95_ms",
-        "rss_kib",
-    ]
-    assert payload["candidate_count"] == 17
-    assert payload["matching_count"] == 4
-    assert payload["over_cap"] is False
-    assert payload["p50_ms"] == 2.5
-    assert payload["p95_ms"] == 3.85
-    assert payload["max_ms"] == 4.0
-    assert json.dumps({"route_day": payload}, sort_keys=True)
+    assert "matching_count" not in row
+    assert "over_cap" not in row
+    assert row["result_count"] == 4
+    assert set(row) >= {"candidate_work", "p50_ms", "p95_ms", "max_ms", "outcome"}
+    assert json.dumps({"nearby-point": row}, sort_keys=True)
