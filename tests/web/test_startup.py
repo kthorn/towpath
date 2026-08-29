@@ -9,15 +9,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from pound.catalog.artifact import prepare_catalog, write_catalog
-from pound.catalog.spatial import (
-    MAX_CATALOG_QUERY_WORK,
-    MAX_CATALOG_VIEWPORT_SPAN_DEGREES,
-    CatalogSpatialIndex,
-)
+from pound.catalog.spatial import CatalogSpatialIndex
 from pound.graph.artifact import InvalidArtifactError, load_artifact, save_artifact
 from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.app import _load_web_artifact, create_app
 from pound.web.config import WebSettings
+from pound.web.places import MAX_PLACES_QUERY_WORK, MAX_PLACES_VIEWPORT_SPAN_DEGREES
 from tests.web.conftest import artifact_metadata, catalog_place, write_boat_hire_enrichment
 
 
@@ -101,11 +98,11 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
         ("minimum_candidate_spacing_m", -0.1),
         ("catalog_max_kinds", 0),
         ("catalog_max_viewport_span_deg", 0),
-        ("catalog_max_viewport_span_deg", MAX_CATALOG_VIEWPORT_SPAN_DEGREES + 0.1),
+        ("catalog_max_viewport_span_deg", MAX_PLACES_VIEWPORT_SPAN_DEGREES + 0.1),
         ("catalog_max_radius_m", -1),
         ("catalog_max_route_vertices", 0),
         ("catalog_query_work_budget", 0),
-        ("catalog_query_work_budget", MAX_CATALOG_QUERY_WORK + 1),
+        ("catalog_query_work_budget", MAX_PLACES_QUERY_WORK + 1),
         ("places_max_targets", 0),
         ("places_max_targets", 65),
     ],

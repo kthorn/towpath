@@ -6,9 +6,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pound.catalog.manifest import MAX_CATALOG_KINDS, MAX_CATALOG_RADIUS_M
-from pound.catalog.spatial import MAX_CATALOG_QUERY_WORK, MAX_CATALOG_VIEWPORT_SPAN_DEGREES
 from pound.schemas import MAX_CATALOG_ROUTE_COORDINATES
-from pound.web.places import MAX_PLACES_TARGETS
+from pound.web.places import (
+    MAX_PLACES_QUERY_WORK,
+    MAX_PLACES_TARGETS,
+    MAX_PLACES_VIEWPORT_SPAN_DEGREES,
+)
 
 MAX_NETWORK_TRAVEL_MINUTES = 10_080
 
@@ -25,10 +28,10 @@ class WebSettings:
     minimum_candidate_spacing_m: float = 250.0
     catalog_path: Path | None = None
     catalog_max_kinds: int = MAX_CATALOG_KINDS
-    catalog_max_viewport_span_deg: float = MAX_CATALOG_VIEWPORT_SPAN_DEGREES
+    catalog_max_viewport_span_deg: float = MAX_PLACES_VIEWPORT_SPAN_DEGREES
     catalog_max_radius_m: float = MAX_CATALOG_RADIUS_M
     catalog_max_route_vertices: int = MAX_CATALOG_ROUTE_COORDINATES
-    catalog_query_work_budget: int = MAX_CATALOG_QUERY_WORK
+    catalog_query_work_budget: int = MAX_PLACES_QUERY_WORK
     places_max_targets: int = MAX_PLACES_TARGETS
 
     def __post_init__(self) -> None:
@@ -41,11 +44,11 @@ class WebSettings:
         if not 0 < self.catalog_max_kinds <= MAX_CATALOG_KINDS:
             raise ValueError(f"catalog_max_kinds must be from 1 through {MAX_CATALOG_KINDS}")
         if not math.isfinite(self.catalog_max_viewport_span_deg) or not (
-            0 < self.catalog_max_viewport_span_deg <= MAX_CATALOG_VIEWPORT_SPAN_DEGREES
+            0 < self.catalog_max_viewport_span_deg <= MAX_PLACES_VIEWPORT_SPAN_DEGREES
         ):
             raise ValueError(
                 "catalog_max_viewport_span_deg must be finite and from 0 through "
-                f"{MAX_CATALOG_VIEWPORT_SPAN_DEGREES:g}"
+                f"{MAX_PLACES_VIEWPORT_SPAN_DEGREES:g}"
             )
         if not math.isfinite(self.catalog_max_radius_m) or not (
             0 <= self.catalog_max_radius_m <= MAX_CATALOG_RADIUS_M
@@ -57,9 +60,9 @@ class WebSettings:
             raise ValueError(
                 "catalog_max_route_vertices must be positive and within the geometry ceiling"
             )
-        if not 0 < self.catalog_query_work_budget <= MAX_CATALOG_QUERY_WORK:
+        if not 0 < self.catalog_query_work_budget <= MAX_PLACES_QUERY_WORK:
             raise ValueError(
-                f"catalog_query_work_budget must be from 1 through {MAX_CATALOG_QUERY_WORK}"
+                f"catalog_query_work_budget must be from 1 through {MAX_PLACES_QUERY_WORK}"
             )
         if not 0 < self.places_max_targets <= MAX_PLACES_TARGETS:
             raise ValueError(f"places_max_targets must be from 1 through {MAX_PLACES_TARGETS}")
