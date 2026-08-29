@@ -348,6 +348,7 @@ class BoatHireBase(BaseModel):
 class CanalNetworkResponse(BaseModel):
     artifact_revision: str
     lines: list[GeoJSONLineString]
+    highlight_lines: list[GeoJSONLineString]
     bases: list[BoatHireBase]
 
 

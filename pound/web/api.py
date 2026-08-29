@@ -50,6 +50,7 @@ class CanalNetworkRequest(BaseModel):
     boat_draft_m: FiniteFloat | None = Field(gt=0, default=None)
     boat_height_m: FiniteFloat | None = Field(gt=0, default=None)
     movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
+    selected_base_identity: str | None = Field(default=None, min_length=1)
 
 
 class CanalRouteRequest(BaseModel):
@@ -102,6 +103,21 @@ def canal_network(body: CanalNetworkRequest, request: Request) -> CanalNetworkRe
             fields=["days", "hours_per_day"],
         )
 
+    selected_anchors = ()
+    if body.selected_base_identity is not None:
+        selected_anchors = tuple(
+            anchor
+            for anchor in request.app.state.boat_hire_anchors
+            if anchor.seed.identity == body.selected_base_identity
+        )
+        if not selected_anchors:
+            raise _error(
+                422,
+                code="selected_base_not_found",
+                message="The selected boat-hire base is unavailable.",
+                fields=["selected_base_identity"],
+            )
+
     overlay_graph = select_boat_hire_reachability(
         request.app.state.graph,
         request.app.state.boat_hire_anchors,
@@ -114,6 +130,25 @@ def canal_network(body: CanalNetworkRequest, request: Request) -> CanalNetworkRe
     )
     try:
         lines = prepare_network_geometry(overlay_graph)
+        if selected_anchors:
+            highlight_lines = list(
+                prepare_network_geometry(
+                    select_boat_hire_reachability(
+                        request.app.state.graph,
+                        selected_anchors,
+                        cutoff_min=travel_minutes,
+                        boat_length_m=body.boat_length_m,
+                        boat_beam_m=body.boat_beam_m,
+                        boat_draft_m=body.boat_draft_m,
+                        boat_height_m=body.boat_height_m,
+                        movable_bridge_delay_min=resolve_movable_bridge_delay(
+                            body.movable_bridge_delay_min
+                        ),
+                    )
+                )
+            )
+        else:
+            highlight_lines = []
     except Exception as exc:
         raise _error(
             503,
@@ -133,6 +168,7 @@ def canal_network(body: CanalNetworkRequest, request: Request) -> CanalNetworkRe
     return CanalNetworkResponse(
         artifact_revision=request.app.state.artifact_revision,
         lines=list(lines),
+        highlight_lines=highlight_lines,
         bases=bases,
     )
 
