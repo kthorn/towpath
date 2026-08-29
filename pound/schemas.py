@@ -16,12 +16,12 @@ class CanalConstraints(BaseModel):
     start: str
     end: str | None = None  # None => ring / round trip
     days: int | None = Field(gt=0, default=None)  # None => infer from hours_per_day (no cap)
-    hours_per_day: float = Field(gt=0, default=6.0)
+    hours_per_day: FiniteFloat = Field(gt=0, default=6.0)
     movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
-    boat_length_m: float | None = Field(gt=0, default=None)
-    boat_beam_m: float | None = Field(gt=0, default=None)
-    boat_draft_m: float | None = Field(gt=0, default=None)
-    boat_height_m: float | None = Field(gt=0, default=None)
+    boat_length_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_beam_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_draft_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_height_m: FiniteFloat | None = Field(gt=0, default=None)
     amenity_prefs: list[str] = []  # ["pub", "water_point", "shop", ...]
 
 
@@ -42,12 +42,12 @@ class ResolvedConstraints(BaseModel):
     start_uid: int
     end_uid: int
     days: int | None = Field(gt=0, default=None)  # None => infer from hours_per_day (no cap)
-    hours_per_day: float = Field(gt=0, default=6.0)
+    hours_per_day: FiniteFloat = Field(gt=0, default=6.0)
     movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
-    boat_length_m: float | None = Field(gt=0, default=None)
-    boat_beam_m: float | None = Field(gt=0, default=None)
-    boat_draft_m: float | None = Field(gt=0, default=None)
-    boat_height_m: float | None = Field(gt=0, default=None)
+    boat_length_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_beam_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_draft_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_height_m: FiniteFloat | None = Field(gt=0, default=None)
 
 
 class Amenity(BaseModel):
@@ -338,9 +338,17 @@ class RouteLock(BaseModel):
     approximate: bool = False
 
 
+class BoatHireBase(BaseModel):
+    identity: str
+    operator: str
+    name: str
+    coordinate: Coordinate
+
+
 class CanalNetworkResponse(BaseModel):
     artifact_revision: str
     lines: list[GeoJSONLineString]
+    bases: list[BoatHireBase]
 
 
 class CanalRouteResponse(BaseModel):

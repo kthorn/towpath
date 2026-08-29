@@ -20,7 +20,11 @@ from networkx.exception import NetworkXNoPath
 
 from pound.graph.build import _haversine_m, _node_key
 from pound.graph.locks import LOCK_SOURCE_TOLERANCE_M, project_point_to_edge
-from pound.route.cost import is_eligible, resolve_movable_bridge_delay, time_min
+from pound.route.cost import (
+    is_eligible,
+    resolve_movable_bridge_delay,
+    traversal_time_min,
+)
 from pound.route.resolve import resolve_place
 from pound.schemas import (
     CanalConstraints,
@@ -77,11 +81,9 @@ def plan_canal_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> Ca
 
 def _traversal_time_min(graph, u, v, edge, bridge_delay_min: float) -> float:
     # Charge bridge IDs on the edge or arrived-at node; the starting node is exempt.
-    bridge_ids = set(edge["movable_bridge_ids"]) | set(graph.nodes[v]["movable_bridge_ids"])
-    return time_min(
-        edge["length_m"],
-        edge.get("locks", 0),
-        movable_bridges=len(bridge_ids),
+    return traversal_time_min(
+        edge,
+        graph.nodes[v]["movable_bridge_ids"],
         movable_bridge_delay_min=bridge_delay_min,
     )
 
@@ -128,6 +130,7 @@ def _access_warnings(segments: list[RouteAccessSegment]) -> list[str]:
                 "verify local access."
             )
     return warnings
+
 
 def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _ComputedRoute:
     """Compute the public route result together with its selected graph path."""

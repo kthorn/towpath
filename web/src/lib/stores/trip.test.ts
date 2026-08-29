@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PoundApiError } from '../api';
 import type {
+  BoatHireBase,
   CanalCandidatesResponse,
+  CanalNetworkRequest,
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
@@ -25,6 +27,17 @@ const response = (revision: string, uids: number[]): CanalCandidatesResponse => 
 });
 const land: LandRoute = { path: [{ lat: 1, lon: 2 }], durationSeconds: 20, distanceMeters: 30 };
 const canal: CanalRouteResponse = { route: { start: 'a', end: 'b', is_ring: false, legs: [], days: [], total_km: 1, total_locks: 0, total_minutes: 2, amenities: [], warnings: [], access_segments: [], graph_source_date: 'today' }, geometry: { type: 'LineString', coordinates: [[-1, 51], [-2, 52]] } };
+const networkRequest = (days = 7): CanalNetworkRequest => ({
+  days, hours_per_day: 6,
+  boat_length_m: null, boat_beam_m: null, boat_draft_m: null,
+  boat_height_m: null, movable_bridge_delay_min: null,
+});
+const hireBase = (identity = 'base-one'): BoatHireBase => ({
+  identity, operator: 'Canal Holidays', name: identity, coordinate: { lat: 51, lon: -1 },
+});
+const networkResponse = (identity = 'base-one', lines = [{
+  type: 'LineString' as const, coordinates: [[-1, 51], [-2, 52]] as [number, number][],
+}]): CanalNetworkResponse => ({ artifact_revision: 'r1', lines, bases: [hireBase(identity)] });
 const catalogPlace = (identity: string, kind: string) => ({
   identity, kind, name: kind, coordinate: { lat: 51.2, lon: -1.2 },
   waterway_distance_m: 20, distance_to_full_route_m: 30, distance_to_selected_geometry_m: null, distance_to_segment_m: null,
@@ -34,7 +47,7 @@ const catalogPlace = (identity: string, kind: string) => ({
 
 function viewportMap(setCallback: (callback: (bounds: MapBounds) => void) => void): MapView {
   return {
-    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), catalogPlaces: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), catalogPlaces: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
     clearLand: vi.fn(), closeInfoWindow: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()),
     onViewportIdle: vi.fn((callback) => { setCallback(callback); return vi.fn(); }),
   };
@@ -44,16 +57,13 @@ function setup(options: {
   matrices?: TransferResult[][];
   routeError?: Error;
   map?: MapView;
-  canalNetwork?: () => Promise<CanalNetworkResponse>;
+  canalNetwork?: (request: CanalNetworkRequest) => Promise<CanalNetworkResponse>;
   routePois?: (request: unknown) => Promise<RoutePoisResponse>;
   catalogPlaces?: (request: unknown) => Promise<CatalogPlacesResponse>;
   catalogHealth?: () => Promise<{ status: string; artifact_revision: string; catalog_revision: string | null; catalog_status: 'available' | 'unavailable' }>;
 } = {}) {
   const canalCandidates = vi.fn(async ({ lat }: LatLon) => lat < 52 ? response('r1', [1, 2]) : response('r1', [3, 4]));
-  const canalNetwork = options.canalNetwork ?? vi.fn(async () => ({
-    artifact_revision: 'r1',
-    lines: [{ type: 'LineString' as const, coordinates: [[-1, 51], [-2, 52]] as [number, number][] }],
-  }));
+  const canalNetwork = options.canalNetwork ?? vi.fn(async (_request: CanalNetworkRequest) => networkResponse());
   const canalRoute = vi.fn(async (_request: CanalRouteRequest) => canal);
   const routePois = options.routePois ?? vi.fn(async () => ({ pois: [], zoom_in_required: false, matching_count: 0, day: null }));
   const catalogPlaces = options.catalogPlaces ?? vi.fn(async () => ({ catalog_revision: 'c1', places: [], matching_count: 0, over_cap: false, day: null }));
@@ -72,54 +82,199 @@ function setup(options: {
 }
 
 describe('trip store', () => {
-  it('loads and fits the network once when a map attaches', async () => {
-    const network = { artifact_revision: 'r1', lines: [{ type: 'LineString' as const, coordinates: [[-1, 51], [-2, 52]] as [number, number][] }] };
-    const map = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn() } as unknown as MapView;
-    const { store } = setup({ map, canalNetwork: vi.fn(async () => network) });
+  it('posts the current request and paints lines and bases when a map attaches', async () => {
+    const request = networkRequest();
+    const network = networkResponse();
+    const map = viewportMap(() => {});
+    const canalNetwork = vi.fn(async (_request: CanalNetworkRequest) => network);
+    const { store } = setup({ canalNetwork });
 
+    store.setNetworkRequest(request);
+    expect(canalNetwork).not.toHaveBeenCalled();
     store.setMapView(map);
+
     await vi.waitFor(() => expect(map.network).toHaveBeenCalledWith(network.lines));
+    expect(canalNetwork).toHaveBeenCalledOnce();
+    expect(canalNetwork).toHaveBeenCalledWith(request);
+    expect(map.hireBases).toHaveBeenCalledWith(network.bases);
     expect(map.fitNetwork).toHaveBeenCalledOnce();
+    expect(get(store)).toMatchObject({ hasNetworkOverlay: true, networkError: null });
   });
 
-  it('draws deferred network lines without refitting after a route fits the map', async () => {
-    let resolveNetwork!: (network: CanalNetworkResponse) => void;
-    const network = { artifact_revision: 'r1', lines: [{ type: 'LineString' as const, coordinates: [[-1, 51], [-2, 52]] as [number, number][] }] };
-    const map = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn(), canal: vi.fn() } as unknown as MapView;
-    const canalNetwork = vi.fn(() => new Promise<CanalNetworkResponse>((resolve) => { resolveNetwork = resolve; }));
-    const { store } = setup({ map, canalNetwork });
+  it('posts once per current generation and ignores older network responses', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveOlder!: (value: CanalNetworkResponse) => void;
+      let resolveNewer!: (value: CanalNetworkResponse) => void;
+      const older = networkResponse('older');
+      const newer = networkResponse('newer', [{
+        type: 'LineString' as const, coordinates: [[-3, 53], [-4, 54]] as [number, number][],
+      }]);
+      const canalNetwork = vi.fn()
+        .mockImplementationOnce(() => new Promise<CanalNetworkResponse>((resolve) => { resolveOlder = resolve; }))
+        .mockImplementationOnce(() => new Promise<CanalNetworkResponse>((resolve) => { resolveNewer = resolve; }));
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork });
+      const first = networkRequest(7);
+      const second = networkRequest(8);
 
-    store.setMapView(map);
-    await vi.waitFor(() => expect(canalNetwork).toHaveBeenCalledOnce());
+      store.setMapView(map);
+      store.setNetworkRequest(first);
+      expect(canalNetwork).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledOnce();
+      store.setNetworkRequest(second);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+      expect(canalNetwork).toHaveBeenNthCalledWith(1, first);
+      expect(canalNetwork).toHaveBeenNthCalledWith(2, second);
+
+      resolveNewer(newer);
+      await vi.waitFor(() => expect(map.network).toHaveBeenLastCalledWith(newer.lines));
+      resolveOlder(older);
+      await Promise.resolve();
+
+      expect(map.network).toHaveBeenCalledTimes(1);
+      expect(map.hireBases).toHaveBeenLastCalledWith(newer.bases);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not draw to a detached map and replays a matching cached payload on attach', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveNetwork!: (value: CanalNetworkResponse) => void;
+      const network = networkResponse();
+      const canalNetwork = vi.fn(() => new Promise<CanalNetworkResponse>((resolve) => { resolveNetwork = resolve; }));
+      const firstMap = viewportMap(() => {});
+      const secondMap = viewportMap(() => {});
+      const { store } = setup({ canalNetwork });
+
+      store.setMapView(firstMap);
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledOnce();
+      store.setMapView(undefined);
+      resolveNetwork(network);
+      await Promise.resolve();
+
+      expect(firstMap.network).not.toHaveBeenCalled();
+      expect(firstMap.hireBases).not.toHaveBeenCalled();
+      expect(firstMap.fitNetwork).not.toHaveBeenCalled();
+      store.setMapView(secondMap);
+      await vi.waitFor(() => expect(secondMap.network).toHaveBeenCalledWith(network.lines));
+      expect(canalNetwork).toHaveBeenCalledOnce();
+      expect(secondMap.hireBases).toHaveBeenCalledWith(network.bases);
+      expect(secondMap.fitNetwork).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fetches a changed request when a map attaches after being detached', async () => {
+    const first = networkResponse('first');
+    const second = networkResponse('second');
+    const firstMap = viewportMap(() => {});
+    const secondMap = viewportMap(() => {});
+    const canalNetwork = vi.fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
+    const { store } = setup({ canalNetwork });
+
+    store.setNetworkRequest(networkRequest(7));
+    store.setMapView(firstMap);
+    await vi.waitFor(() => expect(firstMap.network).toHaveBeenCalledWith(first.lines));
+    store.setMapView(undefined);
+    store.setNetworkRequest(networkRequest(8));
+    expect(canalNetwork).toHaveBeenCalledOnce();
+    store.setMapView(secondMap);
+
+    await vi.waitFor(() => expect(secondMap.network).toHaveBeenCalledWith(second.lines));
+    expect(canalNetwork).toHaveBeenNthCalledWith(2, networkRequest(8));
+  });
+
+  it('keeps the previous lines and bases when a refresh fails', async () => {
+    vi.useFakeTimers();
+    try {
+      const network = networkResponse();
+      const canalNetwork = vi.fn()
+        .mockResolvedValueOnce(network)
+        .mockRejectedValueOnce(new Error('network unavailable'));
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork });
+
+      store.setNetworkRequest(networkRequest());
+      store.setMapView(map);
+      await vi.waitFor(() => expect(map.network).toHaveBeenCalledWith(network.lines));
+      const networkDraws = vi.mocked(map.network).mock.calls.length;
+      const baseDraws = vi.mocked(map.hireBases).mock.calls.length;
+      store.setNetworkRequest(networkRequest(8));
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.waitFor(() => expect(get(store).networkError).toBe('network unavailable'));
+
+      expect(get(store).hasNetworkOverlay).toBe(true);
+      expect(map.network).toHaveBeenCalledTimes(networkDraws);
+      expect(map.hireBases).toHaveBeenCalledTimes(baseDraws);
+      expect(map.network).toHaveBeenLastCalledWith(network.lines);
+      expect(map.hireBases).toHaveBeenLastCalledWith(network.bases);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not refit a cached overlay when replaying it over an active route', async () => {
+    const network = networkResponse();
+    const firstMap = viewportMap(() => {});
+    const secondMap = viewportMap(() => {});
+    const canalNetwork = vi.fn(async (_request: CanalNetworkRequest) => network);
+    const { store } = setup({ canalNetwork });
+
+    store.setNetworkRequest(networkRequest());
+    store.setMapView(firstMap);
+    await vi.waitFor(() => expect(firstMap.network).toHaveBeenCalledWith(network.lines));
     await store.setEndpointCoordinate('origin', place('origin'));
     await store.setEndpointCoordinate('destination', place('destination', 53));
     await store.planCanalRoute({});
-    expect(map.canal).toHaveBeenCalledWith(canal.geometry);
-
-    resolveNetwork(network);
-    await vi.waitFor(() => expect(map.network).toHaveBeenCalledWith(network.lines));
-    expect(map.fitNetwork).not.toHaveBeenCalled();
-  });
-
-  it('replays cached network lines without a second API call', async () => {
-    const network = { artifact_revision: 'r1', lines: [{ type: 'LineString' as const, coordinates: [[-1, 51], [-2, 52]] as [number, number][] }] };
-    const canalNetwork = vi.fn(async () => network);
-    const firstMap = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn() } as unknown as MapView;
-    const secondMap = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn() } as unknown as MapView;
-    const { store } = setup({ canalNetwork });
-
-    store.setMapView(firstMap);
-    await vi.waitFor(() => expect(firstMap.network).toHaveBeenCalledWith(network.lines));
+    store.setMapView(undefined);
     store.setMapView(secondMap);
+
     expect(canalNetwork).toHaveBeenCalledOnce();
     expect(secondMap.network).toHaveBeenCalledWith(network.lines);
-    expect(secondMap.fitNetwork).toHaveBeenCalledOnce();
+    expect(secondMap.hireBases).toHaveBeenCalledWith(network.bases);
+    expect(secondMap.fitNetwork).not.toHaveBeenCalled();
+  });
+
+  it('fits a valid base-only response after the initial overlay paint', async () => {
+    vi.useFakeTimers();
+    try {
+      const fullNetwork = networkResponse();
+      const baseOnly = networkResponse('base-only', []);
+      const canalNetwork = vi.fn()
+        .mockResolvedValueOnce(fullNetwork)
+        .mockResolvedValueOnce(baseOnly);
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork });
+
+      store.setNetworkRequest(networkRequest());
+      store.setMapView(map);
+      await vi.waitFor(() => expect(map.network).toHaveBeenCalledWith(fullNetwork.lines));
+      store.setNetworkRequest(networkRequest(8));
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.waitFor(() => expect(map.network).toHaveBeenLastCalledWith([]));
+
+      expect(map.hireBases).toHaveBeenLastCalledWith(baseOnly.bases);
+      expect(map.fitNetwork).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('records a network error without blocking endpoint operations', async () => {
-    const map = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn() } as unknown as MapView;
-    const { store } = setup({ map, canalNetwork: vi.fn(async () => { throw new Error('network unavailable'); }) });
+    const map = viewportMap(() => {});
+    const { store } = setup({ canalNetwork: vi.fn(async (_request: CanalNetworkRequest) => { throw new Error('network unavailable'); }) });
 
+    store.setNetworkRequest(networkRequest());
     store.setMapView(map);
     await vi.waitFor(() => expect(get(store).networkError).toBe('network unavailable'));
     await store.setEndpointCoordinate('origin', place('origin'));
@@ -127,8 +282,9 @@ describe('trip store', () => {
   });
 
   it('resets trip state and fits the cached network', async () => {
-    const map = { ...viewportMap(() => {}), network: vi.fn(), fitNetwork: vi.fn() } as unknown as MapView;
-    const { store } = setup({ map });
+    const map = viewportMap(() => {});
+    const { store } = setup();
+    store.setNetworkRequest(networkRequest());
     store.setMapView(map);
     await vi.waitFor(() => expect(map.network).toHaveBeenCalled());
     await store.setEndpointCoordinate('origin', place('origin'));
@@ -142,7 +298,7 @@ describe('trip store', () => {
     expect(get(store).canalRoute).toBeNull();
     expect(get(store).routePois).toBeNull();
     expect(map.canal).toHaveBeenCalledWith(null);
-    expect(map.fitNetwork).toHaveBeenCalled();
+    expect(map.fitNetwork).toHaveBeenCalledTimes(2);
   });
 
   it('ignores stale endpoint responses after reset', async () => {

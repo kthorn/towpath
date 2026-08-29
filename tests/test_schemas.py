@@ -19,7 +19,7 @@ from pound.schemas import (
     RouteLock,
     RouteResult,
 )
-from pound.web.api import CanalRouteRequest
+from pound.web.api import CanalNetworkRequest, CanalRouteRequest
 
 
 def test_canal_constraints_defaults():
@@ -134,6 +134,53 @@ def test_resolved_constraints_rejects_days_zero():
 def test_resolved_constraints_rejects_hours_per_day_zero():
     with pytest.raises(ValidationError):
         ResolvedConstraints(start_uid=0, end_uid=1, days=1, hours_per_day=0)
+
+
+@pytest.mark.parametrize(
+    "model, payload",
+    [
+        (CanalConstraints, {"start": "Oxford"}),
+        (ResolvedConstraints, {"start_uid": 1, "end_uid": 2}),
+        (
+            CanalRouteRequest,
+            {"start_uid": 1, "end_uid": 2, "artifact_revision": "revision-test"},
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "field",
+    ["hours_per_day", "boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"],
+)
+def test_route_trust_boundaries_reject_nonfinite_hours_and_dimensions(model, payload, field):
+    invalid = {**payload, field: float("inf")}
+
+    with pytest.raises(ValidationError):
+        model.model_validate(invalid)
+
+    valid = model.model_validate(payload)
+    assert valid.days is None
+
+
+def test_network_request_requires_bounded_schedule():
+    assert CanalNetworkRequest(days=365, hours_per_day=1).days == 365
+    assert CanalNetworkRequest(days=1, hours_per_day=24).hours_per_day == 24
+    with pytest.raises(ValidationError):
+        CanalNetworkRequest(days=366, hours_per_day=1)
+    with pytest.raises(ValidationError):
+        CanalNetworkRequest(days=1, hours_per_day=25)
+    with pytest.raises(ValidationError):
+        CanalNetworkRequest.model_validate({"days": 1})
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["hours_per_day", "boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"],
+)
+def test_network_request_rejects_nonfinite_hours_and_dimensions(field):
+    payload = {"days": 1, "hours_per_day": 6, field: float("inf")}
+
+    with pytest.raises(ValidationError):
+        CanalNetworkRequest.model_validate(payload)
 
 
 def test_canal_constraints_rejects_days_zero():

@@ -9,6 +9,8 @@ from pound.catalog.manifest import MAX_CATALOG_KINDS, MAX_CATALOG_RADIUS_M
 from pound.catalog.spatial import MAX_CATALOG_QUERY_WORK, MAX_CATALOG_VIEWPORT_SPAN_DEGREES
 from pound.schemas import MAX_CATALOG_ROUTE_COORDINATES
 
+MAX_NETWORK_TRAVEL_MINUTES = 10_080
+
 
 @dataclass(frozen=True)
 class WebSettings:

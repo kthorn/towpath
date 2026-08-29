@@ -186,14 +186,11 @@ safe mooring, pedestrian entrance, or vehicle drop-off.
 
 ### Canal network view
 
-On startup and after a trip reset, the map displays the selected full-graph
-components containing a non-excluded curated boat-hire base as translucent lines
-fetched from `/api/canal-network`. This CSV filters the display overlay only;
-the graph, routing, candidates, POIs, and catalog remain complete. The network
-view provides geographic context for route planning. A reset button in the
-schedule form clears both endpoints and re-centers the map on this selected
-component overlay. There is no full-network fallback and no runtime component
-switch.
+The map sends the live `Days` × `Hours per day` schedule and saved boat settings
+to `POST /api/canal-network`. It shows active hire-base markers and one-way
+reach from any base, defaulting to 7 × 6 hours and capping reach at 168 cruising
+hours. This filters only the background display; routing, candidates, POIs, and
+the catalog continue to use the full graph.
 
 ### Route overlays and POI layers
 

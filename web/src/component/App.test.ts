@@ -100,6 +100,7 @@ function setup(
 		mapReject?: boolean;
 		sameNode?: boolean;
 		networkError?: string;
+		hasNetworkOverlay?: boolean;
 	} = {},
 ) {
 	const state: TripState = {
@@ -121,6 +122,7 @@ function setup(
 			: route,
 		routeError: null,
 		networkError: overrides.networkError ?? null,
+		hasNetworkOverlay: overrides.hasNetworkOverlay ?? false,
 		routing: false,
 		selectedDay: null,
 		enabledPoiKinds: [],
@@ -152,6 +154,7 @@ function setup(
 		toggleCatalogKinds: vi.fn(),
 		refreshCatalogPlaces: vi.fn(async () => {}),
 		reset: vi.fn(),
+		setNetworkRequest: vi.fn(),
 		setMapView: vi.fn(),
 	};
 	const selects: Array<(place: SelectedPlace) => void> = [];
@@ -164,6 +167,7 @@ function setup(
 		land: vi.fn(),
 		canal: vi.fn(),
 		network: vi.fn(),
+		hireBases: vi.fn(),
 		fitNetwork: vi.fn(),
 		catalogPlaces: vi.fn(),
 		pois: vi.fn(),
@@ -399,22 +403,32 @@ describe("trip planning interface", () => {
 		});
 	});
 
-	it("resets the schedule and recreates empty endpoint searches", async () => {
+	it("defaults and resets the required schedule controls", async () => {
 		const { dependencies, store, selects } = setup();
 		render(App, { props: { dependencies } });
 		await vi.waitFor(() => expect(selects).toHaveLength(2));
 		const oldHosts = screen.getAllByLabelText(/Search (origin|destination)/);
+		const days = screen.getByLabelText(/^days/i);
+		const hours = screen.getByLabelText(/hours per day/i);
 
-		await fireEvent.input(screen.getByLabelText(/^days/i), {
-			target: { value: "4" },
-		});
-		await fireEvent.input(screen.getByLabelText(/hours per day/i), {
-			target: { value: "7" },
-		});
+		expect(days).toHaveValue(7);
+		expect(days).toBeRequired();
+		expect(days).toHaveAttribute("min", "1");
+		expect(days).toHaveAttribute("max", "365");
+		expect(hours).toHaveValue(6);
+		expect(hours).toBeRequired();
+		expect(hours).toHaveAttribute("max", "24");
+		expect(
+			screen.getByText(
+				/The map shows the one-way cruising reach from any hire base for the selected Days and Hours per day, capped at 168 cruising hours\./,
+			),
+		).toBeVisible();
+		await fireEvent.input(days, { target: { value: "4" } });
+		await fireEvent.input(hours, { target: { value: "7" } });
 		await fireEvent.click(screen.getByRole("button", { name: "Reset trip" }));
 
-		expect(screen.getByLabelText(/^days/i)).toHaveValue(null);
-		expect(screen.getByLabelText(/hours per day/i)).toHaveValue(6);
+		expect(days).toHaveValue(7);
+		expect(hours).toHaveValue(6);
 		expect(store.reset).toHaveBeenCalledOnce();
 		await vi.waitFor(() => expect(selects).toHaveLength(4));
 		const newHosts = screen.getAllByLabelText(/Search (origin|destination)/);
@@ -425,6 +439,59 @@ describe("trip planning interface", () => {
 		expect(newHosts.every((host) => host.childElementCount === 0)).toBe(true);
 	});
 
+	it("updates the overlay request from valid schedules and saved boat settings", async () => {
+		const { dependencies, store } = setup();
+		render(App, { props: { dependencies } });
+		await vi.waitFor(() =>
+			expect(store.setNetworkRequest).toHaveBeenLastCalledWith({
+				days: 7,
+				hours_per_day: 6,
+				boat_length_m: null,
+				boat_beam_m: null,
+				boat_draft_m: null,
+				boat_height_m: null,
+				movable_bridge_delay_min: null,
+			}),
+		);
+		vi.mocked(store.setNetworkRequest).mockClear();
+		await fireEvent.input(screen.getByLabelText(/^days/i), {
+			target: { value: "4" },
+		});
+		await vi.waitFor(() =>
+			expect(store.setNetworkRequest).toHaveBeenCalledWith(
+				expect.objectContaining({ days: 4, hours_per_day: 6 }),
+			),
+		);
+		vi.mocked(store.setNetworkRequest).mockClear();
+		await fireEvent.input(screen.getByLabelText(/^days/i), {
+			target: { value: "" },
+		});
+		await Promise.resolve();
+		expect(store.setNetworkRequest).not.toHaveBeenCalled();
+		await fireEvent.input(screen.getByLabelText(/^days/i), {
+			target: { value: "4" },
+		});
+		await vi.waitFor(() => expect(store.setNetworkRequest).toHaveBeenCalled());
+		vi.mocked(store.setNetworkRequest).mockClear();
+		await fireEvent.click(screen.getByRole("link", { name: "Settings" }));
+		await fireEvent.input(screen.getByLabelText(/boat length/i), {
+			target: { value: "18" },
+		});
+		await fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+		await vi.waitFor(() =>
+			expect(store.setNetworkRequest).toHaveBeenLastCalledWith({
+				days: 4,
+				hours_per_day: 6,
+				boat_length_m: 18,
+				boat_beam_m: null,
+				boat_draft_m: null,
+				boat_height_m: null,
+				movable_bridge_delay_min: null,
+			}),
+		);
+	});
+
 	it("reports an unavailable canal network overlay without blocking the planner", () => {
 		render(App, {
 			props: { dependencies: setup({ networkError: "network request failed" }).dependencies },
@@ -433,6 +500,20 @@ describe("trip planning interface", () => {
 			/canal network overlay is unavailable.*network request failed/i,
 		);
 		expect(screen.getByRole("button", { name: /plan canal route/i })).toBeVisible();
+	});
+
+	it("reports a stale canal network overlay after a failed update", () => {
+		render(App, {
+			props: {
+				dependencies: setup({
+					networkError: "network request failed",
+					hasNetworkOverlay: true,
+				}).dependencies,
+			},
+		});
+		expect(screen.getByRole("status")).toHaveTextContent(
+			/canal network overlay could not be updated.*network request failed/i,
+		);
 	});
 
 	it("clears a schedule validation alert when resetting the trip", async () => {
@@ -633,6 +714,7 @@ describe("trip planning interface", () => {
 			land: vi.fn(),
 			canal: vi.fn(),
 			network: vi.fn(),
+			hireBases: vi.fn(),
 			fitNetwork: vi.fn(),
 			catalogPlaces: vi.fn(),
 			pois: vi.fn(),
@@ -650,6 +732,7 @@ describe("trip planning interface", () => {
 			land: vi.fn(),
 			canal: vi.fn(),
 			network: vi.fn(),
+			hireBases: vi.fn(),
 			fitNetwork: vi.fn(),
 			catalogPlaces: vi.fn(),
 			pois: vi.fn(),
@@ -695,6 +778,7 @@ describe("trip planning interface", () => {
 			land: vi.fn(),
 			canal: vi.fn(),
 			network: vi.fn(),
+			hireBases: vi.fn(),
 			fitNetwork: vi.fn(),
 			clearLand: vi.fn(),
 			onMapClick: vi.fn(() => removeClick),

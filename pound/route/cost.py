@@ -5,6 +5,9 @@ by the planner (route/plan.py) and by the structural-invariant tests (§7.2).
 Pure: no graph, no network.
 """
 
+from collections.abc import Collection, Mapping
+from typing import cast
+
 from pound.ingest.ir import WayDimensions
 
 CRUISE_KMH = 4.8  # ~3 mph, standard canal cruising assumption
@@ -28,6 +31,23 @@ def time_min(
         (length_m / 1000.0) / CRUISE_KMH * 60.0
         + locks * LOCK_MINUTES
         + movable_bridges * movable_bridge_delay_min
+    )
+
+
+def traversal_time_min(
+    edge: Mapping[str, object],
+    arrived_movable_bridge_ids: Collection[str],
+    *,
+    movable_bridge_delay_min: float,
+) -> float:
+    bridge_ids = set(cast(Collection[str], edge["movable_bridge_ids"])) | set(
+        arrived_movable_bridge_ids
+    )
+    return time_min(
+        float(cast(float, edge["length_m"])),
+        int(cast(int, edge.get("locks", 0))),
+        movable_bridges=len(bridge_ids),
+        movable_bridge_delay_min=movable_bridge_delay_min,
     )
 
 

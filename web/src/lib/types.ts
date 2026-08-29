@@ -16,9 +16,27 @@ export interface CanalCandidatesResponse {
   candidates: CanalCandidate[];
 }
 
+export interface BoatHireBase {
+  identity: string;
+  operator: string;
+  name: string;
+  coordinate: LatLon;
+}
+
+export interface CanalNetworkRequest {
+  days: number;
+  hours_per_day: number;
+  boat_length_m: number | null;
+  boat_beam_m: number | null;
+  boat_draft_m: number | null;
+  boat_height_m: number | null;
+  movable_bridge_delay_min: number | null;
+}
+
 export interface CanalNetworkResponse {
   artifact_revision: string;
   lines: GeoJSONLineString[];
+  bases: BoatHireBase[];
 }
 
 export interface RouteLeg {

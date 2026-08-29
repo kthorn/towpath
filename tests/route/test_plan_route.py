@@ -21,6 +21,7 @@ from pound.route.cost import (
     DEFAULT_MOVABLE_BRIDGE_DELAY_MIN,
     LOCK_MINUTES,
     time_min,
+    traversal_time_min,
 )
 from pound.route.plan import plan_canal_route, plan_route, plan_route_from_constraints
 from pound.schemas import CanalConstraints, Coordinate, ResolvedConstraints
@@ -200,6 +201,19 @@ def test_arrived_at_movable_bridge_node_costs_once():
 
     assert [leg.est_minutes for leg in route.legs] == [DEFAULT_MOVABLE_BRIDGE_DELAY_MIN, 0]
     assert route.total_minutes == DEFAULT_MOVABLE_BRIDGE_DELAY_MIN
+
+
+def test_traversal_time_min_unions_edge_and_arrived_node_bridges():
+    edge = {"length_m": 0.0, "locks": 0, "movable_bridge_ids": ("edge:1",)}
+
+    assert (
+        traversal_time_min(
+            edge,
+            ("node:2",),
+            movable_bridge_delay_min=DEFAULT_MOVABLE_BRIDGE_DELAY_MIN,
+        )
+        == 2 * DEFAULT_MOVABLE_BRIDGE_DELAY_MIN
+    )
 
 
 def test_selected_tunnel_restrictions_are_warnings():

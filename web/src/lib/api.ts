@@ -1,6 +1,7 @@
 import type {
   CanalCandidatesRequest,
   CanalCandidatesResponse,
+  CanalNetworkRequest,
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
@@ -76,8 +77,8 @@ export function createPoundApi(fetchFn: typeof fetch = fetch) {
     health(): Promise<HealthResponse> {
       return getJson(fetchFn, '/api/health');
     },
-    canalNetwork(): Promise<CanalNetworkResponse> {
-      return getJson(fetchFn, '/api/canal-network');
+    canalNetwork(request: CanalNetworkRequest): Promise<CanalNetworkResponse> {
+      return postJson(fetchFn, '/api/canal-network', request);
     },
     canalCandidates(request: CanalCandidatesRequest): Promise<CanalCandidatesResponse> {
       return postJson(fetchFn, '/api/canal-candidates', request);

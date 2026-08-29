@@ -99,6 +99,18 @@ main {
 	background: linear-gradient(145deg, #dce8df, #cbd9d1);
 	box-shadow: 0 4px 22px #173c3020;
 }
+.pound-hire-base-marker {
+	align-items: center;
+	background: #0f766e;
+	border: 2px solid #fff;
+	border-radius: 50%;
+	color: #fff;
+	display: flex;
+	font-weight: 700;
+	height: 1.75rem;
+	justify-content: center;
+	width: 1.75rem;
+}
 .map-target {
 	position: absolute;
 	z-index: 1;

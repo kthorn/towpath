@@ -11,8 +11,10 @@ import type {
 } from '../google/contracts';
 import { rankCandidates, type RankedCandidate } from '../planner';
 import type {
+  BoatHireBase,
   CanalCandidatesRequest,
   CanalCandidatesResponse,
+  CanalNetworkRequest,
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
@@ -30,7 +32,7 @@ import type {
 
 interface PoundApi {
   canalCandidates(request: CanalCandidatesRequest): Promise<CanalCandidatesResponse>;
-  canalNetwork(): Promise<CanalNetworkResponse>;
+  canalNetwork(request: CanalNetworkRequest): Promise<CanalNetworkResponse>;
   canalRoute(request: CanalRouteRequest): Promise<CanalRouteResponse>;
   routePois(request: RoutePoisRequest): Promise<RoutePoisResponse>;
   health?: () => Promise<HealthResponse>;
@@ -63,6 +65,7 @@ export interface TripState {
   canalRoute: CanalRouteResponse | null;
   routeError: string | null;
   networkError: string | null;
+  hasNetworkOverlay: boolean;
   routing: boolean;
   selectedDay: number | null;
   enabledPoiKinds: string[];
@@ -77,6 +80,12 @@ export interface TripState {
 
 export type CanalConstraints = Omit<CanalRouteRequest, 'start_uid' | 'end_uid' | 'artifact_revision'>;
 
+type SuccessfulNetwork = {
+  requestGeneration: number;
+  lines: GeoJSONLineString[];
+  bases: BoatHireBase[];
+};
+
 export interface TripStore extends Readable<TripState> {
   setEndpointCoordinate(slot: EndpointSlot, place: SelectedPlace | LatLon): Promise<void>;
   selectCandidate(slot: EndpointSlot, uid: number): Promise<void>;
@@ -89,6 +98,7 @@ export interface TripStore extends Readable<TripState> {
   toggleCatalogKinds(kinds: string[], policy: CatalogQueryPolicy): void;
   refreshCatalogPlaces(bounds: MapBounds): Promise<void>;
   reset(): void;
+  setNetworkRequest(request: CanalNetworkRequest): void;
   setMapView(mapView: MapView | undefined): void;
 }
 
@@ -110,7 +120,7 @@ export function createTripStore(dependencies: {
   let mapView = dependencies.mapView;
   const initial: TripState = {
     origin: emptyEndpoint(), destination: emptyEndpoint(), canalRoute: null, routeError: null, routing: false,
-    selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null, networkError: null,
+    selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null, networkError: null, hasNetworkOverlay: false,
     catalog: { enabledKinds: [], places: [], loading: false, error: null },
     catalogRevision: null, catalogStatus: 'unknown', catalogMatchingCount: 0, catalogOverCap: false,
   };
@@ -122,8 +132,13 @@ export function createTripStore(dependencies: {
   let routeRequest = 0;
   let poiRequest = 0;
   let catalogRequest = 0;
-  let networkLines: GeoJSONLineString[] | null = null;
-  let networkRequest: Promise<void> | undefined;
+  let desiredNetworkRequest: CanalNetworkRequest | undefined;
+  let desiredNetworkGeneration = 0;
+  let mapAttachmentGeneration = mapView ? 1 : 0;
+  let networkPaintedAttachmentGeneration: number | undefined;
+  let successfulNetwork: SuccessfulNetwork | undefined;
+  let networkRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let networkRequest: { generation: number; promise: Promise<void> } | undefined;
   let viewportUnsubscribe: (() => void) | undefined;
   let lastViewportBounds: MapBounds | undefined;
   let poiRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -173,31 +188,63 @@ export function createTripStore(dependencies: {
       if (reportFailure) warn(slot, `Map display failed: ${message(error)}`);
     }
   };
-  const drawNetwork = (view: MapView) => {
-    if (!networkLines) return;
-    mapCall('origin', () => view.network(networkLines!));
-    if (!state.canalRoute) mapCall('origin', () => view.fitNetwork());
+  const isCurrentMapAttachment = (view: MapView, attachmentGeneration: number) =>
+    mapView === view && mapAttachmentGeneration === attachmentGeneration;
+  const drawNetwork = (view: MapView, attachmentGeneration: number, network: SuccessfulNetwork) => {
+    if (network.requestGeneration !== desiredNetworkGeneration ||
+        !isCurrentMapAttachment(view, attachmentGeneration)) return;
+    mapCall('origin', () => view.network(network.lines));
+    if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
+    mapCall('origin', () => view.hireBases(network.bases));
+    if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
+    const shouldFit = networkPaintedAttachmentGeneration !== attachmentGeneration || network.lines.length === 0;
+    networkPaintedAttachmentGeneration = attachmentGeneration;
+    if (shouldFit && !state.canalRoute && isCurrentMapAttachment(view, attachmentGeneration)) {
+      mapCall('origin', () => view.fitNetwork());
+    }
   };
-  const loadNetwork = (view: MapView) => {
-    if (networkLines) {
-      drawNetwork(view);
-      return;
-    }
-    if (!networkRequest) {
-      networkRequest = Promise.resolve()
-        .then(() => poundApi.canalNetwork())
-        .then(({ lines }) => {
-          networkLines = lines;
-          inner.update((current) => ({ ...current, networkError: null }));
-        })
-        .catch((error) => {
-          inner.update((current) => ({ ...current, networkError: message(error) }));
-          networkRequest = undefined;
-        });
-    }
-    void networkRequest.then(() => {
-      if (mapView === view) drawNetwork(view);
-    });
+  const loadNetwork = () => {
+    const request = desiredNetworkRequest;
+    const generation = desiredNetworkGeneration;
+    if (!mapView || !request || networkRequest?.generation === generation) return;
+    const promise = Promise.resolve()
+      .then(() => poundApi.canalNetwork(request))
+      .then(({ lines, bases }) => {
+        if (generation !== desiredNetworkGeneration) return;
+        const network = { requestGeneration: generation, lines, bases };
+        successfulNetwork = network;
+        inner.update((current) => ({ ...current, networkError: null, hasNetworkOverlay: true }));
+        const view = mapView;
+        if (view) drawNetwork(view, mapAttachmentGeneration, network);
+      })
+      .catch((error) => {
+        if (generation !== desiredNetworkGeneration) return;
+        inner.update((current) => ({ ...current, networkError: message(error) }));
+      })
+      .finally(() => {
+        if (networkRequest?.generation === generation) networkRequest = undefined;
+      });
+    networkRequest = { generation, promise };
+  };
+  const cancelScheduledNetworkRefresh = () => {
+    if (networkRefreshTimer === undefined) return;
+    clearTimeout(networkRefreshTimer);
+    networkRefreshTimer = undefined;
+  };
+  const scheduleNetworkRefresh = () => {
+    cancelScheduledNetworkRefresh();
+    if (!mapView || !desiredNetworkRequest) return;
+    const generation = desiredNetworkGeneration;
+    networkRefreshTimer = setTimeout(() => {
+      networkRefreshTimer = undefined;
+      if (!mapView || generation !== desiredNetworkGeneration) return;
+      loadNetwork();
+    }, 100);
+  };
+  const setNetworkRequest = (request: CanalNetworkRequest) => {
+    desiredNetworkRequest = request;
+    desiredNetworkGeneration += 1;
+    scheduleNetworkRefresh();
   };
   const clearCatalogPlaces = () => {
     cancelScheduledCatalogRefresh();
@@ -590,12 +637,14 @@ export function createTripStore(dependencies: {
     cancelScheduledCatalogRefresh();
     catalogPolicies.clear();
     const networkError = state.networkError;
+    const hasNetworkOverlay = state.hasNetworkOverlay;
     inner.set({
       ...initial,
       origin: emptyEndpoint(),
       destination: emptyEndpoint(),
       catalog: { ...initial.catalog },
       networkError,
+      hasNetworkOverlay,
     });
     for (const slot of ['origin', 'destination'] as const) {
       mapCall(slot, () => mapView?.marker(slot, null), false);
@@ -607,7 +656,11 @@ export function createTripStore(dependencies: {
     mapCall('origin', () => mapView?.locks?.([]), false);
     mapCall('origin', () => mapView?.pois?.([]), false);
     mapCall('origin', () => mapView?.catalogPlaces([]), false);
-    if (networkLines) mapCall('origin', () => mapView?.fitNetwork(), false);
+    const view = mapView;
+    const attachmentGeneration = mapAttachmentGeneration;
+    if (successfulNetwork && view && isCurrentMapAttachment(view, attachmentGeneration)) {
+      mapCall('origin', () => view.fitNetwork(), false);
+    }
   }
 
   if (poundApi.health) void catalogHealth().catch(() => {});
@@ -615,15 +668,23 @@ export function createTripStore(dependencies: {
   return {
     subscribe: inner.subscribe, setEndpointCoordinate, selectCandidate, confirmGeometricFallback,
     planCanalRoute, togglePoiKind, toggleCatalogKind, toggleCatalogKinds, selectDay, refreshRoutePois, refreshCatalogPlaces,
-    reset,
+    reset, setNetworkRequest,
     setMapView(value) {
       cancelScheduledPoiRefresh();
       viewportUnsubscribe?.();
       viewportUnsubscribe = undefined;
       lastViewportBounds = undefined;
+      cancelScheduledNetworkRefresh();
+      mapAttachmentGeneration += 1;
+      const attachmentGeneration = mapAttachmentGeneration;
       mapView = value;
       if (!mapView) return;
-      loadNetwork(mapView);
+      const network = successfulNetwork;
+      if (network?.requestGeneration === desiredNetworkGeneration) {
+        drawNetwork(mapView, attachmentGeneration, network);
+      } else {
+        loadNetwork();
+      }
       for (const slot of ['origin', 'destination'] as const) {
         const endpoint = state[slot];
         if (endpoint.place) mapCall(slot, () => mapView?.marker(slot, endpoint.place!.coordinate));
