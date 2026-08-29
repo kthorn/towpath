@@ -78,21 +78,7 @@ class BoatHireSeed:
 
     @property
     def osm_identity(self) -> OsmIdentity | None:
-        if not self.osm_url:
-            return None
-        parsed = urlparse(self.osm_url)
-        match = _OSM_PATH.fullmatch(parsed.path)
-        if (
-            parsed.scheme != "https"
-            or parsed.netloc != "www.openstreetmap.org"
-            or parsed.username
-            or parsed.password
-            or parsed.query
-            or parsed.fragment
-            or match is None
-        ):
-            return None
-        return OsmIdentity(cast(Any, match.group(1)), int(match.group(2)))
+        return _parse_osm_identity(self.osm_url)
 
     @property
     def identity(self) -> str:
@@ -116,6 +102,24 @@ class BoatHireAnchor:
 def _is_https_url(value: str) -> bool:
     parsed = urlparse(value)
     return parsed.scheme == "https" and bool(parsed.netloc)
+
+
+def _parse_osm_identity(osm_url: str) -> OsmIdentity | None:
+    if not osm_url:
+        return None
+    parsed = urlparse(osm_url)
+    match = _OSM_PATH.fullmatch(parsed.path)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "www.openstreetmap.org"
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or match is None
+    ):
+        return None
+    return OsmIdentity(cast(Any, match.group(1)), int(match.group(2)))
 
 
 def load_boat_hire_seeds(path: Path) -> tuple[BoatHireSeed, ...]:
@@ -209,23 +213,12 @@ def load_boat_hire_seeds(path: Path) -> tuple[BoatHireSeed, ...]:
                     "provide an absolute HTTPS osm_url or evidence_url"
                 )
             osm_url = row["osm_url"]
-            if osm_url:
-                parsed = urlparse(osm_url)
-                match = _OSM_PATH.fullmatch(parsed.path)
-                if (
-                    parsed.scheme != "https"
-                    or parsed.netloc != "www.openstreetmap.org"
-                    or parsed.username
-                    or parsed.password
-                    or parsed.query
-                    or parsed.fragment
-                    or match is None
-                ):
-                    raise ValueError(
-                        f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) "
-                        "osm_url must be a canonical https://www.openstreetmap.org/"
-                        "{node|way|relation}/{id} URL"
-                    )
+            if osm_url and _parse_osm_identity(osm_url) is None:
+                raise ValueError(
+                    f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) "
+                    "osm_url must be a canonical https://www.openstreetmap.org/"
+                    "{node|way|relation}/{id} URL"
+                )
         seeds.append(
             BoatHireSeed(
                 provider,

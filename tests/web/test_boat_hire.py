@@ -97,7 +97,9 @@ def test_loader_retains_public_company_base_fields(tmp_path: Path):
     )[0]
     assert seed.record_type == "company_base"
     assert seed.osm_identity == OsmIdentity("way", 42)
+    assert seed.source_provider_name == "Provider Ltd"
     assert seed.source_provider_website == "https://provider.test/"
+    assert seed.location_name == "Canal Basin"
     assert seed.evidence_url == "https://provider.test/bases"
     assert seed.booking_url == "https://provider.test/book"
 
