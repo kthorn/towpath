@@ -211,6 +211,19 @@ class PlacesIndex:
         remaining_work = self.max_work
         remaining_results = self.max_results
 
+        hire_matches: tuple[_BoatHireMatch, ...] = ()
+        if "boat_hire" in selected_kinds:
+            hire_matches = self._scan_hire_viewport(
+                request,
+                route_bng=route_bng,
+                day_bng=day_bng,
+                work_budget=remaining_work,
+                stats=stats,
+            )
+            remaining_work -= len(self.boat_hire_seeds)
+            if len(hire_matches) > remaining_results:
+                raise PlacesResultLimitError(None)
+
         osm_result = CatalogSourceResult(matches=(), work_used=0)
         if osm_kinds:
             osm_result = self._catalog_viewport(
@@ -219,27 +232,15 @@ class PlacesIndex:
                 route_bng=route_bng,
                 day_bng=day_bng,
                 work_budget=remaining_work,
-                result_budget=remaining_results,
+                result_budget=remaining_results + len(self._hire_osm_ids(hire_matches)),
                 stats=stats,
             )
             remaining_work -= osm_result.work_used
-            if len(osm_result.matches) > remaining_results:
-                raise PlacesResultLimitError(None)
-            remaining_results -= len(osm_result.matches)
-
-        hire_matches: tuple[_BoatHireMatch, ...] = ()
-        if "boat_hire" in selected_kinds:
-            hire_matches = self._scan_hire_viewport(
-                request,
-                route_bng=route_bng,
-                day_bng=day_bng,
-                work_budget=remaining_work,
-                result_budget=remaining_results,
-                stats=stats,
-            )
 
         osm_matches = self._suppress_osm(osm_result.matches, hire_matches)
         results = self._sorted_viewport_results(osm_matches, hire_matches)
+        if len(results) > remaining_results:
+            raise PlacesResultLimitError(None)
         return PlacesResponse(places=[self._viewport_response(match) for match in results])
 
     def _query_nearby(
@@ -255,6 +256,18 @@ class PlacesIndex:
 
         for target in request.targets:
             target_bng = self._target_bng(target.geometry)
+            hire_matches: tuple[_BoatHireMatch, ...] = ()
+            if "boat_hire" in selected_kinds:
+                hire_matches = self._scan_hire_target(
+                    request,
+                    target_bng=target_bng,
+                    work_budget=remaining_work,
+                    stats=stats,
+                )
+                remaining_work -= len(self.boat_hire_seeds)
+                if len(hire_matches) > remaining_results:
+                    raise PlacesResultLimitError(target.id)
+
             osm_result = CatalogSourceResult(matches=(), work_used=0)
             if osm_kinds:
                 osm_result = self._catalog_nearby(
@@ -262,31 +275,18 @@ class PlacesIndex:
                     kinds=osm_kinds,
                     target_bng=target_bng,
                     work_budget=remaining_work,
-                    result_budget=remaining_results,
+                    result_budget=remaining_results + len(self._hire_osm_ids(hire_matches)),
                     target_id=target.id,
                     stats=stats,
                 )
                 remaining_work -= osm_result.work_used
-                if len(osm_result.matches) > remaining_results:
-                    raise PlacesResultLimitError(target.id)
-                remaining_results -= len(osm_result.matches)
-
-            hire_matches: tuple[_BoatHireMatch, ...] = ()
-            if "boat_hire" in selected_kinds:
-                hire_matches = self._scan_hire_target(
-                    request,
-                    target_bng=target_bng,
-                    work_budget=remaining_work,
-                    result_budget=remaining_results,
-                    target_id=target.id,
-                    stats=stats,
-                )
-                remaining_work -= len(self.boat_hire_seeds)
 
             osm_matches = self._suppress_osm(osm_result.matches, hire_matches)
             target_results = self._sorted_nearby_results(osm_matches, hire_matches)
+            if len(target_results) > remaining_results:
+                raise PlacesResultLimitError(target.id)
             results.extend(self._nearby_response(match, target.id) for match in target_results)
-            remaining_results -= len(hire_matches)
+            remaining_results -= len(target_results)
 
         return PlacesResponse(places=results)
 
@@ -376,7 +376,6 @@ class PlacesIndex:
         route_bng: BaseGeometry | None,
         day_bng: BaseGeometry | None,
         work_budget: int,
-        result_budget: int,
         stats: PlacesQueryStats | None,
     ) -> tuple[_BoatHireMatch, ...]:
         self._consume_hire_work(work_budget, stats, ["bounds"])
@@ -384,6 +383,7 @@ class PlacesIndex:
         route_requested = route_bng is not None
         waterway_requested = request.policy.basis in {"waterway", "none"} or route_requested
         matches: list[_BoatHireMatch] = []
+        # ponytail: direct scan is bounded by the curated CSV; add an STRtree only if measured growth breaks query gates.  # noqa: E501
         for seed in self.boat_hire_seeds:
             if not (
                 request.bounds.south <= seed.latitude <= request.bounds.north
@@ -435,8 +435,6 @@ class PlacesIndex:
                     ),
                 )
             )
-        if len(matches) > result_budget:
-            raise PlacesResultLimitError(None)
         return tuple(matches)
 
     def _scan_hire_target(
@@ -445,8 +443,6 @@ class PlacesIndex:
         *,
         target_bng: BaseGeometry,
         work_budget: int,
-        result_budget: int,
-        target_id: str,
         stats: PlacesQueryStats | None,
     ) -> tuple[_BoatHireMatch, ...]:
         self._consume_hire_work(work_budget, stats, ["targets"])
@@ -462,8 +458,6 @@ class PlacesIndex:
             if distance_m > request.radius_m:
                 continue
             matches.append(_BoatHireMatch(seed=seed, distance_m=distance_m))
-        if len(matches) > result_budget:
-            raise PlacesResultLimitError(target_id)
         return tuple(matches)
 
     def _consume_hire_work(
@@ -478,15 +472,19 @@ class PlacesIndex:
             raise PlacesQueryBudgetError(fields)
 
     @staticmethod
-    def _suppress_osm(
-        osm_matches: tuple[CatalogSourceMatch, ...],
-        hire_matches: tuple[_BoatHireMatch, ...],
-    ) -> tuple[CatalogSourceMatch, ...]:
-        hire_osm_ids = {
+    def _hire_osm_ids(hire_matches: tuple[_BoatHireMatch, ...]) -> set[tuple[str, int]]:
+        return {
             (identity.osm_type, identity.osm_id)
             for match in hire_matches
             if (identity := match.seed.osm_identity) is not None
         }
+
+    @staticmethod
+    def _suppress_osm(
+        osm_matches: tuple[CatalogSourceMatch, ...],
+        hire_matches: tuple[_BoatHireMatch, ...],
+    ) -> tuple[CatalogSourceMatch, ...]:
+        hire_osm_ids = PlacesIndex._hire_osm_ids(hire_matches)
         if not hire_osm_ids:
             return osm_matches
         return tuple(

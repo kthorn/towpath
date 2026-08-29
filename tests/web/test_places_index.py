@@ -286,6 +286,24 @@ def test_nearby_result_limit_identifies_crossing_target_and_keeps_stats():
     assert stats.work_used == 2
 
 
+def test_result_capacity_is_charged_after_osm_identity_suppression():
+    osm = _place("marina", 1)
+    seed = BoatHireSeed(
+        "provider",
+        "base:one",
+        51.0,
+        -1.0,
+        osm_url="https://www.openstreetmap.org/node/1",
+    )
+    places_index = _index((osm,), (seed,))
+    places_index.max_results = 1
+
+    response = places_index.query(_viewport_request(["marina", "boat_hire"]))
+
+    assert len(response.places) == 1
+    assert response.places[0].provenance.source == "boat_hire"
+
+
 def test_exact_osm_identity_suppresses_osm_only_when_hire_is_emitted():
     osm = _place("marina", 1, name="osm-only-name")
     seed = BoatHireSeed(
