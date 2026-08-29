@@ -135,6 +135,9 @@ main {
 	justify-content: center;
 	width: 1.75rem;
 }
+.pound-hire-base-marker.selected {
+	box-shadow: 0 0 0 3px #123f37, 0 0 0 5px #f59e0b;
+}
 .map-target {
 	position: absolute;
 	z-index: 1;

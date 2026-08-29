@@ -331,9 +331,14 @@ export function createGoogleMapView(
   const landRoutes: Partial<Record<EndpointSlot, PolylineInstance>> = {};
   const networkLines: PolylineInstance[] = [];
   let networkGeometries: GeoJSONLineString[] = [];
+  const focusedNetworkLines: PolylineInstance[] = [];
   const hireBaseMarkers: MarkerInstance[] = [];
   const hireBaseMarkerListeners: RemovableListener[] = [];
   const hireBaseCoordinates: GoogleLatLngLiteral[] = [];
+  const hireBaseSelectionSubscribers = new Set<(identity: string | null) => void>();
+  let hireBaseRecords: BoatHireBase[] = [];
+  let hireBaseSelectedIdentity: string | null = null;
+  const hireBaseContents: HTMLElement[] = [];
   const catalogMarkers: MarkerInstance[] = [];
   const poiMarkers: MarkerInstance[] = [];
   const lockMarkers: MarkerInstance[] = [];
@@ -422,6 +427,36 @@ export function createGoogleMapView(
     listeners.push(enter, leave, click);
     markerListeners.push(enter, leave, click);
   };
+  const updateHireBaseSelectionStyles = () => {
+    for (let index = 0; index < hireBaseMarkers.length; index += 1) {
+      const base = hireBaseRecords[index];
+      const content = hireBaseContents[index];
+      if (!base || !content) continue;
+      const label = `${base.operator} — ${base.name}`;
+      const selected = base.identity === hireBaseSelectedIdentity;
+      const accessibleLabel = selected ? `${label} (selected)` : label;
+      content.classList.toggle('selected', selected);
+      content.setAttribute('aria-label', accessibleLabel);
+      hireBaseMarkers[index]!.title = accessibleLabel;
+    }
+  };
+  const bindHireBaseMarker = (marker: MarkerInstance, base: BoatHireBase) => {
+    const label = `${base.operator} — ${base.name}`;
+    const enter = facade.addMarkerListener(marker, 'mouseenter', () => { showTooltip(label); });
+    const leave = facade.addMarkerListener(marker, 'mouseleave', () => {
+      const tooltip = tooltipElements.at(-1);
+      if (tooltip) removeTooltip(tooltip);
+    });
+    const click = facade.addMarkerListener(marker, 'click', (event) => {
+      stopMarkerPropagation(event);
+      hireBaseSelectedIdentity = base.identity;
+      updateHireBaseSelectionStyles();
+      for (const subscriber of hireBaseSelectionSubscribers) subscriber(base.identity);
+      openInfoWindow(hireBaseInfoContent(documentRef, base, closeInfoWindow), marker);
+    });
+    hireBaseMarkerListeners.push(enter, leave, click);
+    markerListeners.push(enter, leave, click);
+  };
   const removeMarkerGroup = (
     markers: MarkerInstance[],
     listeners: RemovableListener[],
@@ -473,7 +508,7 @@ export function createGoogleMapView(
       clearLandSlot(slot);
       if (route) {
         const path = route.path.map(toGoogleLatLng);
-        landRoutes[slot] = facade.createPolyline({ map, path, strokeColor: '#2563eb', strokeWeight: 5 });
+        landRoutes[slot] = facade.createPolyline({ map, path, strokeColor: '#2563eb', strokeWeight: 5, zIndex: 9 });
         element.setAttribute(`data-${slot}-land-overlay`, 'visible');
       }
     },
@@ -483,7 +518,7 @@ export function createGoogleMapView(
       element.removeAttribute('data-canal-overlay');
       if (geometry) {
         canalPath = geoJsonToGooglePath(geometry);
-        canalRoute.push(...casedLine(canalPath, '#0369a1', 7, 3));
+        canalRoute.push(...casedLine(canalPath, '#0369a1', 7, 5));
         element.setAttribute('data-canal-overlay', 'visible');
         facade.fitBounds(map, canalPath);
       }
@@ -495,24 +530,47 @@ export function createGoogleMapView(
         networkLines.push(...casedLine(geoJsonToGooglePath(line), '#0284c7', 4, 1));
       }
     },
-    hireBases(bases) {
+    focusedNetwork(lines) {
+      removePolylines(focusedNetworkLines);
+      for (const line of lines) {
+        focusedNetworkLines.push(...casedLine(geoJsonToGooglePath(line), '#00324d', 6, 3));
+      }
+    },
+    hireBases(bases, selectedIdentity) {
+      const recordsChanged = hireBaseRecords.length !== bases.length || hireBaseRecords.some((base, index) => {
+        const next = bases[index];
+        return !next || base.identity !== next.identity || base.operator !== next.operator || base.name !== next.name
+          || base.coordinate.lat !== next.coordinate.lat || base.coordinate.lon !== next.coordinate.lon;
+      });
+      hireBaseSelectedIdentity = selectedIdentity !== null && bases.some((base) => base.identity === selectedIdentity)
+        ? selectedIdentity
+        : null;
+      if (!recordsChanged) {
+        updateHireBaseSelectionStyles();
+        return;
+      }
       closeInfoWindow();
       removeMarkerGroup(hireBaseMarkers, hireBaseMarkerListeners);
+      hireBaseRecords = bases.slice();
+      hireBaseContents.length = 0;
       hireBaseCoordinates.length = 0;
-      for (const base of bases) {
+      for (const base of hireBaseRecords) {
         const label = `${base.operator} — ${base.name}`;
         const coordinate = toGoogleLatLng(base.coordinate);
+        const content = hireBaseContent(documentRef, label);
         hireBaseCoordinates.push(coordinate);
+        hireBaseContents.push(content);
         const marker = facade.createMarker({
           map,
           position: coordinate,
           title: label,
-          content: hireBaseContent(documentRef, label),
+          content,
           gmpClickable: true,
         });
         hireBaseMarkers.push(marker);
-        bindMarker(marker, label, () => hireBaseInfoContent(documentRef, base, closeInfoWindow), hireBaseMarkerListeners);
+        bindHireBaseMarker(marker, base);
       }
+      updateHireBaseSelectionStyles();
     },
     fitNetwork() {
       const points = [
@@ -575,7 +633,7 @@ export function createGoogleMapView(
         return;
       }
       const path = geoJsonToGooglePath(dayGeometry.geometry);
-      highlightedDay.push(...casedLine(path, '#0ea5e9', 9, 5));
+      highlightedDay.push(...casedLine(path, '#0ea5e9', 9, 7));
       const points = [toGoogleLatLng(dayGeometry.start), toGoogleLatLng(dayGeometry.end)];
       dayWaypointMarkers.push(
         facade.createMarker({ map, position: points[0], title: `Day ${dayGeometry.day} start` }),
@@ -585,8 +643,11 @@ export function createGoogleMapView(
     },
     onMapClick(callback: (coordinate: LatLon) => void) {
       const listener = map.addListener('click', (event) => {
-        if (infoWindowOpen) {
+        if (infoWindowOpen || hireBaseSelectedIdentity !== null) {
           closeInfoWindow();
+          hireBaseSelectedIdentity = null;
+          updateHireBaseSelectionStyles();
+          for (const subscriber of hireBaseSelectionSubscribers) subscriber(null);
           return;
         }
         if (event.latLng) callback({ lat: event.latLng.lat(), lon: event.latLng.lng() });
@@ -597,6 +658,10 @@ export function createGoogleMapView(
         const index = clickListeners.indexOf(listener);
         if (index >= 0) clickListeners.splice(index, 1);
       };
+    },
+    onHireBaseSelect(callback) {
+      hireBaseSelectionSubscribers.add(callback);
+      return () => hireBaseSelectionSubscribers.delete(callback);
     },
     onViewportIdle(callback) {
       const listener = map.addListener('idle', () => {
@@ -625,6 +690,7 @@ export function createGoogleMapView(
       poiMarkerListeners.length = 0;
       lockMarkerListeners.length = 0;
       hireBaseMarkerListeners.length = 0;
+      hireBaseSelectionSubscribers.clear();
       removeListeners(infoWindowListeners);
       closeInfoWindow();
       removeTooltips();
@@ -636,12 +702,17 @@ export function createGoogleMapView(
       removeMarkerGroup(lockMarkers, []);
       removeMarkerGroup(hireBaseMarkers, []);
       hireBaseCoordinates.length = 0;
+      hireBaseContents.length = 0;
+      hireBaseRecords = [];
+      hireBaseSelectedIdentity = null;
       clearDay();
       clearLandSlot('origin');
       clearLandSlot('destination');
       removePolylines(networkLines);
+      removePolylines(focusedNetworkLines);
       networkGeometries = [];
       removePolylines(canalRoute);
+      canalPath = [];
     },
   };
 }
