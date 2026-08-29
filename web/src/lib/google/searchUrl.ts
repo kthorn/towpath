@@ -1,4 +1,10 @@
-import type { CatalogPlace } from '../types';
+import type { CatalogMetadata, LatLon } from '../types';
+
+type GoogleMapsSearchPlace = {
+  name: string | null;
+  coordinate: LatLon;
+  metadata: CatalogMetadata;
+};
 
 const GOOGLE_MAPS_SEARCH_BASE = 'https://www.google.com/maps/search/?api=1&query=';
 const MAX_GOOGLE_MAPS_URL_LENGTH = 2_048;
@@ -13,7 +19,7 @@ function encodedQuery(query: string): string {
   return new URLSearchParams({ query }).toString().slice('query='.length);
 }
 
-export function buildGoogleMapsSearchUrl(place: CatalogPlace): string {
+export function buildGoogleMapsSearchUrl(place: GoogleMapsSearchPlace): string {
   const name = normalized(place.name) ?? normalized(place.metadata.name);
   const address = place.metadata.address
     ? [

@@ -1,8 +1,8 @@
 import type {
   CanalCandidate,
   BoatHireBase,
-  CatalogPlace,
   GeoJSONLineString,
+  PlaceResponse,
   LatLon,
   MapBounds,
   RouteDayGeometry,
@@ -55,7 +55,7 @@ export interface MapView {
   network(lines: GeoJSONLineString[]): void;
   hireBases(bases: BoatHireBase[]): void;
   fitNetwork(): void;
-  catalogPlaces(places: CatalogPlace[]): void;
+  places(places: PlaceResponse[]): void;
   pois(pois: RoutePoi[]): void;
   locks(locks: RouteLock[]): void;
   day(dayGeometry: RouteDayGeometry | null): void;
