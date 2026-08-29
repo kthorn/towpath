@@ -177,6 +177,7 @@ export function createTripStore(dependencies: {
   let networkPaintedAttachmentGeneration: number | undefined;
   let successfulNetwork: SuccessfulNetwork | undefined;
   let networkRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let networkRetryPendingGeneration: number | undefined;
   let networkRequest: { generation: number; promise: Promise<void> } | undefined;
   let viewportUnsubscribe: (() => void) | undefined;
   let lastViewportBounds: MapBounds | undefined;
@@ -250,6 +251,7 @@ export function createTripStore(dependencies: {
     const request = desiredNetworkRequest;
     const generation = desiredNetworkGeneration;
     if (!mapView || !request || networkRequest?.generation === generation) return;
+    networkRetryPendingGeneration = undefined;
     const promise = Promise.resolve()
       .then(() => poundApi.canalNetwork(request))
       .then(({ lines, highlight_lines, bases }) => {
@@ -295,6 +297,7 @@ export function createTripStore(dependencies: {
     networkRefreshTimer = setTimeout(() => {
       networkRefreshTimer = undefined;
       if (!mapView || generation !== desiredNetworkGeneration) return;
+      if (networkRetryPendingGeneration === generation) networkRetryPendingGeneration = undefined;
       loadNetwork();
     }, 100);
   };
@@ -312,6 +315,7 @@ export function createTripStore(dependencies: {
       : undefined;
     desiredNetworkRequest = nextRequest;
     desiredNetworkGeneration += 1;
+    networkRetryPendingGeneration = retry ? desiredNetworkGeneration : undefined;
     inner.update((current) => ({
       ...current,
       selectedHireBaseIdentity: null,
@@ -342,6 +346,7 @@ export function createTripStore(dependencies: {
       return;
     }
     cancelScheduledNetworkRefresh();
+    networkRetryPendingGeneration = undefined;
     desiredNetworkGeneration += 1;
     if (desiredNetworkRequest) {
       desiredNetworkRequest = { ...desiredNetworkRequest, selected_base_identity: identity };
@@ -353,6 +358,7 @@ export function createTripStore(dependencies: {
   const setNetworkRequest = (request: CanalNetworkRequest) => {
     const normalized = { ...request, selected_base_identity: state.selectedHireBaseIdentity };
     if (desiredNetworkRequest && sameNetworkRequest(desiredNetworkRequest, normalized)) return;
+    networkRetryPendingGeneration = undefined;
     desiredNetworkRequest = normalized;
     desiredNetworkGeneration += 1;
     scheduleNetworkRefresh();
@@ -793,7 +799,8 @@ export function createTripStore(dependencies: {
       if (!mapView) return;
       const network = successfulNetwork;
       if (network) drawNetwork(mapView, attachmentGeneration, network);
-      if (!network || network.requestGeneration !== desiredNetworkGeneration) loadNetwork();
+      if (networkRetryPendingGeneration === desiredNetworkGeneration) scheduleNetworkRefresh();
+      else if (!network || network.requestGeneration !== desiredNetworkGeneration) loadNetwork();
       for (const slot of ['origin', 'destination'] as const) {
         const endpoint = state[slot];
         if (endpoint.place) mapCall(slot, () => mapView?.marker(slot, endpoint.place!.coordinate));
