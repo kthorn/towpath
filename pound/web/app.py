@@ -20,6 +20,7 @@ from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.api import router as api_router
 from pound.web.boat_hire import load_boat_hire_seeds, snap_boat_hire_bases
 from pound.web.config import WebSettings
+from pound.web.places import MAX_PLACES_RESULTS, PlacesIndex
 
 
 def _load_web_artifact(settings: WebSettings) -> GraphArtifact:
@@ -54,19 +55,30 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         app.state.network_unavailable = not app.state.boat_hire_anchors
 
         app.state.catalog = None
-        app.state.catalog_revision = None
         app.state.catalog_spatial_index = None
-        app.state.catalog_status = "unavailable"
         app.state.catalog_error = None
+        app.state.places_index = None
+        app.state.places_status = "unavailable"
         if runtime_settings.catalog_path is not None:
             try:
                 catalog = load_catalog(runtime_settings.catalog_path)
                 app.state.catalog = catalog
-                app.state.catalog_revision = catalog.metadata["catalog_revision"]
                 app.state.catalog_spatial_index = CatalogSpatialIndex(
                     catalog.places, app.state.spatial_index
                 )
-                app.state.catalog_status = "available"
+                app.state.places_index = PlacesIndex(
+                    app.state.catalog_spatial_index,
+                    app.state.spatial_index,
+                    seeds,
+                    max_kinds=runtime_settings.catalog_max_kinds,
+                    max_radius_m=runtime_settings.catalog_max_radius_m,
+                    max_viewport_span_deg=runtime_settings.catalog_max_viewport_span_deg,
+                    max_vertices=runtime_settings.catalog_max_route_vertices,
+                    max_targets=runtime_settings.places_max_targets,
+                    max_work=runtime_settings.catalog_query_work_budget,
+                    max_results=MAX_PLACES_RESULTS,
+                )
+                app.state.places_status = "available"
             except Exception as exc:
                 app.state.catalog_error = str(exc)
         yield
@@ -75,11 +87,11 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     application.include_router(api_router)
 
     @application.exception_handler(RequestValidationError)
-    async def catalog_request_validation_error(
+    async def places_request_validation_error(
         request: Request,
         exc: RequestValidationError,
     ):
-        if request.url.path != "/api/catalog-places":
+        if request.url.path != "/api/places":
             return await request_validation_exception_handler(request, exc)
 
         fields = sorted(
@@ -92,24 +104,23 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
             status_code=400,
             content={
                 "detail": {
-                    "code": "invalid_catalog_query",
-                    "message": "Invalid catalog query.",
+                    "code": "invalid_places_query",
+                    "message": "Invalid places query.",
                     "fields": fields,
                 }
             },
         )
 
     @application.get("/api/health")
-    async def health(request: Request) -> dict[str, str | None]:
+    async def health(request: Request) -> dict[str, str]:
         catalog_configured = request.app.state.settings.catalog_path is not None
         status = "healthy"
-        if catalog_configured and request.app.state.catalog_status != "available":
+        if catalog_configured and request.app.state.places_status != "available":
             status = "degraded"
         return {
             "status": status,
             "artifact_revision": request.app.state.artifact_revision,
-            "catalog_revision": request.app.state.catalog_revision,
-            "catalog_status": request.app.state.catalog_status,
+            "places_status": request.app.state.places_status,
         }
 
     configured_static_dir = (
@@ -120,6 +131,10 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     assets_dir = configured_static_dir / "assets"
     if assets_dir.is_dir():
         application.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @application.post("/{client_path:path}", include_in_schema=False)
+    async def missing_post(client_path: str) -> None:
+        raise HTTPException(status_code=404)
 
     @application.get("/{client_path:path}", response_model=None)
     async def static_site(request: Request, client_path: str) -> FileResponse:

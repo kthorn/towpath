@@ -3,8 +3,8 @@ from collections.abc import Generator
 from pathlib import Path
 
 import networkx as nx
-import pytest
-from fastapi.testclient import TestClient
+import pytest  # pyright: ignore[reportMissingImports]
+from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
 from shapely import wkb
 from shapely.geometry import Point
 
@@ -215,6 +215,30 @@ def web_client(tmp_path: Path, route_graph: nx.Graph) -> Generator[TestClient, N
         candidate_pool_size=3,
         google_destination_limit=2,
         minimum_candidate_spacing_m=0,
+    )
+    with TestClient(create_app(settings)) as client:
+        yield client
+
+
+@pytest.fixture
+def client_without_catalog(
+    tmp_path: Path, route_graph: nx.Graph
+) -> Generator[TestClient, None, None]:
+    artifact_path = tmp_path / "graph.pkl"
+    save_artifact(route_graph, fixture_pois(), artifact_path, artifact_metadata("revision-test"))
+    settings = WebSettings(
+        artifact_path=artifact_path,
+        static_dir=tmp_path / "static",
+        boat_hire_enrichment_path=write_boat_hire_enrichment(
+            tmp_path / "boat-hire.csv",
+            rows=[
+                {
+                    "source_provider_id": "test-provider",
+                    "location_id": "base:test",
+                    "exclude": "true",
+                }
+            ],
+        ),
     )
     with TestClient(create_app(settings)) as client:
         yield client

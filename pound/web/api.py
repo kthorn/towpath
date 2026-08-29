@@ -1,7 +1,5 @@
 """HTTP API for candidate selection and pure artifact-backed routing."""
 
-from typing import Literal, cast
-
 from fastapi import APIRouter, HTTPException, Request  # pyright: ignore[reportMissingImports]
 from pydantic import (  # pyright: ignore[reportMissingImports]
     BaseModel,
@@ -9,10 +7,7 @@ from pydantic import (  # pyright: ignore[reportMissingImports]
     Field,
     FiniteFloat,
 )
-from shapely.geometry import LineString
 
-from pound.catalog.manifest import CATALOG_KINDS
-from pound.catalog.spatial import CatalogQueryLimitError, CatalogQueryPolicy, wgs84_to_bng
 from pound.ingest.pois import RETAINED_POI_KINDS
 from pound.route.candidates import nearest_coord_candidates, select_spaced_candidates
 from pound.route.cost import resolve_movable_bridge_delay
@@ -22,10 +17,9 @@ from pound.schemas import (
     CanalCandidatesResponse,
     CanalNetworkResponse,
     CanalRouteResponse,
-    CatalogPlaceResponse,
-    CatalogPlacesRequest,
-    CatalogPlacesResponse,
     Coordinate,
+    PlacesRequest,
+    PlacesResponse,
     ResolvedConstraints,
     RoutePoisRequest,
     RoutePoisResponse,
@@ -33,7 +27,7 @@ from pound.schemas import (
 from pound.web.boat_hire import select_boat_hire_reachability
 from pound.web.config import MAX_NETWORK_TRAVEL_MINUTES
 from pound.web.network import prepare_network_geometry
-from pound.web.places import MAX_PLACES_RESULTS
+from pound.web.places import PlacesQueryBudgetError, PlacesResultLimitError
 
 router = APIRouter(prefix="/api")
 
@@ -208,217 +202,28 @@ def route_pois(body: RoutePoisRequest, request: Request) -> RoutePoisResponse:
     )
 
 
-@router.post("/catalog-places", response_model=CatalogPlacesResponse)
-def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlacesResponse:
-    """Return bounded independent catalog places for one explicit policy."""
+@router.post("/places", response_model=PlacesResponse)
+def places(body: PlacesRequest, request: Request) -> PlacesResponse:
+    """Return bounded places from the independent OSM and boat-hire sources."""
 
-    if request.app.state.catalog_status != "available":
-        raise _error(
-            503,
-            code="catalog_unavailable",
-            message="The place catalog is unavailable; route planning remains available.",
-        )
-    settings = request.app.state.settings
-    if body.catalog_revision != request.app.state.catalog_revision:
-        raise _error(
-            409,
-            code="catalog_revision_mismatch",
-            message="The place catalog has changed; refresh catalog layers.",
-            fields=["catalog_revision"],
-        )
-    if len(body.kinds) > settings.catalog_max_kinds:
-        raise _error(
-            413,
-            code="catalog_query_budget_exceeded",
-            message="The catalog query selects too many kinds.",
-            fields=["kinds"],
-        )
-    if body.bounds.south > body.bounds.north or body.bounds.west > body.bounds.east:
-        raise _error(
-            400,
-            code="invalid_bounds",
-            message="Bounds must be ordered south <= north and west <= east.",
-            fields=["bounds"],
-        )
-    unknown_kinds = set(body.kinds) - CATALOG_KINDS
-    if unknown_kinds:
-        raise _error(
-            400,
-            code="invalid_catalog_kind",
-            message="One or more catalog kinds do not exist in this catalog.",
-            fields=["kinds"],
-        )
-    viewport_span = max(
-        body.bounds.north - body.bounds.south,
-        body.bounds.east - body.bounds.west,
-    )
-    if viewport_span > settings.catalog_max_viewport_span_deg:
-        raise _error(
-            413,
-            code="catalog_query_budget_exceeded",
-            message="The catalog viewport exceeds the configured span budget.",
-            fields=["bounds"],
-        )
-    if body.policy.radius_m is not None and body.policy.radius_m > settings.catalog_max_radius_m:
-        raise _error(
-            413,
-            code="catalog_query_budget_exceeded",
-            message="The catalog radius exceeds the configured query budget.",
-            fields=["policy.radius_m"],
-        )
-    if (body.day is None) != (body.day_geometry is None) or (
-        body.day_geometry is not None and body.route_geometry is None
-    ):
-        raise _error(
-            400,
-            code="invalid_catalog_geometry",
-            message="day and day_geometry require route_geometry and must be supplied together.",
-            fields=["day", "day_geometry", "route_geometry"],
-        )
-    coordinate_count = sum(
-        len(geometry.coordinates)
-        for geometry in (
-            body.route_geometry,
-            body.day_geometry,
-            body.segment_geometry,
-        )
-        if geometry is not None
-    )
-    if coordinate_count > settings.catalog_max_route_vertices:
-        raise _error(
-            413,
-            code="catalog_query_budget_exceeded",
-            message="The catalog geometry exceeds the configured vertex budget.",
-            fields=["route_geometry", "day_geometry", "segment_geometry"],
-        )
-    if body.policy.basis == "route" and body.route_geometry is None:
-        raise _error(
-            400,
-            code="invalid_catalog_policy",
-            message="A route policy requires route_geometry.",
-            fields=["policy", "route_geometry"],
-        )
-
-    catalog_index = request.app.state.catalog_spatial_index
-    if catalog_index.viewport_candidate_count(body.bounds) > settings.catalog_query_work_budget:
-        raise _error(
-            413,
-            code="catalog_query_budget_exceeded",
-            message="The catalog query exceeds the configured work budget.",
-            fields=["bounds"],
-        )
-    is_segment_query = body.policy.basis == "segment"
-    source_route_geometry = body.segment_geometry if is_segment_query else body.route_geometry
-    route_bng = (
-        wgs84_to_bng(LineString(source_route_geometry.coordinates))
-        if source_route_geometry is not None
-        else None
-    )
-    full_route_bng = (
-        wgs84_to_bng(LineString(body.route_geometry.coordinates))
-        if is_segment_query and body.route_geometry is not None
-        else None
-    )
-    day_bng = (
-        wgs84_to_bng(LineString(body.day_geometry.coordinates))
-        if body.day_geometry is not None
-        else None
-    )
-    source_basis = cast(
-        Literal["route", "waterway", "none"],
-        "route" if is_segment_query else body.policy.basis,
-    )
-    source_policy = CatalogQueryPolicy(source_basis, body.policy.radius_m)
-
-    def query_source(*, policy, route_geometry, selected_geometry, result_budget):
-        return catalog_index.query_viewport(
-            kinds=frozenset(body.kinds),
-            bounds=body.bounds,
-            text=body.text,
-            policy=policy,
-            route_bng=route_geometry,
-            day_bng=selected_geometry,
-            work_budget=settings.catalog_query_work_budget,
-            result_budget=result_budget,
-        )
-
-    context_result = None
+    if request.app.state.places_status != "available":
+        raise _error(503, code="places_unavailable", message="Places are unavailable.")
     try:
-        if is_segment_query and body.route_geometry is not None:
-            context_result = query_source(
-                policy=CatalogQueryPolicy("none", None),
-                route_geometry=full_route_bng,
-                selected_geometry=day_bng,
-                result_budget=settings.catalog_query_work_budget,
-            )
-        result = query_source(
-            policy=source_policy,
-            route_geometry=route_bng,
-            selected_geometry=None if is_segment_query else day_bng,
-            result_budget=MAX_PLACES_RESULTS,
-        )
-    except CatalogQueryLimitError as exc:
-        if exc.limit == "result":
-            return CatalogPlacesResponse(
-                catalog_revision=request.app.state.catalog_revision,
-                places=[],
-                matching_count=MAX_PLACES_RESULTS + 1,
-                over_cap=True,
-                day=body.day,
-            )
+        return request.app.state.places_index.query(body)  # pi-lens-ignore: python-sql-injection
+    except PlacesResultLimitError as exc:
         raise _error(
             413,
-            code="catalog_query_budget_exceeded",
-            message=str(exc),
-            fields=["bounds"],
+            code="places_result_limit_exceeded",
+            message="The places result limit was exceeded; narrow the query.",
+            fields=exc.fields,
         ) from exc
-    except ValueError as exc:
+    except PlacesQueryBudgetError as exc:
         raise _error(
-            400,
-            code="invalid_catalog_query",
-            message=str(exc),
+            413,
+            code="places_query_budget_exceeded",
+            message="The places query exceeds its configured budget.",
+            fields=exc.fields,
         ) from exc
-
-    context_by_identity = (
-        {match.place.identity: match for match in context_result.matches}
-        if context_result is not None
-        else {}
-    )
-    places = []
-    for match in result.matches:
-        context = context_by_identity.get(match.place.identity, match)
-        places.append(
-            CatalogPlaceResponse(
-                identity=f"{match.place.osm_type.value}/{match.place.osm_id}/{match.place.kind}",
-                kind=match.place.kind,
-                name=match.place.name,
-                coordinate=Coordinate(lat=match.place.lat, lon=match.place.lon),
-                waterway_distance_m=(
-                    context.waterway_distance_m
-                    if not is_segment_query or context_result is not None
-                    else None
-                ),
-                distance_to_full_route_m=(
-                    context.full_route_distance_m
-                    if not is_segment_query or context_result is not None
-                    else None
-                ),
-                distance_to_segment_m=match.full_route_distance_m if is_segment_query else None,
-                distance_to_selected_geometry_m=(
-                    context.selected_geometry_distance_m
-                    if not is_segment_query or context_result is not None
-                    else None
-                ),
-                metadata=match.place.metadata,
-            )
-        )
-    return CatalogPlacesResponse(
-        catalog_revision=request.app.state.catalog_revision,
-        places=places,
-        matching_count=len(result.matches),
-        over_cap=False,
-        day=body.day,
-    )
 
 
 @router.post("/canal-route", response_model=CanalRouteResponse)
