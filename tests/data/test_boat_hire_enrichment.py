@@ -43,9 +43,9 @@ def test_boat_hire_enrichment_seed_has_distinct_location_rows():
         rows = list(reader)
 
     assert reader.fieldnames == EXPECTED_FIELDS
-    assert len(rows) == 117
+    assert len(rows) == 136
     assert Counter(row["record_type"] for row in rows) == {
-        "company_base": 106,
+        "company_base": 125,
         "review_positive": 11,
     }
     assert len({(row["source_provider_id"], row["location_id"]) for row in rows}) == len(rows)
@@ -69,6 +69,9 @@ OUT_OF_ENGLAND_IDENTITIES = {
     ("anglo-welsh", "base:trevor"),
     ("black-prince", "base:chirk-north-wales"),
     ("black-prince", "base:falkirk-scotland"),
+    ("marine-cruises", "base:falkirk-marina"),
+    ("cambrian-cruisers", "base:ty-newydd-pencelli"),
+    ("beacon-park-boats", "base:llangattock"),
     ("canal-holidays", "base:10"),
     ("canal-holidays", "base:20"),
     ("canal-holidays", "base:23"),
@@ -440,6 +443,87 @@ def test_nonexcluded_rows_are_coordinate_and_evidence_ready():
     assert not problems, "unresolved boat-hire rows:\n" + "\n".join(
         f"- {problem}" for problem in problems
     )
+
+
+OURBOATS_BASE_ATTESTATIONS = {
+    ("shire-cruisers", "base:sowerby-bridge"): (
+        "53.709957",
+        "-1.903440",
+        "https://www.shirecruisers.co.uk/about/find-us-sowerby-bridge.php",
+        "",
+    ),
+    ("shire-cruisers", "base:barnoldswick"): (
+        "53.913162",
+        "-2.174942",
+        "https://www.shirecruisers.co.uk/about/find-us-barnoldswick.php",
+        "",
+    ),
+    ("marine-cruises", "base:swanley-bridge-marina"): (
+        "53.0731203", "-2.5747632", "https://marinecruises.co.uk/swanley-bridge-marina.htm", ""
+    ),
+    ("marine-cruises", "base:falkirk-marina"): (
+        "56.000301", "-3.841953", "https://marinecruises.co.uk/falkirk-marina.htm", "true"
+    ),
+    ("chas-hardern-boats", "base:beeston-castle-wharf"): (
+        "53.135", "-2.671", "https://www.chashardern.co.uk/contact-us.htm", ""
+    ),
+    ("rose-narrowboats", "base:stretton-stop"): (
+        "52.4224899", "-1.3555092", "https://www.rose-narrowboats.co.uk/how-to-find-us.html", ""
+    ),
+    ("cambrian-cruisers", "base:ty-newydd-pencelli"): (
+        "51.9245689", "-3.3283138", "https://www.cambriancruisers.co.uk/contact", "true"
+    ),
+    ("beacon-park-boats", "base:llangattock"): (
+        "", "", "https://beaconparkboats.com/contact", "true"
+    ),
+    ("norbury-wharf", "base:norbury-junction"): (
+        "52.8029796", "-2.3074336", "https://www.norburywharfltd.co.uk/contact-us/", ""
+    ),
+    ("starline-narrowboats", "base:stourport-marina"): (
+        "52.3265559", "-2.2690314", "https://www.starlinenarrowboats.co.uk/routes.html", ""
+    ),
+    ("fox-narrowboats", "base:march-wharf"): (
+        "52.5553134298208", "0.061396416448774305", "https://www.foxboats.co.uk/contact-us/", ""
+    ),
+    ("kate-boats", "base:stockton-top-marina"): (
+        "52.2827551", "-1.3608859", "https://www.kateboats.co.uk/how-to-find-us/", ""
+    ),
+    ("college-cruisers", "base:combe-road-wharf"): (
+        "51.7581917", "-1.2703537", "https://www.collegecruisers.com/boat-yard-services/", ""
+    ),
+    ("oxfordshire-narrowboats", "base:lower-heyford"): (
+        "51.9187513", "-1.2984992", "https://www.oxfordshire-narrowboats.co.uk/new-page", ""
+    ),
+    ("oxfordshire-narrowboats", "base:bradford-on-avon"): (
+        "51.3411477", "-2.2524255", "https://www.oxfordshire-narrowboats.co.uk/new-page", ""
+    ),
+    ("white-horse-boats", "base:devizes-wharf"): (
+        "51.3553014", "-1.9953834", "https://whitehorsenarrowboats.co.uk/contact", ""
+    ),
+    ("foxhangers", "base:lower-foxhangers"): (
+        "51.3537852", "-2.0512676", "https://www.foxhangers.co.uk/contact-2/", ""
+    ),
+    ("wyvern-shipping", "base:leighton-buzzard"): (
+        "51.922869", "-0.667910", "https://www.canalholidays.co.uk/contact-us/", ""
+    ),
+    ("honeystreet-boats", "base:honeystreet-mill"): (
+        "51.3535269", "-1.8534747", "https://www.honeystreetboats.co.uk/about-us/", ""
+    ),
+}
+
+
+def test_ourboats_member_bases_are_offline_attested():
+    with CSV_PATH.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+
+    found = {
+        (row["source_provider_id"], row["location_id"]): (
+            row["latitude"], row["longitude"], row["source_url"], row["exclude"]
+        )
+        for row in rows
+        if (row["source_provider_id"], row["location_id"]) in OURBOATS_BASE_ATTESTATIONS
+    }
+    assert found == OURBOATS_BASE_ATTESTATIONS
 
 
 CANAL_HOLIDAYS_BASE_62_ATTESTATION = {
