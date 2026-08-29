@@ -51,6 +51,17 @@ const placeResponse = (osmType: 'node' | 'way' | 'relation', osmId: number, kind
   },
 });
 
+const boatHirePlace = (providerId: string, locationId: string): PlaceResponse => ({
+  kind: 'boat_hire', name: locationId, coordinate: { lat: 51.2, lon: -1.2 },
+  target_id: null, distance_to_target_m: null,
+  waterway_distance_m: 20, distance_to_full_route_m: 30, distance_to_selected_geometry_m: null,
+  provenance: {
+    source: 'boat_hire', provider_id: providerId, provider_name: providerId,
+    location_id: locationId, location_name: locationId,
+    provider_url: null, osm_url: null, evidence_url: null, booking_url: null,
+  },
+});
+
 function viewportMap(setCallback: (callback: (bounds: MapBounds) => void) => void): MapView {
   return {
     marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), places: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
@@ -701,6 +712,72 @@ describe('trip store', () => {
     await store.refreshPlaces({ south: 50, west: -2, north: 54, east: 0 });
 
     expect(get(store).places.places).toEqual([osm, hire]);
+  });
+
+  it('keeps colon-containing boat-hire identities distinct when merging groups', async () => {
+    const first = boatHirePlace('a:b', 'c');
+    const second = boatHirePlace('a', 'b:c');
+    const places = vi.fn()
+      .mockResolvedValueOnce({ places: [first] })
+      .mockResolvedValueOnce({ places: [second] });
+    const { store } = setup({ places });
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    await store.planCanalRoute({});
+    store.togglePlaceKind('boat_hire', { basis: 'route', radius_m: 2_000 });
+    store.togglePlaceKind('marina', { basis: 'waterway', radius_m: 500 });
+
+    await store.refreshPlaces({ south: 50, west: -2, north: 54, east: 0 });
+
+    expect(get(store).places.places).toEqual([first, second]);
+  });
+
+  it('does not let pending healthy health replace a runtime places outage', async () => {
+    let resolveHealth!: (value: HealthResponse) => void;
+    const placesHealth = vi.fn(() => new Promise<HealthResponse>((resolve) => { resolveHealth = resolve; }));
+    const places = vi.fn().mockRejectedValue(new PoundApiError(503, {
+      code: 'places_unavailable', message: 'Places are unavailable.', fields: [],
+    }));
+    const { store } = setup({ places, placesHealth });
+    await vi.waitFor(() => expect(placesHealth).toHaveBeenCalledOnce());
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    await store.planCanalRoute({});
+    store.togglePlaceKind('museum', { basis: 'route', radius_m: 2_000 });
+    const query = store.refreshPlaces({ south: 50, west: -2, north: 54, east: 0 });
+    await vi.waitFor(() => expect(places).toHaveBeenCalledOnce());
+    await query;
+
+    expect(get(store).placesStatus).toBe('unavailable');
+    expect(get(store).places.error).toBe('Places are unavailable.');
+    resolveHealth({ status: 'healthy', artifact_revision: 'r1', places_status: 'available' });
+    await Promise.resolve();
+    expect(get(store).placesStatus).toBe('unavailable');
+    expect(get(store).places.error).toBe('Places are unavailable.');
+  });
+
+  it('does not let pending unavailable health replace the runtime places error', async () => {
+    let resolveHealth!: (value: HealthResponse) => void;
+    const placesHealth = vi.fn(() => new Promise<HealthResponse>((resolve) => { resolveHealth = resolve; }));
+    const places = vi.fn().mockRejectedValue(new PoundApiError(503, {
+      code: 'places_unavailable', message: 'Runtime places outage.', fields: [],
+    }));
+    const { store } = setup({ places, placesHealth });
+    await vi.waitFor(() => expect(placesHealth).toHaveBeenCalledOnce());
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.setEndpointCoordinate('destination', place('destination', 53));
+    await store.planCanalRoute({});
+    store.togglePlaceKind('museum', { basis: 'route', radius_m: 2_000 });
+    const query = store.refreshPlaces({ south: 50, west: -2, north: 54, east: 0 });
+    await vi.waitFor(() => expect(places).toHaveBeenCalledOnce());
+    await query;
+
+    expect(get(store).placesStatus).toBe('unavailable');
+    expect(get(store).places.error).toBe('Runtime places outage.');
+    resolveHealth({ status: 'degraded', artifact_revision: 'r1', places_status: 'unavailable' });
+    await Promise.resolve();
+    expect(get(store).placesStatus).toBe('unavailable');
+    expect(get(store).places.error).toBe('Runtime places outage.');
   });
 
   it('refreshes selected catalog layers after route creation and clears them on replacement', async () => {

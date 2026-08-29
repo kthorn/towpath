@@ -113,8 +113,8 @@ const isPoundApiError = (value: unknown, status: number, code?: string): value i
 const placeKey = (place: PlaceResponse): string => {
   const provenance = place.provenance;
   return provenance.source === 'osm'
-    ? `osm:${provenance.osm_type}:${provenance.osm_id}`
-    : `boat_hire:${provenance.provider_id}:${provenance.location_id}`;
+    ? JSON.stringify(['osm', provenance.osm_type, provenance.osm_id])
+    : JSON.stringify(['boat_hire', provenance.provider_id, provenance.location_id]);
 };
 
 export function createTripStore(dependencies: {
@@ -151,6 +151,7 @@ export function createTripStore(dependencies: {
   let poiRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let placesRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let placesHealthPromise: Promise<HealthResponse> | undefined;
+  let placesAvailabilityGeneration = 0;
   const placesPolicies = new Map<string, PlacesQueryPolicy>();
 
   const cancelScheduledPoiRefresh = () => {
@@ -426,22 +427,22 @@ export function createTripStore(dependencies: {
         ? poundApi.health()
         : Promise.reject(new Error('Places health unavailable'));
     }
+    const healthGeneration = placesAvailabilityGeneration;
     try {
       const health = await placesHealthPromise;
+      if (healthGeneration !== placesAvailabilityGeneration) return health;
       inner.update((current) => ({
         ...current,
         placesStatus: health.places_status,
-        places: health.places_status === 'unavailable'
-          ? { ...current.places, loading: false, error: null }
-          : current.places,
       }));
       return health;
     } catch (error) {
       placesHealthPromise = undefined;
+      if (healthGeneration !== placesAvailabilityGeneration) throw error;
       inner.update((current) => ({
         ...current,
         placesStatus: 'unavailable',
-        places: { ...current.places, loading: false, error: message(error) },
+        places: { ...current.places, loading: false, error: current.places.error ?? message(error) },
       }));
       throw error;
     }
@@ -500,6 +501,7 @@ export function createTripStore(dependencies: {
       }
     }
     const places = [...placesByKey.values()];
+    if (runtimeUnavailable) placesAvailabilityGeneration += 1;
     inner.update((current) => ({
       ...current,
       placesStatus: runtimeUnavailable ? 'unavailable' : current.placesStatus,
