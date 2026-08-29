@@ -43,7 +43,7 @@ def valid_nearby_payload(**changes):
 
 
 def test_old_catalog_path_is_removed(web_client: TestClient):
-    assert web_client.post("/api/catalog-places", json={}).status_code == 404
+    assert web_client.post("/api/catalog-places", json={}).status_code == 405
 
 
 def test_places_returns_normalized_places_and_distances(web_client: TestClient):

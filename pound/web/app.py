@@ -6,12 +6,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from stat import S_ISREG
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.exception_handlers import request_validation_exception_handler
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
-from starlette.concurrency import run_in_threadpool
-from starlette.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, Request  # pyright: ignore[reportMissingImports]
+from fastapi.exception_handlers import (  # pyright: ignore[reportMissingImports]
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError  # pyright: ignore[reportMissingImports]
+from fastapi.responses import FileResponse, JSONResponse  # pyright: ignore[reportMissingImports]
+from starlette.concurrency import run_in_threadpool  # pyright: ignore[reportMissingImports]
+from starlette.staticfiles import StaticFiles  # pyright: ignore[reportMissingImports]
 
 from pound.catalog.artifact import load_catalog
 from pound.catalog.spatial import CatalogSpatialIndex
@@ -131,10 +133,6 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     assets_dir = configured_static_dir / "assets"
     if assets_dir.is_dir():
         application.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-
-    @application.post("/{client_path:path}", include_in_schema=False)
-    async def missing_post(client_path: str) -> None:
-        raise HTTPException(status_code=404)
 
     @application.get("/{client_path:path}", response_model=None)
     async def static_site(request: Request, client_path: str) -> FileResponse:
