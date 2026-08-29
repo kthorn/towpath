@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved design for implementation planning; revised after codebase review.
+Implemented; revised after codebase review.
 
 ## Goal
 

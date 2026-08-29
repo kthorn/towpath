@@ -1,6 +1,6 @@
 # Route infrastructure costs and tunnel restrictions design
 
-**Issue:** #16 — Apply movable-bridge and tunnel constraints in route cost · **Status:** Refined and approved; implementation not started
+**Issue:** #16 — Apply movable-bridge and tunnel constraints in route cost · **Status:** Implemented in PR #47
 
 ## Goal
 
