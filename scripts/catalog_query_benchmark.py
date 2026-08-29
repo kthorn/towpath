@@ -9,7 +9,9 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
+
+from shapely.geometry import LineString
 
 try:
     import resource
@@ -18,12 +20,18 @@ except ImportError:  # pragma: no cover - resource is unavailable on some platfo
 
 from pound.catalog.artifact import load_catalog
 from pound.catalog.manifest import MAX_CATALOG_RADIUS_M
-from pound.catalog.spatial import MAX_CATALOG_QUERY_WORK, CatalogSpatialIndex
+from pound.catalog.spatial import (
+    CatalogQueryLimitError,
+    CatalogQueryPolicy,
+    CatalogSpatialIndex,
+    wgs84_to_bng,
+)
 from pound.graph.artifact import load_artifact
 from pound.graph.spatial import GraphSpatialIndex
 from pound.schemas import CatalogPlacesRequest, GeoJSONLineString, MapBounds
+from pound.web.places import MAX_PLACES_QUERY_WORK, MAX_PLACES_RESULTS
 
-MAX_QUERY_WORK = MAX_CATALOG_QUERY_WORK
+MAX_QUERY_WORK = MAX_PLACES_QUERY_WORK
 DEFAULT_WARMUPS = 2
 DEFAULT_ITERATIONS = 7
 
@@ -252,22 +260,52 @@ def _rss_kib() -> int | None:
     return int(value)
 
 
-def _result_signature(result) -> tuple[int, bool, tuple[tuple[Any, ...], ...]]:
-    return (
-        result.matching_count,
-        result.over_cap,
-        tuple(place.identity for place in result.places),
+def _source_query(index: CatalogSpatialIndex, request: CatalogPlacesRequest):
+    """Adapt a legacy benchmark request to the source viewport operation."""
+
+    if request.policy.basis not in {"route", "waterway", "none"}:
+        raise ValueError(f"unsupported benchmark policy: {request.policy.basis!r}")
+    source_basis = cast(Literal["route", "waterway", "none"], request.policy.basis)
+    route_bng = (
+        wgs84_to_bng(LineString(request.route_geometry.coordinates))
+        if request.route_geometry is not None
+        else None
     )
+    day_bng = (
+        wgs84_to_bng(LineString(request.day_geometry.coordinates))
+        if request.day_geometry is not None
+        else None
+    )
+    return index.query_viewport(
+        kinds=frozenset(request.kinds),
+        bounds=request.bounds,
+        text=request.text,
+        policy=CatalogQueryPolicy(source_basis, request.policy.radius_m),
+        route_bng=route_bng,
+        day_bng=day_bng,
+        work_budget=MAX_QUERY_WORK,
+        result_budget=MAX_PLACES_RESULTS,
+    )
+
+
+def _result_signature(
+    index: CatalogSpatialIndex, request: CatalogPlacesRequest
+) -> tuple[int, bool, tuple[tuple[Any, ...], ...]]:
+    try:
+        result = _source_query(index, request)
+    except CatalogQueryLimitError as exc:
+        if exc.limit != "result":
+            raise
+        return MAX_PLACES_RESULTS + 1, True, ()
+    return len(result.matches), False, tuple(match.place.identity for match in result.matches)
 
 
 def _measure_case(
     index: CatalogSpatialIndex, case: BenchmarkCase, *, warmups: int, iterations: int
 ):
     expected = None
-    result = None
     for _ in range(warmups):
-        result = index.query(case.request)
-        signature = _result_signature(result)
+        signature = _result_signature(index, case.request)
         if expected is None:
             expected = signature
         elif signature != expected:
@@ -276,21 +314,20 @@ def _measure_case(
     latencies_ms = []
     for _ in range(iterations):
         started = time.perf_counter_ns()
-        result = index.query(case.request)
+        signature = _result_signature(index, case.request)
         elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
-        signature = _result_signature(result)
         if expected is None:
             expected = signature
         elif signature != expected:
             raise RuntimeError(f"benchmark case {case.name!r} returned non-deterministic results")
         latencies_ms.append(elapsed_ms)
 
-    if result is None:
+    if expected is None:
         raise RuntimeError(f"benchmark case {case.name!r} did not run")
     return result_payload(
         candidate_count=case.candidate_count,
-        matching_count=result.matching_count,
-        over_cap=result.over_cap,
+        matching_count=expected[0],
+        over_cap=expected[1],
         latencies_ms=latencies_ms,
         rss_kib=_rss_kib(),
     )

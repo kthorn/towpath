@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal, cast
 
-from pyproj import Transformer
+from pyproj import Transformer  # pyright: ignore[reportMissingImports]
 from shapely import transform, wkb
 from shapely.geometry import Point, box
 from shapely.geometry.base import BaseGeometry
@@ -18,6 +18,11 @@ from pound.graph.spatial import GraphSpatialIndex
 from pound.schemas import MapBounds
 
 _TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
+
+
+def wgs84_to_bng(geometry: BaseGeometry) -> BaseGeometry:
+    """Transform a validated WGS84 geometry to metric British National Grid."""
+    return transform(geometry, cast(Any, _TO_BNG.transform), interleaved=False)
 
 
 class CatalogQueryLimitError(ValueError):
@@ -102,9 +107,7 @@ class CatalogSpatialIndex:
         )
         geometries = tuple(wkb.loads(place.geometry_wkb) for place in ordered_places)
         display_points = tuple(Point(place.lon, place.lat) for place in ordered_places)
-        metric_geometries = tuple(
-            transform(geometry, _TO_BNG.transform, interleaved=False) for geometry in geometries
-        )
+        metric_geometries = tuple(wgs84_to_bng(geometry) for geometry in geometries)
         object.__setattr__(self, "places", ordered_places)
         object.__setattr__(self, "geometries", geometries)
         object.__setattr__(self, "display_points", display_points)

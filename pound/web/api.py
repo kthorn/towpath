@@ -1,10 +1,18 @@
 """HTTP API for candidate selection and pure artifact-backed routing."""
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
+from typing import Literal, cast
+
+from fastapi import APIRouter, HTTPException, Request  # pyright: ignore[reportMissingImports]
+from pydantic import (  # pyright: ignore[reportMissingImports]
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+)
+from shapely.geometry import LineString
 
 from pound.catalog.manifest import CATALOG_KINDS
-from pound.catalog.spatial import CatalogQueryLimitError
+from pound.catalog.spatial import CatalogQueryLimitError, CatalogQueryPolicy, wgs84_to_bng
 from pound.ingest.pois import RETAINED_POI_KINDS
 from pound.route.candidates import nearest_coord_candidates, select_spaced_candidates
 from pound.route.cost import resolve_movable_bridge_delay
@@ -25,6 +33,7 @@ from pound.schemas import (
 from pound.web.boat_hire import select_boat_hire_reachability
 from pound.web.config import MAX_NETWORK_TRAVEL_MINUTES
 from pound.web.network import prepare_network_geometry
+from pound.web.places import MAX_PLACES_RESULTS
 
 router = APIRouter(prefix="/api")
 
@@ -298,9 +307,43 @@ def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlace
             message="The catalog query exceeds the configured work budget.",
             fields=["bounds"],
         )
+    is_segment_query = body.policy.basis == "segment"
+    source_route_geometry = body.segment_geometry if is_segment_query else body.route_geometry
+    route_bng = (
+        wgs84_to_bng(LineString(source_route_geometry.coordinates))
+        if source_route_geometry is not None
+        else None
+    )
+    day_bng = (
+        wgs84_to_bng(LineString(body.day_geometry.coordinates))
+        if body.day_geometry is not None and not is_segment_query
+        else None
+    )
+    source_basis = cast(
+        Literal["route", "waterway", "none"],
+        "route" if is_segment_query else body.policy.basis,
+    )
+    source_policy = CatalogQueryPolicy(source_basis, body.policy.radius_m)
     try:
-        result = catalog_index.query(body)
+        result = catalog_index.query_viewport(
+            kinds=frozenset(body.kinds),
+            bounds=body.bounds,
+            text=body.text,
+            policy=source_policy,
+            route_bng=route_bng,
+            day_bng=day_bng,
+            work_budget=settings.catalog_query_work_budget,
+            result_budget=MAX_PLACES_RESULTS,
+        )
     except CatalogQueryLimitError as exc:
+        if exc.limit == "result":
+            return CatalogPlacesResponse(
+                catalog_revision=request.app.state.catalog_revision,
+                places=[],
+                matching_count=MAX_PLACES_RESULTS + 1,
+                over_cap=True,
+                day=body.day,
+            )
         raise _error(
             413,
             code="catalog_query_budget_exceeded",
@@ -316,23 +359,23 @@ def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlace
 
     places = [
         CatalogPlaceResponse(
-            identity=f"{place.osm_type.value}/{place.osm_id}/{place.kind}",
-            kind=place.kind,
-            name=place.name,
-            coordinate=Coordinate(lat=place.lat, lon=place.lon),
-            waterway_distance_m=result.waterway_distances[index],
-            distance_to_full_route_m=result.full_route_distances[index],
-            distance_to_segment_m=result.segment_distances[index],
-            distance_to_selected_geometry_m=result.selected_geometry_distances[index],
-            metadata=place.metadata,
+            identity=f"{match.place.osm_type.value}/{match.place.osm_id}/{match.place.kind}",
+            kind=match.place.kind,
+            name=match.place.name,
+            coordinate=Coordinate(lat=match.place.lat, lon=match.place.lon),
+            waterway_distance_m=None if is_segment_query else match.waterway_distance_m,
+            distance_to_full_route_m=None if is_segment_query else match.full_route_distance_m,
+            distance_to_segment_m=match.full_route_distance_m if is_segment_query else None,
+            distance_to_selected_geometry_m=match.selected_geometry_distance_m,
+            metadata=match.place.metadata,
         )
-        for index, place in enumerate(result.places)
+        for match in result.matches
     ]
     return CatalogPlacesResponse(
         catalog_revision=request.app.state.catalog_revision,
         places=places,
-        matching_count=result.matching_count,
-        over_cap=result.over_cap,
+        matching_count=len(result.matches),
+        over_cap=False,
         day=body.day,
     )
 
