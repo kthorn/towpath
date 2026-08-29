@@ -139,7 +139,7 @@ def build_benchmark_cases(catalog_revision: str, index) -> tuple[BenchmarkCase, 
     """Build deterministic representative cases and select the dense viewport.
 
     ``index`` only supplies the public ``viewport_candidate_count`` method; all
-    measured work later goes through ``CatalogSpatialIndex.query``.
+    measured work later goes through ``CatalogSpatialIndex.query_viewport``.
     """
 
     viewports = dict(_PREDEFINED_VIEWPORTS)

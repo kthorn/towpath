@@ -1,9 +1,9 @@
 from pathlib import Path
 from typing import cast
 
-import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+import pytest  # pyright: ignore[reportMissingImports]
+from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
+from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
 
 from pound.catalog.spatial import CatalogSpatialIndex
 from pound.graph.artifact import save_artifact
@@ -44,15 +44,21 @@ def test_catalog_places_returns_normalized_places_and_distances(web_client: Test
     assert body["places"][0]["metadata"]["name"] == "pub 201"
 
 
-def test_catalog_places_returns_segment_distance(web_client: TestClient):
+def test_catalog_places_preserves_route_day_and_waterway_context_for_segment(
+    web_client: TestClient,
+):
     response = web_client.post(
         "/api/catalog-places",
         json=_request(
             web_client,
-            route_geometry=None,
+            day=2,
+            day_geometry={
+                "type": "LineString",
+                "coordinates": [[-1.1, 51.002], [-0.9, 51.002]],
+            },
             segment_geometry={
                 "type": "LineString",
-                "coordinates": [[-1.1, 51.0], [-0.9, 51.0]],
+                "coordinates": [[-1.1, 51.001], [-0.9, 51.001]],
             },
             policy={"basis": "segment", "radius_m": 2_000},
         ),
@@ -60,8 +66,10 @@ def test_catalog_places_returns_segment_distance(web_client: TestClient):
 
     assert response.status_code == 200
     place = response.json()["places"][0]
-    assert place["distance_to_segment_m"] == pytest.approx(0, abs=10)
-    assert place["distance_to_full_route_m"] is None
+    assert place["distance_to_segment_m"] == pytest.approx(111, abs=10)
+    assert place["distance_to_full_route_m"] == pytest.approx(0, abs=10)
+    assert place["distance_to_selected_geometry_m"] > 0
+    assert place["waterway_distance_m"] == pytest.approx(0, abs=10)
 
 
 @pytest.mark.parametrize(

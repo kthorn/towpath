@@ -314,9 +314,14 @@ def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlace
         if source_route_geometry is not None
         else None
     )
+    full_route_bng = (
+        wgs84_to_bng(LineString(body.route_geometry.coordinates))
+        if is_segment_query and body.route_geometry is not None
+        else route_bng
+    )
     day_bng = (
         wgs84_to_bng(LineString(body.day_geometry.coordinates))
-        if body.day_geometry is not None and not is_segment_query
+        if body.day_geometry is not None
         else None
     )
     source_basis = cast(
@@ -324,15 +329,32 @@ def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlace
         "route" if is_segment_query else body.policy.basis,
     )
     source_policy = CatalogQueryPolicy(source_basis, body.policy.radius_m)
-    try:
-        result = catalog_index.query_viewport(
+
+    def query_source(*, policy, route_geometry, selected_geometry, result_budget):
+        return catalog_index.query_viewport(
             kinds=frozenset(body.kinds),
             bounds=body.bounds,
             text=body.text,
-            policy=source_policy,
-            route_bng=route_bng,
-            day_bng=day_bng,
+            policy=policy,
+            route_bng=route_geometry,
+            day_bng=selected_geometry,
             work_budget=settings.catalog_query_work_budget,
+            result_budget=result_budget,
+        )
+
+    context_result = None
+    try:
+        if is_segment_query and full_route_bng is not None:
+            context_result = query_source(
+                policy=CatalogQueryPolicy("none", None),
+                route_geometry=full_route_bng,
+                selected_geometry=day_bng,
+                result_budget=settings.catalog_query_work_budget,
+            )
+        result = query_source(
+            policy=source_policy,
+            route_geometry=route_bng,
+            selected_geometry=None if is_segment_query else day_bng,
             result_budget=MAX_PLACES_RESULTS,
         )
     except CatalogQueryLimitError as exc:
@@ -357,20 +379,39 @@ def catalog_places(body: CatalogPlacesRequest, request: Request) -> CatalogPlace
             message=str(exc),
         ) from exc
 
-    places = [
-        CatalogPlaceResponse(
-            identity=f"{match.place.osm_type.value}/{match.place.osm_id}/{match.place.kind}",
-            kind=match.place.kind,
-            name=match.place.name,
-            coordinate=Coordinate(lat=match.place.lat, lon=match.place.lon),
-            waterway_distance_m=None if is_segment_query else match.waterway_distance_m,
-            distance_to_full_route_m=None if is_segment_query else match.full_route_distance_m,
-            distance_to_segment_m=match.full_route_distance_m if is_segment_query else None,
-            distance_to_selected_geometry_m=match.selected_geometry_distance_m,
-            metadata=match.place.metadata,
+    context_by_identity = (
+        {match.place.identity: match for match in context_result.matches}
+        if context_result is not None
+        else {}
+    )
+    places = []
+    for match in result.matches:
+        context = context_by_identity.get(match.place.identity, match)
+        places.append(
+            CatalogPlaceResponse(
+                identity=f"{match.place.osm_type.value}/{match.place.osm_id}/{match.place.kind}",
+                kind=match.place.kind,
+                name=match.place.name,
+                coordinate=Coordinate(lat=match.place.lat, lon=match.place.lon),
+                waterway_distance_m=(
+                    context.waterway_distance_m
+                    if not is_segment_query or context_result is not None
+                    else None
+                ),
+                distance_to_full_route_m=(
+                    context.full_route_distance_m
+                    if not is_segment_query or context_result is not None
+                    else None
+                ),
+                distance_to_segment_m=match.full_route_distance_m if is_segment_query else None,
+                distance_to_selected_geometry_m=(
+                    context.selected_geometry_distance_m
+                    if not is_segment_query or context_result is not None
+                    else None
+                ),
+                metadata=match.place.metadata,
+            )
         )
-        for match in result.matches
-    ]
     return CatalogPlacesResponse(
         catalog_revision=request.app.state.catalog_revision,
         places=places,

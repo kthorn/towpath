@@ -1,10 +1,18 @@
 import json
 
+import networkx as nx
+
+from pound.catalog.spatial import CatalogSpatialIndex
+from pound.graph.spatial import GraphSpatialIndex
+from pound.schemas import MapBounds
 from scripts.catalog_query_benchmark import (
     MAX_QUERY_WORK,
+    _request,
+    _result_signature,
     build_benchmark_cases,
     result_payload,
 )
+from tests.web.conftest import catalog_place
 
 
 class _CandidateCounter:
@@ -45,6 +53,19 @@ def test_benchmark_cases_are_deterministic_and_include_required_contracts():
     assert first[2].request.policy.basis == "route"
     assert first[2].request.day == 2
     assert first[3].request.policy.basis == "waterway"
+
+
+def test_benchmark_signature_uses_source_viewport_adapter():
+    place = catalog_place("pub", 1, 51.0, -1.0)
+    index = CatalogSpatialIndex((place,), GraphSpatialIndex(nx.Graph()))
+    request = _request(
+        "catalog-test",
+        bounds=MapBounds(south=50.9, west=-1.1, north=51.1, east=-0.9),
+        kinds=["pub"],
+        policy={"basis": "none", "radius_m": None},
+    )
+
+    assert _result_signature(index, request) == (1, False, (place.identity,))
 
 
 def test_result_payload_is_sorted_json_with_required_latency_fields():

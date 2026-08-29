@@ -1,6 +1,8 @@
+from typing import Any, Literal, cast
+
 import networkx as nx
-import pytest
-from pyproj import Transformer
+import pytest  # pyright: ignore[reportMissingImports]
+from pyproj import Transformer  # pyright: ignore[reportMissingImports]
 from shapely import transform, wkb
 from shapely.geometry import LineString, Point
 
@@ -64,14 +66,17 @@ def _bounds(
     return MapBounds(south=south, west=west, north=north, east=east)
 
 
-def _policy(basis: str = "none", radius_m: float | None = None) -> CatalogQueryPolicy:
+def _policy(
+    basis: Literal["route", "waterway", "none"] = "none",
+    radius_m: float | None = None,
+) -> CatalogQueryPolicy:
     return CatalogQueryPolicy(basis, radius_m)
 
 
 def _route_bng() -> LineString:
     return transform(
         LineString([(-1.1, 51.0), (-0.9, 51.0)]),
-        _TO_BNG.transform,
+        cast(Any, _TO_BNG.transform),
         interleaved=False,
     )
 
@@ -112,6 +117,38 @@ def test_catalog_viewport_filters_kinds_viewport_and_keeps_deterministic_order()
     assert result.work_used == 2
 
 
+def test_unbounded_catalog_viewport_orders_by_kind_and_osm_identity():
+    node_pub = _place("pub", osm_id=9, lat=51.0, lon=-1.0)
+    way_pub = _place(
+        "pub",
+        osm_id=2,
+        lat=51.0,
+        lon=-1.0,
+        osm_type=OsmElementType.WAY,
+    )
+    museum = _place("museum", osm_id=7, lat=51.0, lon=-1.0)
+
+    result = CatalogSpatialIndex(
+        (node_pub, way_pub, museum),
+        GraphSpatialIndex(_graph()),
+    ).query_viewport(
+        kinds=frozenset({"pub", "museum"}),
+        bounds=_bounds(),
+        text="",
+        policy=_policy(),
+        route_bng=None,
+        day_bng=None,
+        work_budget=100,
+        result_budget=10,
+    )
+
+    assert [match.place.identity for match in result.matches] == [
+        museum.identity,
+        node_pub.identity,
+        way_pub.identity,
+    ]
+
+
 def test_catalog_viewport_uses_full_geometry_for_route_and_day_distances():
     index = CatalogSpatialIndex(
         (
@@ -134,7 +171,7 @@ def test_catalog_viewport_uses_full_geometry_for_route_and_day_distances():
         route_bng=_route_bng(),
         day_bng=transform(
             LineString([(-1.1, 51.003), (-0.9, 51.003)]),
-            _TO_BNG.transform,
+            cast(Any, _TO_BNG.transform),
             interleaved=False,
         ),
         work_budget=100,
@@ -298,7 +335,7 @@ def test_nearby_uses_full_area_geometry_not_representative_point():
         LineString(
             [(target_x + 99.9991, target_y - 1_000), (target_x + 99.9991, target_y + 1_000)]
         ),
-        _TO_WGS84.transform,
+        cast(Any, _TO_WGS84.transform),
         interleaved=False,
     )
     wide = _place(
