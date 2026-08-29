@@ -329,10 +329,7 @@ class PlacesIndex:
                 result_budget=result_budget,
             )
         except CatalogQueryLimitError as exc:
-            self._record_failed_catalog_work(
-                stats,
-                lambda: self.catalog_index.viewport_candidate_count(request.bounds),
-            )
+            self._record_work(stats, exc.work_used)
             if exc.limit == "result":
                 raise PlacesResultLimitError(None) from exc
             raise PlacesQueryBudgetError(["bounds"]) from exc
@@ -360,37 +357,17 @@ class PlacesIndex:
                 result_budget=result_budget,
             )
         except CatalogQueryLimitError as exc:
-            self._record_failed_catalog_work(
-                stats,
-                lambda: self._nearby_candidate_count(target_bng, request.radius_m),
-            )
+            self._record_work(stats, exc.work_used)
             if exc.limit == "result":
                 raise PlacesResultLimitError(target_id) from exc
             raise PlacesQueryBudgetError(["targets"]) from exc
         self._record_work(stats, result.work_used)
         return result
 
-    def _nearby_candidate_count(self, target_bng: BaseGeometry, radius_m: float) -> int:
-        metric_geometries = self.catalog_index.metric_geometries
-        return sum(geometry.distance(target_bng) <= radius_m for geometry in metric_geometries)
-
     @staticmethod
     def _record_work(stats: PlacesQueryStats | None, work_used: int) -> None:
         if stats is not None:
             stats.work_used += work_used
-
-    def _record_failed_catalog_work(
-        self,
-        stats: PlacesQueryStats | None,
-        candidate_count,
-    ) -> None:
-        if stats is None:
-            return
-        try:
-            work_used = int(candidate_count())
-        except (AttributeError, TypeError, ValueError):
-            return
-        stats.work_used += work_used
 
     def _scan_hire_viewport(
         self,

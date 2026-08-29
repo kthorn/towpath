@@ -376,10 +376,12 @@ def test_nearby_enforces_remaining_work_and_result_budgets():
     with pytest.raises(CatalogQueryLimitError, match="work") as work_error:
         index.query_nearby(**query, work_budget=0, result_budget=10)
     assert work_error.value.limit == "work"
+    assert work_error.value.work_used == 1
 
     with pytest.raises(CatalogQueryLimitError, match="result") as result_error:
         index.query_nearby(**query, work_budget=100, result_budget=0)
     assert result_error.value.limit == "result"
+    assert result_error.value.work_used == 1
 
 
 def test_nearby_orders_matches_by_distance_then_identity():

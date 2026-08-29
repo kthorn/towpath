@@ -29,11 +29,15 @@ class CatalogQueryLimitError(ValueError):
     """A catalog source operation exceeds one of its supplied budgets."""
 
     limit: Literal["work", "result"]
+    work_used: int
 
-    def __init__(self, limit: Literal["work", "result"]) -> None:
+    def __init__(self, limit: Literal["work", "result"], work_used: int = 0) -> None:
         if limit not in {"work", "result"}:
             raise ValueError(f"unknown catalog query limit: {limit!r}")
+        if work_used < 0:
+            raise ValueError("work_used must be nonnegative")
         self.limit = limit
+        self.work_used = work_used
         super().__init__(f"catalog query {limit} budget exceeded")
 
 
@@ -158,7 +162,7 @@ class CatalogSpatialIndex:
     @staticmethod
     def _check_work(work_used: int, work_budget: int) -> None:
         if work_used > work_budget:
-            raise CatalogQueryLimitError("work")
+            raise CatalogQueryLimitError("work", work_used)
 
     def viewport_candidate_count(self, bounds: MapBounds) -> int:
         """Return display points in bounds without running metric transformations."""
@@ -255,7 +259,7 @@ class CatalogSpatialIndex:
                 raise ValueError(f"unknown catalog query basis: {policy.basis!r}")
 
             if len(matches) >= result_budget:
-                raise CatalogQueryLimitError("result")
+                raise CatalogQueryLimitError("result", work_used)
             matches.append(
                 CatalogSourceMatch(
                     place=place,
@@ -317,7 +321,7 @@ class CatalogSpatialIndex:
             if distance_m > radius_m:
                 continue
             if len(matches) >= result_budget:
-                raise CatalogQueryLimitError("result")
+                raise CatalogQueryLimitError("result", work_used)
             matches.append(CatalogSourceMatch(place=place, distance_m=distance_m))
 
         matches.sort(
