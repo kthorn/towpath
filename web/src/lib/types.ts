@@ -31,11 +31,13 @@ export interface CanalNetworkRequest {
   boat_draft_m: number | null;
   boat_height_m: number | null;
   movable_bridge_delay_min: number | null;
+  selected_base_identity?: string | null;
 }
 
 export interface CanalNetworkResponse {
   artifact_revision: string;
   lines: GeoJSONLineString[];
+  highlight_lines: GeoJSONLineString[];
   bases: BoatHireBase[];
 }
 

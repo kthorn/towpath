@@ -35,6 +35,7 @@ export interface MapInstance {
 
 export interface MarkerInstance {
   map: MapInstance | null;
+  title: string;
 }
 
 export interface PolylineInstance {
