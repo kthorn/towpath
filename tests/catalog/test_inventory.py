@@ -6,7 +6,6 @@ from pound.catalog.manifest import (
     CATALOG_METADATA_KEYS,
     MAX_CATALOG_KINDS,
     MAX_CATALOG_RADIUS_M,
-    MAX_CATALOG_RESULTS,
 )
 
 
@@ -121,7 +120,6 @@ def test_manifest_covers_the_approved_catalog_scope_and_budgets():
     } <= CATALOG_METADATA_KEYS
     assert MAX_CATALOG_KINDS == 16
     assert MAX_CATALOG_RADIUS_M == 2_000.0
-    assert MAX_CATALOG_RESULTS == 1_000
 
 
 def test_inventory_classifies_every_approved_kind(tmp_path):

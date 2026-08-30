@@ -6,9 +6,9 @@ import type {
   CanalNetworkRequest,
   CanalNetworkResponse,
   CanalRouteResponse,
-  CatalogPlacesRequest,
-  CatalogPlacesResponse,
   HealthResponse,
+  PlacesRequest,
+  PlacesResponse,
   RoutePoisRequest,
   RoutePoisResponse,
 } from './types';
@@ -230,53 +230,72 @@ describe('createPoundApi', () => {
     });
   });
 
-  it('posts catalog queries with revision, policy, bounds, and rich metadata', async () => {
-    const response: CatalogPlacesResponse = {
-      catalog_revision: 'catalog-456',
-      places: [{
-        identity: 'node/123',
-        kind: 'museum',
-        name: 'Canal Museum',
-        coordinate: { lat: 51.5, lon: -1.2 },
-        waterway_distance_m: 45,
-        distance_to_full_route_m: 100,
-        distance_to_selected_geometry_m: null,
-        distance_to_segment_m: 25,
-        metadata: {
-          name: 'Canal Museum', alt_name: null, brand: null, operator: 'Canal Trust',
-          address: { house_number: '1', street: 'Towpath', place: null, city: 'Oxford', postcode: 'OX1' },
-          opening_hours: 'Mo-Su 10:00-17:00', access: null, fee: 'yes', wheelchair: 'yes',
-          phone: null, email: null, description: 'A museum',
-          links: [{ label: 'Website', url: 'https://example.test/museum' }], kind_details: { tourism: 'museum' },
+  it('posts viewport places queries with structured OSM and boat-hire provenance', async () => {
+    const response: PlacesResponse = {
+      places: [
+        {
+          kind: 'museum',
+          name: 'Canal Museum',
+          coordinate: { lat: 51.5, lon: -1.2 },
+          target_id: null,
+          distance_to_target_m: null,
+          distance_to_full_route_m: 100,
+          distance_to_selected_geometry_m: null,
+          waterway_distance_m: 45,
+          provenance: {
+            source: 'osm',
+            osm_type: 'node',
+            osm_id: 123,
+            metadata: {
+              name: 'Canal Museum', alt_name: null, brand: null, operator: 'Canal Trust',
+              address: { house_number: '1', street: 'Towpath', place: null, city: 'Oxford', postcode: 'OX1' },
+              opening_hours: 'Mo-Su 10:00-17:00', access: null, fee: 'yes', wheelchair: 'yes',
+              phone: null, email: null, description: 'A museum',
+              links: [{ label: 'Website', url: 'https://example.test/museum' }], kind_details: { tourism: 'museum' },
+            },
+          },
         },
-      }],
-      matching_count: 1,
-      over_cap: false,
-      day: null,
+        {
+          kind: 'boat_hire',
+          name: 'Canal Basin',
+          coordinate: { lat: 51.51, lon: -1.21 },
+          target_id: null,
+          distance_to_target_m: null,
+          distance_to_full_route_m: 120,
+          distance_to_selected_geometry_m: null,
+          waterway_distance_m: 30,
+          provenance: {
+            source: 'boat_hire', provider_id: 'provider', provider_name: 'Provider Ltd',
+            location_id: 'basin', location_name: 'Canal Basin', provider_url: 'https://provider.test',
+            osm_url: 'https://www.openstreetmap.org/way/42', evidence_url: 'https://provider.test/evidence',
+            booking_url: 'https://provider.test/book',
+          },
+        },
+      ],
     };
-    const request: CatalogPlacesRequest = {
-      catalog_revision: 'catalog-456',
-      kinds: ['museum'],
+    const request: PlacesRequest = {
+      mode: 'viewport',
+      kinds: ['museum', 'boat_hire'],
       bounds: { south: 51, west: -2, north: 52, east: 0 },
       text: 'canal museum',
-      segment_geometry: { type: 'LineString', coordinates: [[-1, 51], [-1.2, 51.5]] },
-      policy: { basis: 'segment', radius_m: 2_000 },
+      route_geometry: { type: 'LineString', coordinates: [[-1, 51], [-1.2, 51.5]] },
+      policy: { basis: 'route', radius_m: 2_000 },
     };
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } }),
     );
 
-    const result = await createPoundApi(fetchFn).catalogPlaces(request);
+    const result = await createPoundApi(fetchFn).places(request);
 
     expect(result).toEqual(response);
-    expect(fetchFn).toHaveBeenCalledWith('/api/catalog-places', {
+    expect(fetchFn).toHaveBeenCalledWith('/api/places', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
     });
   });
 
-  it('gets independent artifact and catalog health status', async () => {
+  it('gets independent artifact and places health status', async () => {
     const response: HealthResponse = {
-      status: 'degraded', artifact_revision: 'artifact-123', catalog_revision: 'catalog-456', catalog_status: 'available',
+      status: 'degraded', artifact_revision: 'artifact-123', places_status: 'available',
     };
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } }),
@@ -286,23 +305,23 @@ describe('createPoundApi', () => {
     expect(fetchFn).toHaveBeenCalledWith('/api/health', { method: 'GET' });
   });
 
-  it('preserves structured catalog unavailable and revision mismatch errors', async () => {
-    const request: CatalogPlacesRequest = {
-      catalog_revision: 'catalog-456', kinds: ['pub'],
+  it('preserves structured places unavailable and result-limit errors', async () => {
+    const request: PlacesRequest = {
+      mode: 'viewport', kinds: ['pub'],
       bounds: { south: 51, west: -2, north: 52, east: 0 }, policy: { basis: 'none' },
     };
     const unavailable = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
-      detail: { code: 'catalog_unavailable', message: 'Catalog is not loaded.', fields: [] },
+      detail: { code: 'places_unavailable', message: 'Places are not loaded.', fields: [] },
     }), { status: 503, headers: { 'Content-Type': 'application/json' } }));
-    await expect(createPoundApi(unavailable).catalogPlaces(request)).rejects.toMatchObject({
-      status: 503, code: 'catalog_unavailable', message: 'Catalog is not loaded.', fields: [],
+    await expect(createPoundApi(unavailable).places(request)).rejects.toMatchObject({
+      status: 503, code: 'places_unavailable', message: 'Places are not loaded.', fields: [],
     });
 
-    const mismatch = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
-      detail: { code: 'catalog_revision_mismatch', message: 'Refresh catalog health.', fields: ['catalog_revision'] },
-    }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
-    await expect(createPoundApi(mismatch).catalogPlaces(request)).rejects.toMatchObject({
-      status: 409, code: 'catalog_revision_mismatch', fields: ['catalog_revision'],
+    const limited = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      detail: { code: 'places_result_limit_exceeded', message: 'Narrow the places query.', fields: [] },
+    }), { status: 413, headers: { 'Content-Type': 'application/json' } }));
+    await expect(createPoundApi(limited).places(request)).rejects.toMatchObject({
+      status: 413, code: 'places_result_limit_exceeded', fields: [],
     });
   });
 

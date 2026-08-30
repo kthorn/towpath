@@ -3,8 +3,8 @@ from collections.abc import Generator
 from pathlib import Path
 
 import networkx as nx
-import pytest
-from fastapi.testclient import TestClient
+import pytest  # pyright: ignore[reportMissingImports]
+from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
 from shapely import wkb
 from shapely.geometry import Point
 
@@ -55,7 +55,9 @@ def artifact_metadata(revision: str, *, source: str = "test") -> dict:
     }
 
 
-def write_boat_hire_row(location_id: str, latitude: str, longitude: str) -> dict[str, str]:
+def write_boat_hire_row(
+    location_id: str, latitude: str, longitude: str, osm_node_id: int
+) -> dict[str, str]:
     row = dict.fromkeys(BOAT_HIRE_ENRICHMENT_FIELDS, "")
     row.update(
         record_type="company_base",
@@ -63,7 +65,7 @@ def write_boat_hire_row(location_id: str, latitude: str, longitude: str) -> dict
         location_id=location_id,
         latitude=latitude,
         longitude=longitude,
-        osm_url=f"https://www.openstreetmap.org/node/{location_id}",
+        osm_url=f"https://www.openstreetmap.org/node/{osm_node_id}",
         exclude="",
     )
     return row
@@ -74,11 +76,19 @@ def write_boat_hire_enrichment(
     *,
     rows: list[dict[str, str]] | None = None,
 ) -> Path:
-    default = write_boat_hire_row("base:test", "51.0", "-1.0")
+    default = write_boat_hire_row("base:test", "51.0", "-1.0", 1)
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=BOAT_HIRE_ENRICHMENT_FIELDS)
         writer.writeheader()
-        writer.writerows(rows if rows is not None else [default])
+        if rows is None:
+            writer.writerows([default])
+        else:
+            merged = []
+            for row in rows:
+                m = default.copy()
+                m.update(row)
+                merged.append(m)
+            writer.writerows(merged)
     return path
 
 
@@ -198,6 +208,15 @@ def fixture_pois() -> tuple[PointOfInterest, ...]:
 
 @pytest.fixture
 def web_client(tmp_path: Path, route_graph: nx.Graph) -> Generator[TestClient, None, None]:
+    yield from build_web_client(tmp_path, route_graph, boat_hire_rows=None)
+
+
+def build_web_client(
+    tmp_path: Path,
+    route_graph: nx.Graph,
+    *,
+    boat_hire_rows: list[dict[str, str]] | None,
+) -> Generator[TestClient, None, None]:
     artifact_path = tmp_path / "graph.pkl"
     save_artifact(route_graph, fixture_pois(), artifact_path, artifact_metadata("revision-test"))
     catalog_path = tmp_path / "catalog.pkl"
@@ -221,15 +240,36 @@ def web_client(tmp_path: Path, route_graph: nx.Graph) -> Generator[TestClient, N
         static_dir=tmp_path / "static",
         boat_hire_enrichment_path=write_boat_hire_enrichment(
             tmp_path / "boat-hire.csv",
-            rows=[
-                write_boat_hire_row("base:test", "51.0", "-1.0"),
-                write_boat_hire_row("base:two", "51.001", "-1.001"),
-            ],
+            rows=boat_hire_rows if boat_hire_rows is not None else None,
         ),
         catalog_path=catalog_path,
         candidate_pool_size=3,
         google_destination_limit=2,
         minimum_candidate_spacing_m=0,
+    )
+    with TestClient(create_app(settings)) as client:
+        yield client
+
+
+@pytest.fixture
+def client_without_catalog(
+    tmp_path: Path, route_graph: nx.Graph
+) -> Generator[TestClient, None, None]:
+    artifact_path = tmp_path / "graph.pkl"
+    save_artifact(route_graph, fixture_pois(), artifact_path, artifact_metadata("revision-test"))
+    settings = WebSettings(
+        artifact_path=artifact_path,
+        static_dir=tmp_path / "static",
+        boat_hire_enrichment_path=write_boat_hire_enrichment(
+            tmp_path / "boat-hire.csv",
+            rows=[
+                {
+                    "source_provider_id": "test-provider",
+                    "location_id": "base:test",
+                    "exclude": "true",
+                }
+            ],
+        ),
     )
     with TestClient(create_app(settings)) as client:
         yield client

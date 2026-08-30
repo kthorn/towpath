@@ -131,11 +131,9 @@ function setup(
 		enabledPoiKinds: [],
 		routePois: null,
 		poiError: null,
-		catalog: { enabledKinds: [], places: [], loading: false, error: null },
-		catalogRevision: null,
-		catalogStatus: "unknown",
-		catalogMatchingCount: 0,
-		catalogOverCap: false,
+		places: { enabledKinds: [], places: [], loading: false, error: null },
+		placesStatus: "unknown",
+		placesResultLimitExceeded: false,
 	};
 	const inner = writable(state);
 	const calls: Array<{
@@ -153,9 +151,9 @@ function setup(
 		togglePoiKind: vi.fn(),
 		selectDay: vi.fn(),
 		refreshRoutePois: vi.fn(async () => {}),
-		toggleCatalogKind: vi.fn(),
-		toggleCatalogKinds: vi.fn(),
-		refreshCatalogPlaces: vi.fn(async () => {}),
+		togglePlaceKind: vi.fn(),
+		togglePlaceKinds: vi.fn(),
+		refreshPlaces: vi.fn(async () => {}),
 		reset: vi.fn(),
 		selectHireBase: vi.fn(),
 		setNetworkRequest: vi.fn(),
@@ -180,7 +178,7 @@ function setup(
 			(_bases: never[], _selectedIdentity: string | null) => {},
 		),
 		fitNetwork: vi.fn(),
-		catalogPlaces: vi.fn(),
+		places: vi.fn(),
 		pois: vi.fn(),
 		locks: vi.fn(),
 		day: vi.fn(),
@@ -481,7 +479,7 @@ describe("trip planning interface", () => {
 		expect(hours).toHaveAttribute("max", "24");
 		expect(
 			screen.getByText(
-				/The map shows the one-way cruising reach from any hire base for the selected Days and Hours per day, capped at 168 cruising hours\./,
+				/The map shows canal routes that can return to the same hire base within the selected Days and Hours per day, capped at 168 cruising hours\./,
 			),
 		).toBeVisible();
 		await fireEvent.input(days, { target: { value: "4" } });
@@ -685,7 +683,7 @@ describe("trip planning interface", () => {
 		await fireEvent.click(dayButton);
 		await fireEvent.click(dayButton);
 
-		expect(store.toggleCatalogKinds).toHaveBeenCalledWith(
+		expect(store.togglePlaceKinds).toHaveBeenCalledWith(
 			["pub", "cafe", "restaurant"],
 			{ basis: "route", radius_m: 2_000 },
 		);
@@ -799,7 +797,7 @@ describe("trip planning interface", () => {
 				(_bases: never[], _selectedIdentity: string | null) => {},
 			),
 			fitNetwork: vi.fn(),
-			catalogPlaces: vi.fn(),
+			places: vi.fn(),
 			pois: vi.fn(),
 			locks: vi.fn(),
 			day: vi.fn(),
@@ -821,7 +819,7 @@ describe("trip planning interface", () => {
 				(_bases: never[], _selectedIdentity: string | null) => {},
 			),
 			fitNetwork: vi.fn(),
-			catalogPlaces: vi.fn(),
+			places: vi.fn(),
 			pois: vi.fn(),
 			locks: vi.fn(),
 			day: vi.fn(),

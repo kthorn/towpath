@@ -62,11 +62,46 @@ POUND_STATIC_DIR=web/dist \
 uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Confirm that the backend loaded the artifact and reports its revision:
+Confirm that the backend loaded the artifact and reports its routing status:
 
 ```bash
 curl http://127.0.0.1:8000/api/health
 ```
+
+### Places API
+
+The unified places endpoint is `POST /api/places`. It is available only when
+both the OSM catalog and the required curated boat-hire CSV loaded successfully.
+Without a configured catalog, routing remains healthy while
+`places_status` is `unavailable`; a configured catalog that is missing or
+invalid makes health `degraded` and places requests return `503` with no partial
+results. Successful responses contain only a `places` list: there is no public
+catalog revision, day-number, segment-policy, matching-count, or over-cap field.
+
+Viewport mode preserves map-layer filtering:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/places \
+  -H 'content-type: application/json' \
+  -d '{"mode":"viewport","kinds":["pub","marina"],"bounds":{"south":51.0,"west":-2.0,"north":52.0,"east":-1.0},"policy":{"basis":"none"}}'
+```
+
+Nearby mode accepts caller-named points or full LineString targets and batches
+up to `POUND_PLACES_MAX_TARGETS` targets:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/places \
+  -H 'content-type: application/json' \
+  -d '{"mode":"nearby","kinds":["pub","boat_hire"],"radius_m":1000,"targets":[{"id":"stop","geometry":{"type":"Point","coordinates":[-1.0,51.0]}}]}'
+```
+
+OSM results retain structured element type/ID and normalized metadata. Public
+boat-hire results come only from non-excluded `company_base` CSV rows and retain
+provider/location identities plus validated source links; `review_positive` rows
+are curation evidence, not public providers. An exact canonical OSM identity
+suppresses its OSM result only when the matching hire row is emitted. Coordinates,
+names, proximity, and other URLs are not deduplication evidence, so distinct
+providers at one base remain distinct.
 
 In another terminal, start Vite:
 
@@ -93,21 +128,23 @@ scenario below. Keep generated artifacts outside version control.
 FastAPI supports these environment variables:
 
 - `POUND_ARTIFACT_PATH` (required): graph artifact loaded once at startup.
-- `POUND_BOAT_HIRE_ENRICHMENT_PATH` (required): curated CSV seeds the displayed
-  boat-hire network overlay only; the graph, routing, candidates, POIs, and
-  catalog remain complete.
+- `POUND_BOAT_HIRE_ENRICHMENT_PATH` (required): curated CSV supplies boat-hire
+  graph/network overlay behavior and public `/api/places` `boat_hire` records
+  and provenance; it does not filter or replace the graph, routing, candidates,
+  POIs, or OSM catalog.
 - `POUND_STATIC_DIR` (default `web/dist`): production frontend files.
 - `POUND_CANDIDATE_POOL_SIZE` (default `20`): geometric candidates considered.
 - `POUND_GOOGLE_DESTINATION_LIMIT` (default `10`): candidates returned for the
   browser's Google route matrix request.
 - `POUND_MINIMUM_CANDIDATE_SPACING_M` (default `250`): candidate separation.
 - `POUND_CATALOG_PATH` (optional): independent OSM catalog artifact. If unset,
-  routing still starts and `/api/health` reports `catalog_status: unavailable`.
+  routing still starts and `/api/health` reports `places_status: unavailable`.
 - `POUND_CATALOG_MAX_KINDS` (default `16`), `POUND_CATALOG_MAX_RADIUS_M`
   (default `2000`), `POUND_CATALOG_MAX_VIEWPORT_SPAN_DEG` (default `10`),
   `POUND_CATALOG_MAX_ROUTE_VERTICES` (default `10000`), and
-  `POUND_CATALOG_QUERY_WORK_BUDGET` (default `100000` candidate checks) bound
-  catalog queries.
+  `POUND_CATALOG_QUERY_WORK_BUDGET` (default `100000` candidate checks) bind
+  both `/api/places` modes.
+- `POUND_PLACES_MAX_TARGETS` (default `64`) bounds nearby target batches.
 
 Candidate UIDs are valid only for their artifact revision. If the backend
 reports `artifact_revision_mismatch`, ensure the rebuilt artifact is deployed,
@@ -132,7 +169,7 @@ and alerts, and monitor request/error dashboards before sharing a deployment.
 Google map, autocomplete, and route-matrix requests are made by the browser and
 may be billable.
 
-**Catalog Google-link policy (URL-only MVP):** catalog markers expose an
+**OSM place Google-link policy (URL-only MVP):** OSM markers expose an
 external `Search on Google Maps` link built as a URL-encoded
 `https://www.google.com/maps/search/?api=1&query=...` using the OSM name plus
 address/locality, or the OSM name plus coordinates when locality is absent. It
@@ -187,10 +224,11 @@ safe mooring, pedestrian entrance, or vehicle drop-off.
 ### Canal network view
 
 The map sends the live `Days` × `Hours per day` schedule and saved boat settings
-to `POST /api/canal-network`. It shows active hire-base markers and one-way
-reach from any base, defaulting to 7 × 6 hours and capping reach at 168 cruising
-hours. This filters only the background display; routing, candidates, POIs, and
-the catalog continue to use the full graph.
+to `POST /api/canal-network`. It shows active hire-base markers and canal routes
+that can return to the same base within the selected schedule, defaulting to
+7 × 6 hours and capping the return trip at 168 cruising hours. This filters only
+the background display; routing, candidates, POIs, and the catalog continue to
+use the full graph.
 
 ### Route overlays and POI layers
 
@@ -354,60 +392,67 @@ peak RSS**. The explicit build gates are: exactly 185,029 records for the same
 source/filter (a source refresh requires a new inventory review), artifact size
 <= **100,000,000 bytes**, build wall time <= **300 s**, and build peak RSS <=
 **3,000,000 KiB**. The real build baseline passes all four build gates. The
-benchmark run rebuilt the catalog from `/home/kurtt/towpath/pound/data/england.osm.pbf`
+benchmark run rebuilt the catalog from `pound/data/england.osm.pbf`
 into a temporary artifact; `/usr/bin/time` measured **211.32 s** wall time and
 **2,527,792 KiB** peak RSS, also passing the build gates.
 
-A fresh nationwide startup/index-load measurement used a newly generated
-temporary **185,029-place** catalog artifact, the existing England graph
-artifact, and actual `GraphSpatialIndex` plus `CatalogSpatialIndex`
-construction. The measured process took **117.531 s** wall time and reached
-**4,195,472 KiB** maximum RSS. `/usr/bin/time` reported **131.17 s** elapsed,
-with **121.11 s** user time and **10.91 s** system time. Applying 10% headroom,
-the nationwide startup/index-load gates are <= **130 s measured inside the
-process** and <= **4,615,019 KiB** peak RSS (approximately <= **4,600,000 KiB**
-in rounded prose). The baseline passes both gates. This is a one-time startup
-cost on the measured host, not a per-query cost. Temporary files were deleted
-after the command.
+A fresh nationwide startup/index-load measurement used the validated
+**176,977-record** England catalog and the deployed England routing artifact
+(**691,564 nodes**, **691,117 edges**, and **523,636 POIs**), with actual
+`GraphSpatialIndex` plus `CatalogSpatialIndex` construction and the curated
+boat-hire seed load. The benchmark reported **98,426.135 ms** (**98.426 s**)
+of in-process startup/index-load time. `/usr/bin/time` reported **103.46 s**
+wall time, **97.71 s** user time, **6.24 s** system time, and **4,220,848 KiB**
+maximum RSS. The hard startup gates remain <= **130 s measured inside the
+process** and <= **4,615,019 KiB** peak RSS; this run passes both. Startup is a
+one-time cost on the measured host, not a per-query cost.
 
-Run the reproducible nationwide query benchmark against the generated catalog
-and the routing artifact (all paths stay outside version control):
+Run the reproducible nationwide places benchmark with the required curated
+CSV (keep output outside version control):
 
 ```bash
-uv run python scripts/catalog_query_benchmark.py \
+benchmark_json=$(mktemp)
+time_log=$(mktemp)
+trap 'rm -f "$benchmark_json" "$time_log"' EXIT
+/usr/bin/time -v uv run python scripts/catalog_query_benchmark.py \
   --catalog-artifact "$catalog_tmp/england-catalog.pkl" \
-  --routing-artifact /absolute/path/to/pound/artifacts/england.pkl \
-  --warmups 2 --iterations 5
+  --routing-artifact pound/artifacts/england.pkl \
+  --boat-hire-enrichment pound/data/boat-hire-enrichment.csv \
+  --warmups 2 --iterations 5 >"$benchmark_json" 2>"$time_log"
 ```
 
-The benchmark loads both artifacts, builds `GraphSpatialIndex` and
-`CatalogSpatialIndex`, warms every request, and times only the public
-`CatalogPlacesRequest`/`CatalogSpatialIndex.query` path. Its fixed cases are
-locality/no-policy, route+day, waterway, and the densest predefined viewport
-whose display-point candidate count is within the **100,000-candidate** work
-budget. A real England run (185,029 records; 695,932 routing nodes; 695,510
-routing edges) produced these query measurements:
+The benchmark loads both artifacts, parses the production boat-hire CSV once,
+builds `GraphSpatialIndex`, `CatalogSpatialIndex`, and `PlacesIndex`, warms
+every request, and times only `PlacesIndex.query(request, stats=stats)`. Its
+fixed cases cover locality/no-policy, route+day, waterway, the densest
+predefined viewport within the **100,000-candidate** work budget, and nearby
+point, line, and multi-target requests. The current England run produced:
 
-| Case (viewport) | Candidates | Matching / over-cap | p50 ms | p95 ms | Max ms |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| densest predefined (London) | 35,874 | 1,001 / true | 43.688 | 44.437 | 44.604 |
-| locality/no-policy (Oxford) | 1,334 | 1,001 / true | 38.462 | 39.829 | 39.838 |
-| route+day (Milton Keynes) | 802 | 73 / false | 27.919 | 28.524 | 28.555 |
-| waterway (Milton Keynes) | 802 | 39 / false | 2.651 | 3.079 | 3.172 |
+| Case | Viewport/target | Candidate work | Outcome / result count | p50 ms | p95 ms | Max ms |
+| --- | --- | ---: | --- | ---: | ---: | ---: |
+| densest predefined | London | 34,565 | result_limit_exceeded / — | 43.805 | 60.062 | 62.411 |
+| locality/no-policy | Oxford | 1,227 | result_limit_exceeded / — | 23.573 | 24.770 | 24.893 |
+| nearby-line | LineString | 91 | ok / 42 | 0.963 | 1.254 | 1.311 |
+| nearby-multi-target | Point + LineString | 108 | ok / 47 | 1.085 | 1.738 | 1.823 |
+| nearby-point | Point | 17 | ok / 5 | 0.103 | 0.106 | 0.107 |
+| route+day | Milton Keynes | 736 | ok / 73 | 12.692 | 14.527 | 14.822 |
+| waterway | Milton Keynes | 736 | ok / 39 | 2.207 | 3.388 | 3.394 |
 
-The measured query-latency gate is **p95 and max <= 50 ms for every case**.
-The worst measured p95 was **44.437 ms** and worst measured max was **44.604
-ms**, so the gate has **12.1% headroom over the worst max** on this host; this
-nationwide gate passes. The benchmark process reported **4,090,568 KiB** RSS
-(including artifact load/index construction) and took **104.23 s** wall time;
-RSS and query timing are host-specific. The benchmark JSON is sorted and records
-candidate count, matching count, over-cap state, p50, p95, max, and RSS. Keep
-its output outside the repository with the temporary artifact.
+`candidate_work` comes from the `PlacesQueryStats` instance populated by the
+same query that produced each row. `result_limit_exceeded` is the complete
+result-ceiling outcome; it does not return a partial result count. The fixed
+p50/p95/max values are a host-specific observed regression baseline, not a
+product SLA or hard latency gate. Record them for comparisons and rerun the
+benchmark on a deployment host before drawing performance conclusions. The
+hard acceptance gates remain startup/RSS plus bounded candidate-work and
+complete-result behavior. The benchmark process reported **4,220,848 KiB** RSS;
+RSS and query timing are host-specific. Its JSON is sorted and records
+candidate work, outcome/result count, p50, p95, max, and RSS.
 
 Keep the output outside version control and do not commit the PBF, catalog
-artifact, profiler output, or temporary Google spike data. The catalog revision
-is independent of `artifact_revision`, so rebuild and deploy the two artifacts
-separately.
+artifact, profiler output, or temporary Google spike data. The independently
+built catalog and routing artifacts may be deployed separately; no OSM catalog
+revision is exposed by the places request or successful response.
 
 Configure the optional catalog alongside the routing artifact when starting
 FastAPI:
@@ -419,21 +464,6 @@ POUND_CATALOG_PATH=/absolute/path/to/england-catalog.pkl \
 POUND_STATIC_DIR=web/dist \
 uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000
 ```
-
-`POST /api/catalog-places` supports an optional text filter of at most 256
-characters. Text is stripped, Unicode-casefolded, and matched by substring
-against the normalized primary or alternate OSM name. A `segment` policy
-accepts public GeoJSON `LineString` geometry and returns places within its
-radius, including the exact boundary, with `distance_to_segment_m` populated.
-Segment coordinates share the existing 10,000-coordinate request budget and
-the radius remains capped at 2,000 metres.
-
-Without `POUND_CATALOG_PATH`, routing remains available and catalog layers are
-unavailable by design. With a configured but missing or invalid catalog,
-`/api/health` reports degraded `catalog_status: unavailable`; route planning,
-locks, and day overlays remain usable. Catalog requests are bounded by the
-`POUND_CATALOG_*` settings listed above and are separate from
-`/api/route-pois`.
 
 Catalog records are OSM-derived. Keep the visible linked
 “© OpenStreetMap contributors” attribution in every catalog view and comply

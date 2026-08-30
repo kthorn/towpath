@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { BoatHireBase, CanalCandidate, CatalogPlace, GeoJSONLineString } from '../types';
+import type { BoatHireBase, CanalCandidate, PlaceResponse, GeoJSONLineString } from '../types';
 import { createGoogleMapView, type MapFacade } from './map';
 
 function candidate(uid: number): CanalCandidate {
@@ -113,35 +113,44 @@ function setup(options: { zoom?: number } = {}) {
   };
 }
 
-function catalogPlace(overrides: Partial<CatalogPlace> = {}): CatalogPlace {
+function placeResponse(
+  overrides: Partial<PlaceResponse> = {},
+  osmId = 1,
+  osmType: 'node' | 'way' | 'relation' = 'node',
+): PlaceResponse {
   return {
-    identity: 'node/1/museum',
     kind: 'museum',
     name: 'Canal Museum',
     coordinate: { lat: 51, lon: -1 },
+    target_id: null,
+    distance_to_target_m: null,
     waterway_distance_m: 120,
     distance_to_full_route_m: 450,
     distance_to_selected_geometry_m: null,
-    distance_to_segment_m: null,
-    metadata: {
-      name: 'Canal Museum',
-      alt_name: null,
-      brand: null,
-      operator: null,
-      address: { house_number: '1', street: 'Canal Road', place: null, city: 'Oxford', postcode: 'OX1' },
-      opening_hours: 'Mo-Su 10:00-17:00',
-      access: null,
-      fee: 'yes',
-      wheelchair: 'yes',
-      phone: null,
-      email: null,
-      description: 'A museum beside the water.',
-      links: [
-        { label: 'OpenStreetMap', url: 'https://www.openstreetmap.org/node/1' },
-        { label: 'Website', url: 'https://example.test/museum' },
-        { label: 'Unsafe', url: 'javascript:alert(1)' },
-      ],
-      kind_details: {},
+    provenance: {
+      source: 'osm',
+      osm_type: osmType,
+      osm_id: osmId,
+      metadata: {
+        name: 'Canal Museum',
+        alt_name: null,
+        brand: null,
+        operator: null,
+        address: { house_number: '1', street: 'Canal Road', place: null, city: 'Oxford', postcode: 'OX1' },
+        opening_hours: 'Mo-Su 10:00-17:00',
+        access: null,
+        fee: 'yes',
+        wheelchair: 'yes',
+        phone: null,
+        email: null,
+        description: 'A museum beside the water.',
+        links: [
+          { label: 'OpenStreetMap', url: 'https://www.openstreetmap.org/node/1' },
+          { label: 'Website', url: 'https://example.test/museum' },
+          { label: 'Unsafe', url: 'javascript:alert(1)' },
+        ],
+        kind_details: {},
+      },
     },
     ...overrides,
   };
@@ -628,11 +637,11 @@ describe('Google map adapter', () => {
 
   it('assigns grouped catalog glyphs, titles, and name/kind hover tooltips', () => {
     const { view, element, facade, markerListeners } = setup();
-    view.catalogPlaces!([
-      catalogPlace(),
-      catalogPlace({ identity: 'node/2/pub', kind: 'pub', name: 'The Navigation' }),
-      catalogPlace({ identity: 'node/3/supermarket', kind: 'supermarket', name: 'Market' }),
-      catalogPlace({ identity: 'node/4/marina', kind: 'marina', name: 'Marina' }),
+    view.places!([
+      placeResponse(),
+      placeResponse({ kind: 'pub', name: 'The Navigation' }, 2),
+      placeResponse({ kind: 'supermarket', name: 'Market' }, 3),
+      placeResponse({ kind: 'marina', name: 'Marina' }, 4),
     ]);
 
     const markerCalls = vi.mocked(facade.createMarker).mock.calls;
@@ -655,9 +664,9 @@ describe('Google map adapter', () => {
     expect(element.querySelector('[role="tooltip"]')).toBeNull();
   });
 
-  it('opens safe catalog metadata links in the shared info window and stops marker clicks', () => {
+  it('opens safe OSM metadata links and derives the structured OSM link', () => {
     const { view, facade, markerListeners, infoWindow } = setup();
-    view.catalogPlaces!([catalogPlace()]);
+    view.places!([placeResponse({}, 42, 'way')]);
     const click = markerListeners.find(({ event }) => event === 'click');
     const stopPropagation = vi.fn();
     click?.callback({ stopPropagation } as never);
@@ -672,9 +681,50 @@ describe('Google map adapter', () => {
     expect(content.querySelector('a[href^="https://www.google.com/maps/search/?api=1&query="]')).toHaveAttribute('target', '_blank');
     expect(content.querySelector('a[href^="https://www.google.com/maps/search/?api=1&query="]')).toHaveAttribute('rel', 'noopener noreferrer');
     expect(content.querySelector('a[href="https://example.test/museum"]')).toHaveAttribute('target', '_blank');
-    expect(content.querySelectorAll('a[href="https://www.openstreetmap.org/node/1"]')).toHaveLength(1);
+    expect(content.querySelectorAll('a[href="https://www.openstreetmap.org/way/42"]')).toHaveLength(1);
     expect(content.querySelector('a[href^="javascript:"]')).toBeNull();
     expect(infoWindow.open).toHaveBeenCalledWith(expect.objectContaining({ anchor: markersAt(facade, 0) }));
+  });
+
+  it('renders boat-hire provenance without OSM metadata or attribution', () => {
+    const { view, facade, markerListeners, infoWindow } = setup();
+    const hire: PlaceResponse = {
+      kind: 'boat_hire',
+      name: 'Canal Basin',
+      coordinate: { lat: 51, lon: -1 },
+      target_id: null,
+      distance_to_target_m: null,
+      distance_to_full_route_m: 120,
+      distance_to_selected_geometry_m: null,
+      waterway_distance_m: 30,
+      provenance: {
+        source: 'boat_hire',
+        provider_id: 'provider',
+        provider_name: 'Provider Ltd',
+        location_id: 'basin',
+        location_name: 'Canal Basin',
+        provider_url: 'https://provider.test',
+        osm_url: 'https://www.openstreetmap.org/way/42',
+        evidence_url: 'https://provider.test/evidence',
+        booking_url: 'https://provider.test/book',
+      },
+    };
+
+    view.places!([hire]);
+    markerListeners.find(({ event }) => event === 'click')?.callback({} as never);
+
+    const content = vi.mocked(infoWindow.setContent).mock.calls.at(-1)?.[0] as HTMLElement;
+    expect(content).toHaveTextContent('Provider: Provider Ltd');
+    expect(content).toHaveTextContent('Location: Canal Basin');
+    expect(content).not.toHaveTextContent('Opening hours');
+    expect(content).not.toHaveTextContent('Phone');
+    expect(content).not.toHaveTextContent('Email');
+    expect(content).not.toHaveTextContent('© OpenStreetMap contributors');
+    expect(content.querySelector('a[href="https://provider.test/"]')).toHaveTextContent('Provider');
+    expect(content.querySelector('a[href="https://www.openstreetmap.org/way/42"]')).toHaveTextContent('OpenStreetMap');
+    expect(content.querySelector('a[href="https://provider.test/evidence"]')).toHaveTextContent('Evidence');
+    expect(content.querySelector('a[href="https://provider.test/book"]')).toHaveTextContent('Booking');
+    expect(vi.mocked(facade.createMarker).mock.calls[0][0].title).toContain('Canal Basin');
   });
 
   it('switches POI and lock content through one info window and centers lock chevrons', () => {
@@ -703,7 +753,7 @@ describe('Google map adapter', () => {
     const { view, mapListeners, markerListeners, infoWindowListeners, fireMapEvent } = setup();
     const endpointClick = vi.fn();
     view.onMapClick(endpointClick);
-    view.catalogPlaces!([catalogPlace()]);
+    view.places!([placeResponse()]);
     markerListeners.find(({ event }) => event === 'click')?.callback({} as never);
 
     const closeClick = infoWindowListeners.find(({ event }) => event === 'closeclick');
@@ -718,11 +768,11 @@ describe('Google map adapter', () => {
     const { view, element, mapListeners, markerListeners, markers, infoWindow, fireMapEvent } = setup();
     const endpointClick = vi.fn();
     view.onMapClick(endpointClick);
-    view.catalogPlaces!([catalogPlace()]);
+    view.places!([placeResponse()]);
     const oldMarker = markers[0];
     const oldListener = markerListeners[0];
     markerListeners.find(({ event }) => event === 'click')?.callback({} as never);
-    view.catalogPlaces!([catalogPlace({ identity: 'node/2/pub', kind: 'pub', name: 'Pub' })]);
+    view.places!([placeResponse({ kind: 'pub', name: 'Pub' }, 2)]);
     expect(oldMarker.map).toBeNull();
     expect(oldListener.remove).toHaveBeenCalled();
     expect(infoWindow.close).toHaveBeenCalled();

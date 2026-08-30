@@ -1,8 +1,10 @@
 import type {
   BoatHireBase,
+  BoatHireProvenance,
   CanalCandidate,
-  CatalogPlace,
   GeoJSONLineString,
+  OsmProvenance,
+  PlaceResponse,
   LatLon,
   MapBounds,
   RouteDayGeometry,
@@ -220,10 +222,9 @@ function safeExternalUrl(value: string): URL | undefined {
   }
 }
 
-function osmUrl(identity: string): string | undefined {
-  const [type, id] = identity.split('/');
-  if (!['node', 'way', 'relation'].includes(type ?? '') || !/^\d+$/.test(id ?? '')) return undefined;
-  return `https://www.openstreetmap.org/${type}/${id}`;
+function osmUrl(provenance: OsmProvenance): string | undefined {
+  if (!Number.isSafeInteger(provenance.osm_id) || provenance.osm_id <= 0) return undefined;
+  return `https://www.openstreetmap.org/${provenance.osm_type}/${provenance.osm_id}`;
 }
 
 function addCloseButton(documentRef: Document, root: HTMLElement, close: () => void): void {
@@ -234,7 +235,40 @@ function addCloseButton(documentRef: Document, root: HTMLElement, close: () => v
   root.prepend(button);
 }
 
-function catalogInfoContent(documentRef: Document, place: CatalogPlace, close: () => void): HTMLElement {
+function appendLinks(
+  documentRef: Document,
+  root: HTMLElement,
+  candidateLinks: Array<{ label: string; url: string | null | undefined }>,
+): void {
+  const links = documentRef.createElement('div');
+  const seenUrls = new Set<string>();
+  for (const link of candidateLinks) {
+    if (!link.url) continue;
+    const url = safeExternalUrl(link.url);
+    if (!url || seenUrls.has(url.href)) continue;
+    seenUrls.add(url.href);
+    const anchor = documentRef.createElement('a');
+    anchor.href = url.href;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.textContent = link.label;
+    links.append(anchor);
+  }
+  if (links.childElementCount) root.append(links);
+}
+
+function addPlaceDistances(documentRef: Document, root: HTMLElement, place: PlaceResponse): void {
+  if (place.distance_to_target_m !== null)
+    addInfoField(documentRef, root, 'Distance to target', distance(place.distance_to_target_m));
+  if (place.distance_to_full_route_m !== null)
+    addInfoField(documentRef, root, 'Distance to route', distance(place.distance_to_full_route_m));
+  if (place.distance_to_selected_geometry_m !== null)
+    addInfoField(documentRef, root, 'Distance to selected day', distance(place.distance_to_selected_geometry_m));
+  if (place.waterway_distance_m !== null)
+    addInfoField(documentRef, root, 'Distance to waterway', distance(place.waterway_distance_m));
+}
+
+function osmInfoContent(documentRef: Document, place: PlaceResponse, provenance: OsmProvenance, close: () => void): HTMLElement {
   const root = documentRef.createElement('article');
   root.className = 'pound-info-window';
   addCloseButton(documentRef, root, close);
@@ -242,14 +276,9 @@ function catalogInfoContent(documentRef: Document, place: CatalogPlace, close: (
   heading.textContent = place.name ?? place.kind;
   root.append(heading);
   addInfoField(documentRef, root, 'Kind', place.kind);
-  if (place.distance_to_full_route_m !== null)
-    addInfoField(documentRef, root, 'Distance to route', distance(place.distance_to_full_route_m));
-  if (place.distance_to_selected_geometry_m !== null)
-    addInfoField(documentRef, root, 'Distance to selected day', distance(place.distance_to_selected_geometry_m));
-  if (place.waterway_distance_m !== null)
-    addInfoField(documentRef, root, 'Distance to waterway', distance(place.waterway_distance_m));
+  addPlaceDistances(documentRef, root, place);
 
-  const metadata = place.metadata;
+  const metadata = provenance.metadata;
   if (metadata.alt_name) addInfoField(documentRef, root, 'Also known as', metadata.alt_name);
   if (metadata.brand) addInfoField(documentRef, root, 'Brand', metadata.brand);
   if (metadata.operator) addInfoField(documentRef, root, 'Operator', metadata.operator);
@@ -272,28 +301,40 @@ function catalogInfoContent(documentRef: Document, place: CatalogPlace, close: (
   if (metadata.description) addInfoField(documentRef, root, 'Description', metadata.description);
   for (const [key, value] of Object.entries(metadata.kind_details)) addInfoField(documentRef, root, key, value);
 
-  const links = documentRef.createElement('div');
-  const derivedOsmUrl = osmUrl(place.identity);
-  const candidateLinks = [
-    { label: 'Search on Google Maps', url: buildGoogleMapsSearchUrl(place) },
-    ...(derivedOsmUrl ? [{ label: 'OpenStreetMap', url: derivedOsmUrl }] : []),
+  const derivedOsmUrl = osmUrl(provenance);
+  appendLinks(documentRef, root, [
+    { label: 'Search on Google Maps', url: buildGoogleMapsSearchUrl({ name: place.name, coordinate: place.coordinate, metadata }) },
+    { label: 'OpenStreetMap', url: derivedOsmUrl },
     ...metadata.links,
-  ];
-  const seenUrls = new Set<string>();
-  for (const link of candidateLinks) {
-    const url = safeExternalUrl(link.url);
-    if (!url || seenUrls.has(url.href)) continue;
-    seenUrls.add(url.href);
-    const anchor = documentRef.createElement('a');
-    anchor.href = url.href;
-    anchor.target = '_blank';
-    anchor.rel = 'noopener noreferrer';
-    anchor.textContent = link.label;
-    links.append(anchor);
-  }
-  if (links.childElementCount) root.append(links);
+  ]);
   addInfoField(documentRef, root, 'Source', '© OpenStreetMap contributors');
   return root;
+}
+
+function boatHireInfoContent(documentRef: Document, place: PlaceResponse, provenance: BoatHireProvenance, close: () => void): HTMLElement {
+  const root = documentRef.createElement('article');
+  root.className = 'pound-info-window';
+  addCloseButton(documentRef, root, close);
+  const heading = documentRef.createElement('h3');
+  heading.textContent = place.name ?? provenance.location_name;
+  root.append(heading);
+  addInfoField(documentRef, root, 'Kind', place.kind);
+  addPlaceDistances(documentRef, root, place);
+  addInfoField(documentRef, root, 'Provider', `${provenance.provider_name} (${provenance.provider_id})`);
+  addInfoField(documentRef, root, 'Location', `${provenance.location_name} (${provenance.location_id})`);
+  appendLinks(documentRef, root, [
+    { label: 'Provider', url: provenance.provider_url },
+    { label: 'OpenStreetMap', url: provenance.osm_url },
+    { label: 'Evidence', url: provenance.evidence_url },
+    { label: 'Booking', url: provenance.booking_url },
+  ]);
+  return root;
+}
+
+function placeInfoContent(documentRef: Document, place: PlaceResponse, close: () => void): HTMLElement {
+  return place.provenance.source === 'osm'
+    ? osmInfoContent(documentRef, place, place.provenance, close)
+    : boatHireInfoContent(documentRef, place, place.provenance, close);
 }
 
 function poiInfoContent(documentRef: Document, poi: RoutePoi, close: () => void): HTMLElement {
@@ -633,7 +674,7 @@ export function createGoogleMapView(
       ];
       if (points.length) facade.fitBounds(map, points);
     },
-    catalogPlaces(places: CatalogPlace[]) {
+    places(places: PlaceResponse[]) {
       closeInfoWindow();
       removeMarkerGroup(catalogMarkers, catalogMarkerListeners);
       for (const place of places) {
@@ -646,7 +687,7 @@ export function createGoogleMapView(
           gmpClickable: true,
         });
         catalogMarkers.push(marker);
-        bindMarker(marker, label, () => catalogInfoContent(documentRef, place, closeInfoWindow), catalogMarkerListeners);
+        bindMarker(marker, label, () => placeInfoContent(documentRef, place, closeInfoWindow), catalogMarkerListeners);
       }
     },
     pois(pois: RoutePoi[]) {

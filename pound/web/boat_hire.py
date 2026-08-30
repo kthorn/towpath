@@ -2,8 +2,10 @@
 
 import csv
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 import networkx as nx
@@ -46,6 +48,14 @@ BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M: dict[str, float] = {
     "canal-holidays/base:62": 251.0,
 }
 _ALLOWED_EXCLUDE_VALUES = frozenset({"", "true", "false"})
+_ALLOWED_RECORD_TYPES = frozenset({"company_base", "review_positive"})
+_OSM_PATH = re.compile(r"^/(node|way|relation)/([1-9][0-9]*)$")
+
+
+@dataclass(frozen=True)
+class OsmIdentity:
+    osm_type: Literal["node", "way", "relation"]
+    osm_id: int
 
 
 @dataclass(frozen=True)
@@ -56,6 +66,19 @@ class BoatHireSeed:
     longitude: float
     source_provider_name: str = ""
     location_name: str = ""
+    record_type: str = "company_base"
+    source_provider_website: str = ""
+    osm_url: str = ""
+    evidence_url: str = ""
+    booking_url: str = ""
+
+    @property
+    def is_public_place(self) -> bool:
+        return self.record_type == "company_base"
+
+    @property
+    def osm_identity(self) -> OsmIdentity | None:
+        return _parse_osm_identity(self.osm_url)
 
     @property
     def identity(self) -> str:
@@ -79,6 +102,24 @@ class BoatHireAnchor:
 def _is_https_url(value: str) -> bool:
     parsed = urlparse(value)
     return parsed.scheme == "https" and bool(parsed.netloc)
+
+
+def _parse_osm_identity(osm_url: str) -> OsmIdentity | None:
+    if not osm_url:
+        return None
+    parsed = urlparse(osm_url)
+    match = _OSM_PATH.fullmatch(parsed.path)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "www.openstreetmap.org"
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or match is None
+    ):
+        return None
+    return OsmIdentity(cast(Any, match.group(1)), int(match.group(2)))
 
 
 def load_boat_hire_seeds(path: Path) -> tuple[BoatHireSeed, ...]:
@@ -122,6 +163,12 @@ def load_boat_hire_seeds(path: Path) -> tuple[BoatHireSeed, ...]:
                 f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) has "
                 f"unsupported exclude value {exclude!r}"
             )
+        record_type = row["record_type"]
+        if record_type not in _ALLOWED_RECORD_TYPES:
+            raise ValueError(
+                f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) has "
+                f"unsupported record_type {record_type!r}"
+            )
         if exclude == "true":
             continue
         try:
@@ -152,17 +199,26 @@ def load_boat_hire_seeds(path: Path) -> tuple[BoatHireSeed, ...]:
                 f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) "
                 "longitude must be in [-180, 180]"
             )
-        evidence_url = row["evidence_url"]
-        if evidence_url and not _is_https_url(evidence_url):
-            raise ValueError(
-                f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) "
-                "evidence_url must be an absolute HTTPS URL"
-            )
-        if not (_is_https_url(row["osm_url"]) or _is_https_url(evidence_url)):
-            raise ValueError(
-                f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) must "
-                "provide an absolute HTTPS osm_url or evidence_url"
-            )
+        if record_type == "company_base":
+            for field in ("source_provider_website", "evidence_url", "booking_url"):
+                value = row[field]
+                if value and not _is_https_url(value):
+                    raise ValueError(
+                        f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) "
+                        f"{field} must be an absolute HTTPS URL"
+                    )
+            if not (_is_https_url(row["osm_url"]) or _is_https_url(row["evidence_url"])):
+                raise ValueError(
+                    f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) must "
+                    "provide an absolute HTTPS osm_url or evidence_url"
+                )
+            osm_url = row["osm_url"]
+            if osm_url and _parse_osm_identity(osm_url) is None:
+                raise ValueError(
+                    f"Boat-hire enrichment CSV {path} row {row_number} ({identity}) "
+                    "osm_url must be a canonical https://www.openstreetmap.org/"
+                    "{node|way|relation}/{id} URL"
+                )
         seeds.append(
             BoatHireSeed(
                 provider,
@@ -171,6 +227,11 @@ def load_boat_hire_seeds(path: Path) -> tuple[BoatHireSeed, ...]:
                 longitude,
                 row["source_provider_name"],
                 row["location_name"],
+                record_type,
+                row["source_provider_website"],
+                row["osm_url"],
+                row["evidence_url"],
+                row["booking_url"],
             )
         )
     return tuple(seeds)

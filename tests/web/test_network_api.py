@@ -23,13 +23,7 @@ def test_network_post_returns_lines_and_ordered_bases(web_client: TestClient):
             "operator": "test-provider",
             "name": "base:test",
             "coordinate": {"lat": 51.0, "lon": -1.0},
-        },
-        {
-            "identity": "test-provider/base:two",
-            "operator": "test-provider",
-            "name": "base:two",
-            "coordinate": {"lat": 51.001, "lon": -1.001},
-        },
+        }
     ]
     assert response.json()["lines"]
     assert response.json()["highlight_lines"] == []
@@ -107,6 +101,23 @@ def test_unknown_selected_base_does_not_override_network_budget(web_client: Test
 
     assert response.status_code == 413
     assert response.json()["detail"]["code"] == "network_query_budget_exceeded"
+
+
+def test_network_uses_half_the_schedule_as_outward_return_trip_reach(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    captured: dict[str, object] = {}
+
+    def select(graph, _anchors, **kwargs):
+        captured.update(kwargs)
+        return graph.edge_subgraph(())
+
+    monkeypatch.setattr("pound.web.api.select_boat_hire_reachability", select)
+
+    response = web_client.post("/api/canal-network", json=_network_request())
+
+    assert response.status_code == 200
+    assert captured["cutoff_min"] == 7 * 6 * 60 / 2
 
 
 def test_network_query_over_168_hours_is_rejected(web_client: TestClient):
