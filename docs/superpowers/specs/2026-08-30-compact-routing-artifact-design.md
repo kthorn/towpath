@@ -1,6 +1,6 @@
 # Compact Routing Artifact and Build/Runtime Separation
 
-**Status:** Approved design; pending refinement
+**Status:** Refined
 
 ## 1. Context
 
@@ -110,7 +110,8 @@ The existing `pound` import namespace moves to the core distribution to minimize
 - route eligibility and traversal costs;
 - partial-edge route planning and geometry assembly;
 - graph, POI, and fixed candidate spatial indexes;
-- runtime catalog models, catalog loading, and catalog queries;
+- runtime catalog manifest/constants, metadata records, place models, restricted-unpickle loading, and
+  spatial queries;
 - shared API-neutral response models used by the server and runtime CLIs;
 - `pound-plan` and `pound-locate` diagnostic CLIs, adapted to core's projected-position primitives.
 
@@ -125,24 +126,33 @@ live only under `pound_build` and must never appear in an artifact. No compatibi
 `pound.ingest.ir` is retained because old routing artifacts are intentionally unsupported.
 
 Pure helpers currently imported by runtime from build modules also move into core: haversine distance and
-coordinate normalization from `pound.graph.build`, edge eligibility and line construction from
-`pound.graph.pois`, lock-point projection from `pound.graph.locks`, and retained runtime POI-kind constants
-from `pound.ingest.pois`. The package-boundary tests enforce this list as well as the general dependency
+coordinate normalization from `pound.graph.build`, line construction from `pound.graph.pois`, lock-point
+projection from `pound.graph.locks`, and retained runtime POI-kind constants from `pound.ingest.pois`.
+Runtime does not call `pound.ingest.filters.is_navigable`; the builder persists the explicit edge flags
+specified in Section 5.4. The package-boundary tests enforce these moves as well as the general dependency
 rule.
+
+The current catalog package is split rather than moved wholesale. Runtime manifest/constants, metadata
+records, place models, restricted-unpickle loader, and spatial queries move to core. Geometry
+normalization, `reader`, `inventory`, exhaustive validators, and the writer move to `pound-build`.
+`pound.catalog.__init__` no longer re-exports `inventory_pbf`, so importing core catalog code cannot import
+Osmium or `BuildProfiler`.
 
 ### 4.2 `pound-build`
 
 The build distribution owns:
 
 - OSM/Overpass/PBF readers and ingest intermediate models;
+- catalog inventory, source reading, geometry normalization, validation, and writing;
 - navigability filtering and source normalization;
 - detailed graph construction, lock and bridge attachment, and gazetteer construction;
 - POI discovery and offline attachment;
 - graph contraction and metric geometry simplification;
-- complete graph, geometry, POI, and metadata validation;
+- complete graph, geometry, POI, metadata, and connectivity validation, including the current
+  `pound.validate.connectivity` behavior;
 - artifact and catalog writing;
 - build profiling, diagnostics, comparison, and review tooling;
-- `pound-ingest` and build/review command entry points.
+- `pound-ingest`, `pound-boat-review`, and other build/review command entry points.
 
 Requests, Flask, and optional Osmium dependencies live here rather than in the production website
 installation.
@@ -173,7 +183,11 @@ A clean-image test must prove that `pound_build`, Requests, Flask, and Osmium ca
 
 The detailed noded graph remains a transient build representation. It is necessary to recover shared
 OSM junctions and attach source infrastructure correctly, but it is not the deployed routing model.
-Compaction runs only after source attachment and before final validation and serialization.
+Validation is staged around compaction. The detailed graph and its graph-coupled POI attachments are
+validated first, including the current 0.01-metre projected-attachment check. Accepted POIs are then
+converted to attachment-free runtime records. Compaction and one-metre simplification run afterward,
+followed by final validation of compact topology, edge geometry, runtime POI fields, provenance, and
+schema. The final validator deliberately does not repeat attachment checks against simplified geometry.
 
 ### 5.1 Protected nodes and boundaries
 
@@ -188,9 +202,10 @@ A node is retained when any of the following applies:
   simple `nx.Graph` representation.
 
 Runtime-consumed edge boundaries include OSM way identity, display name, waterway kind, boat
-dimensions, tunnel state and restrictions, movable-bridge state and identity, lock count and points,
-and access caveats. Preserving OSM way boundaries keeps existing warning and provenance semantics and
-avoids inventing aggregate edge identities.
+dimensions, tunnel state and restrictions, movable-bridge state and identity, lock count and optional
+lock points, access caveats, and the explicit candidate-eligibility flag. Missing optional `lock_points`
+is normalized to an empty tuple for comparison. Preserving OSM way boundaries keeps existing warning
+and provenance semantics and avoids inventing aggregate edge identities.
 
 When two maximal chains would contract to the same endpoint pair, one chain may use the direct edge and
 each additional chain retains one deterministic internal anchor. The compact artifact remains an
@@ -204,7 +219,9 @@ segment lengths and remains the routing and reporting authority. It is not recom
 geometry.
 
 Build-only node fields such as `osm_node_ids` are discarded after contraction. Runtime nodes retain only
-coordinates, optional names, and runtime infrastructure state.
+coordinates, optional names, and runtime infrastructure state. Hidden `graph.graph` attributes are not a
+runtime contract: source dates live in artifact metadata and the gazetteer is its explicit top-level
+section, so constructing the compact graph cannot silently lose either value.
 
 ### 5.3 One-metre geometry bound
 
@@ -217,13 +234,21 @@ Junction coordinates and protected infrastructure boundaries are edge endpoints 
 be removed by line simplification. Routing costs continue to use summed source length, so visual
 simplification does not shorten the journey model.
 
-### 5.4 Discrete infrastructure
+### 5.4 Candidate eligibility and discrete infrastructure
+
+The builder persists `candidate_eligible: bool` on every compact edge rather than making runtime
+re-derive navigability from source tags. It is false for an edge with `locks > 0`,
+`kind == WaterwayKind.LOCK`, `has_movable_bridge`, or non-empty edge `movable_bridge_ids`; otherwise it
+is true for the already-routable compact edge. Node-level bridge IDs remain protected endpoint events:
+a partial traversal toward that endpoint charges the full node event rather than scaling it. Runtime
+boat-dimension checks remain separate and request-specific.
 
 Locks and movable bridges carry discrete costs. Their edges remain bounded so no contraction smears a
 discrete event across unrelated waterway geometry. Candidate generation excludes the interior of edges
-with lock or movable-bridge costs. A projected public endpoint therefore cannot begin ambiguously on one
-side of a discrete event while being charged for the other side. Such edges remain traversable as part
-of an ordinary route.
+where `candidate_eligible` is false, but endpoints of every routable edge remain valid candidate
+positions. A fraction-zero or fraction-one handle is therefore expressible even at a junction bounded
+only by infrastructure edges, without charging a partial discrete event. Infrastructure edges remain
+traversable as ordinary full route edges.
 
 Tunnel and access restrictions remain edge attributes and boundaries. A partial endpoint edge is
 eligible only when the whole edge is eligible for the supplied boat constraints.
@@ -248,20 +273,26 @@ indexes its display points and route-corridor queries retain their current publi
 
 ## 7. Artifact contract and loading
 
-The artifact remains a trusted local pickle and receives the integer
+The routing artifact remains a trusted local pickle and receives the integer
 `ROUTING_ARTIFACT_SCHEMA_VERSION = 1`. Old artifacts have no such field and fail loudly; there is no
-dual-read path. Its logical sections are:
+dual-read path. The catalog schema increments from 2 to 3 because `OsmElementType` moves to its durable
+core module path. Catalog artifacts must be rebuilt, and the restricted unpickler's allowlist is updated
+to the new core globals while the restricted unpickler itself remains a runtime defense-in-depth
+control. The routing artifact's logical sections are:
 
 ```text
 {
   graph: compact undirected graph,
   pois: runtime POI records,
+  gazetteer: normalized place name -> source coordinate,
   metadata: {
     artifact_schema_version,
     artifact_revision,
-    source provenance,
-    build timestamp,
-    validation summary
+    source,
+    fetched_at,
+    built_at,
+    validation,
+    poi_summary
   }
 }
 ```
@@ -278,7 +309,8 @@ performs only constant-time compatibility checks:
 - the top-level payload shape is recognized;
 - `artifact_schema_version` exactly matches the runtime;
 - `artifact_revision` is present and non-empty;
-- the graph, POI collection, and metadata sections have the expected top-level container types.
+- the graph, POI collection, gazetteer, and metadata sections have the expected top-level container
+  types.
 
 It does not iterate through nodes, edges, geometry, or POIs. Missing, corrupt, or incompatible artifacts
 fail website startup loudly. Pickle is never accepted from a request or other untrusted source. The
@@ -294,9 +326,10 @@ At website startup, core derives all process-local indexes from the compact arti
 3. runtime POI points and their `STRtree`;
 4. fixed candidate samples and their `STRtree`.
 
-Candidate samples are derived rather than persisted. Every candidate-eligible edge contributes its
-endpoints and interior positions at 250-metre intervals measured along its metric polyline from the
-canonical low-UID endpoint. Shared endpoint samples are deterministically deduplicated. The fixed
+Candidate samples are derived rather than persisted. Every routable edge contributes its endpoints;
+every candidate-eligible edge also contributes interior positions at 250-metre intervals measured along
+its metric polyline from the canonical low-UID endpoint. Shared endpoint samples are deterministically
+deduplicated. The fixed
 250-metre interval replaces and removes the current `minimum_candidate_spacing_m` field and
 `POUND_MINIMUM_CANDIDATE_SPACING_M` environment variable. The existing cross-branch greedy spacing pass
 still applies after the exact projection and fixed samples are combined.
@@ -324,7 +357,8 @@ trusted by the server, which routes from the structured handle.
 
 `POST /api/canal-candidates` keeps its current location input and workflow:
 
-1. project the input onto the nearest candidate-eligible edge and include that exact projected point;
+1. choose the nearest valid position from candidate-eligible edge interiors and all routable edge
+   endpoints, then include that exact projected point;
 2. query nearby fixed samples to fill the bounded candidate pool;
 3. deduplicate and enforce the existing 250-metre spacing rule across branches;
 4. return candidates with the current artifact revision.
@@ -347,7 +381,8 @@ as a second routing model.
 For each request, core:
 
 1. validates the artifact revision, canonical edge keys, edge existence, and finite fractions;
-2. confirms that both endpoint edges are candidate-eligible and satisfy the boat constraints;
+2. confirms that each interior endpoint uses a candidate-eligible edge, permits fraction-zero/one
+   infrastructure endpoints, and applies the boat constraints to any traversed portion;
 3. derives each projected coordinate from the stored polyline;
 4. evaluates routes from the start position through either endpoint of its edge and from either endpoint
    of the destination edge to the destination position;
@@ -365,9 +400,11 @@ successful zero-distance route with no legs, days, locks, or warnings and a vali
 `[point, point]` LineString.
 
 Endpoint fractions are measured along simplified metric geometry. Partial cruising distance and time
-are the corresponding fraction of authoritative source `length_m`. Because endpoint edges contain no
-discrete lock or movable-bridge cost, proportional partial cost cannot apply half of a discrete event.
-Full intermediate edges continue to use the existing cost function unchanged.
+are the corresponding fraction of authoritative source `length_m`. A handle inside an edge is permitted
+only when that edge is candidate-eligible; a handle on an infrastructure edge must be exactly fraction
+zero or one, so proportional partial cost cannot apply half of a discrete event. Node-level movable
+bridge delay remains discrete and is never scaled by a fraction. Full intermediate edges continue to use
+the existing cost function unchanged.
 
 Route geometry slices endpoint polylines at the selected fractions, orients every segment in traversal
 order, removes duplicate joins, and emits the existing GeoJSON coordinate order. Partial endpoint legs
@@ -385,25 +422,38 @@ partial edge. Leg construction, `_path_geometry`, `_access_segments`, `_tunnel_w
 `_day_path_ranges`, and `_chunk_days` consume that traversal so partial legs participate consistently in
 geometry, totals, warnings, and day allocation.
 
+Reporting legs are independent of compact graph edges. Traversed polylines are subdivided at fixed
+250-metre metric boundaries and discrete infrastructure boundaries before greedy day packing.
+This prevents a multi-kilometre compact edge from becoming an indivisible day leg; compared with the
+current edge-based policy, the new maximum packing granularity is 250 metres. A projected endpoint name
+uses its edge name, then the nearest named endpoint, then a formatted `lat,lon` fallback. Intermediate
+virtual boundaries use the same rule, and `DayPlan.end_near` uses the final reporting leg's derived name.
+
 The graph and all spatial indexes remain immutable after startup and are shared by concurrent requests.
 
 ### 10.1 Boat-hire reachability and network overlay
 
-Boat-hire bases also become projected handles on candidate-eligible edges. The existing behavior that
+Boat-hire bases also become projected handles at valid candidate positions. The existing behavior that
 seeds both endpoints of a snapped edge at zero cost is removed because it grants free travel across a
 potentially long compact edge.
 
 Core provides a bounded multi-source reachability operation that accepts projected sources. For each
 base it seeds the two edge endpoints with their proportional partial-edge traversal costs, then runs one
-Dijkstra over the compact graph. The base edge contributes only the geometry reachable from the
-projection within the cutoff; it is clipped when neither endpoint is reachable rather than exposing the
-whole edge for free. Other overlay edges retain the current conservative rule that both endpoints must
-be within the cutoff. Multiple bases contribute the union of their reached geometry. Boat constraints
-and movable-bridge delay use the same core cost functions as route planning.
+Dijkstra over the compact graph. It returns an immutable `ReachabilityGeometry` containing full reached
+edge keys plus separate clipped source-edge polylines. `prepare_network_geometry` consumes those two
+collections directly instead of requiring an `edge_subgraph`, so clipping never mutates shared graph
+geometry. The base edge contributes only the geometry reachable from the projection within the cutoff;
+it is clipped when neither endpoint is reachable rather than exposing the whole edge for free. Other
+overlay edges retain the current conservative rule that both endpoints must be within the cutoff.
+Multiple bases contribute the union of their reached geometry. Boat constraints and movable-bridge
+delay use the same core cost functions as route planning.
 
 `BoatHireAnchor`, `snap_boat_hire_bases`, `select_boat_hire_reachability`, and `/api/canal-network` migrate
-to this projected-source behavior. Tests compare compact and detailed fixtures so contraction cannot
-silently expand or erase a base's displayed reachable network.
+to this projected-source behavior. Bases snap to the nearest valid candidate position, not an arbitrary
+infrastructure-edge interior. Tests compare compact and detailed fixtures so contraction cannot silently
+expand or erase a base's displayed reachable network. The England deployment check records every base's
+before/after snap distance, including the existing `canal-holidays/base:62` 251-metre exception; any new
+threshold breach or required exception change fails pending explicit review.
 
 ## 11. Errors
 
@@ -411,7 +461,8 @@ silently expand or erase a base's displayed reachable network.
 - Candidate or route artifact revision mismatch: HTTP 409 `artifact_revision_mismatch`.
 - Noncanonical edge, absent edge, nonfinite fraction, or fraction outside `[0, 1]`: HTTP 400 with the
   corresponding start/end field.
-- Endpoint edge unavailable under supplied boat constraints: HTTP 422 `route_unavailable`.
+- Interior handle on a non-candidate-eligible edge: HTTP 400 with the corresponding start/end field.
+- Endpoint traversal unavailable under supplied boat constraints: HTTP 422 `route_unavailable`.
 - No eligible graph path: HTTP 422 `route_unavailable`.
 - No candidate-eligible edge in a nonempty production artifact: startup failure, because serving an empty
   candidate workflow would indicate a bad build rather than a request error.
@@ -424,23 +475,39 @@ runtime deep validation.
 
 This change intentionally breaks the artifact and route API contracts.
 
-- Existing artifacts must be rebuilt; the loader does not support both graph schemas.
+- Existing routing and catalog artifacts must be rebuilt; neither loader supports both schemas.
 - Frontend `selectedUid: number` state becomes `selectedCandidateId: string` plus the selected
   `CanalPointHandle`; comparisons and map selection use the deterministic ID format from Section 9.
 - Route requests replace `start_uid` and `end_uid` with `start` and `end` handles.
 - Candidate map rendering and Google transfer ranking continue to consume returned coordinates.
-- Runtime diagnostic CLIs migrate to the single `plan_projected_route` core API; this does not add
-  raw-coordinate HTTP routing.
+- `minimum_candidate_spacing_m` and `POUND_MINIMUM_CANDIDATE_SPACING_M` are removed from settings,
+  fixtures, startup tests, environment documentation, and deployment configuration.
+- Runtime diagnostic CLIs migrate to the single `plan_projected_route` core API. `resolve_coord`
+  projects onto the nearest valid candidate position and returns a handle. `resolve_place` reads the
+  artifact's gazetteer coordinate, projects it through the same operation, and retains its current
+  50-metre tolerance. This does not add raw-coordinate HTTP routing.
+- UID-only `ResolvedConstraints`, `plan_route`, `plan_canal_route`, `plan_route_from_constraints`, and
+  `nearest_node_distances` are removed. `CanalConstraints` retains only boat/day inputs shared by the
+  projected planner. The old `labyrinth-core`/`labyrinth-agent` integration-seam comment in
+  `pound/schemas.py` has no repository consumer and is removed with the obsolete UID contract.
 - Build and review imports move from `pound.ingest`, build-oriented `pound.graph` modules, and
   `pound.review` into `pound_build`.
 - FastAPI imports move from `pound.web` into `pound_web`.
+- Catalog schema version 3 moves restricted-unpickle globals to durable core paths and removes the
+  build-only `inventory_pbf` package re-export.
+- Frontend `RouteAccessSegment` types drop `from_uid` and `to_uid`; the corresponding Python canonical
+  edge validator and UID-based sort keys are removed.
 - The deployment command becomes `uvicorn pound_web.app:app`.
 - The Docker build installs only the core and website workspace members, copies runtime files to
   `/app/artifacts` and `/app/data`, and updates environment defaults to those paths.
+- `fly.toml`, `.dockerignore`, root workspace metadata, container tests, `scripts/dev.sh`, developer
+  script tests, README commands, runbooks, and repository layout guidance are updated from
+  `pound.web.app`, `pound/artifacts`, and `pound/data` to the new entry point and runtime paths.
 
 The package move is performed in one coordinated migration. Temporary compatibility modules are not
 retained because there is one repository, one deployment, and no independently versioned external
-Python consumer.
+Python consumer. The root-level `integration-tests/` directory shown in Section 4 is created for
+cross-package and container tests; existing Playwright tests remain under `web/tests`.
 
 ## 13. Verification
 
@@ -455,7 +522,8 @@ Small deterministic fixtures prove:
 - contracted source lengths and route costs are preserved;
 - simplification keeps endpoints fixed and measured deviation at or below one metre;
 - a deviation violation or invalid simplified geometry fails the build;
-- build-only OSM identities and POI attachments are absent from the serialized runtime payload;
+- graph-coupled POI attachments pass the 0.01-metre detailed-geometry check before compaction, while
+  build-only OSM identities and POI attachments are absent from the serialized runtime payload;
 - failed validation leaves an existing artifact untouched.
 
 ### 13.2 Candidate tests
@@ -467,7 +535,8 @@ Tests prove:
 - discrete-infrastructure edge interiors are not candidates;
 - candidate pool and Google destination ceilings remain bounded;
 - handles use canonical edge order and fractions consistent with returned coordinates;
-- repeated startup over one artifact produces identical candidate records and exact deterministic IDs.
+- repeated startup over one artifact produces identical candidate records and exact deterministic IDs;
+- a junction served only by infrastructure edges remains selectable through fraction-zero/one handles.
 
 ### 13.3 Routing tests
 
@@ -478,12 +547,14 @@ Tests cover:
 - routes using each of the four start/end endpoint combinations;
 - fractions exactly zero and one;
 - geometry slicing and orientation on curved edges;
-- partial source length, cruising time, totals, and day allocation;
+- partial source length, cruising time, totals, 250-metre reporting-leg subdivision, endpoint naming,
+  and day allocation;
 - boat restrictions on endpoint and intermediate edges;
 - lock, bridge, tunnel, unknown-dimension, and access behavior;
 - deterministic tie-breaking;
 - stale, malformed, noncanonical, and absent handles;
 - no mutation of graph or indexes across sequential and concurrent requests;
+- frontend handling of a zero-leg, zero-day identical-endpoint route;
 - projected boat-hire sources pay partial-edge costs and produce bounded, clipped source-edge overlays.
 
 ### 13.4 Package-boundary and integration tests
@@ -507,6 +578,7 @@ A repeatable benchmark records, on the same machine and artifact source:
 - total website startup time;
 - peak RSS;
 - graph node, edge, and retained geometry-coordinate counts;
+- every curated boat-hire base's old/new projected edge and snap distance;
 - candidate sample count;
 - route parity results.
 
@@ -522,7 +594,8 @@ investigated before release, but the design does not require a fixed 75% reducti
   access points using land-transfer results and user confirmation.
 - Direct-coordinate HTTP routing is out of scope.
 - Candidate samples are derived at startup, fixed at 250-metre spacing, and not serialized.
-- Runtime trusts a version-compatible local artifact and does not repeat exhaustive build validation.
+- Runtime trusts version-compatible local routing and catalog artifacts, retains the catalog restricted
+  unpickler, and does not repeat exhaustive build validation.
 - Runtime POIs do not retain graph attachment fields.
 - Build, core routing, and website server become separate workspace distributions with a hard production
   dependency boundary.
