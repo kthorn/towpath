@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_container_configuration_stages_only_runtime_packages_and_data():
     dockerfile = (ROOT / "Dockerfile").read_text()
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    smoke_readme = (ROOT / "web" / "tests" / "smoke" / "README.md").read_text()
     dockerignore = (ROOT / ".dockerignore").read_text().splitlines()
 
     assert "FROM node:24-alpine AS web-builder" in dockerfile
@@ -24,6 +25,8 @@ def test_container_configuration_stages_only_runtime_packages_and_data():
     assert "COPY packages/pound-web/ packages/pound-web/" in dockerfile
     assert "COPY packages/pound-build" not in dockerfile
     assert "COPY pound/ pound/" not in dockerfile
+    assert "pound.web.app" not in dockerfile
+    assert "/app/pound/artifacts" not in dockerfile
     assert "RUN uv sync --package pound-web --no-dev --frozen" in dockerfile
     assert "COPY artifacts/ /app/artifacts/" in dockerfile
     assert "COPY data/ /app/data/" in dockerfile
@@ -46,6 +49,10 @@ def test_container_configuration_stages_only_runtime_packages_and_data():
         "    POUND_BOAT_HIRE_ENRICHMENT_PATH=/app/data/boat-hire-enrichment.csv"
     ) in dockerfile
     assert 'CMD ["uvicorn", "pound_web.app:app"' in dockerfile
+    assert "pound.web.app" not in smoke_readme
+    assert "/app/pound/artifacts" not in smoke_readme
+    assert "POUND_ARTIFACT_PATH='artifacts/england.pkl'" in smoke_readme
+    assert "POUND_BOAT_HIRE_ENRICHMENT_PATH='data/boat-hire-enrichment.csv'" in smoke_readme
     assert "artifacts/" in gitignore
     assert "data/*" in gitignore
     assert ".env*" in dockerignore

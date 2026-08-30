@@ -28,14 +28,15 @@ GOOGLE_MAPS_SMOKE=1 \
 VITE_GOOGLE_MAPS_API_KEY='restricted-browser-key' \
 VITE_GOOGLE_MAP_ID='project-map-id' \
 VITE_TRANSFER_MODE='WALK' \
-POUND_ARTIFACT_PATH='../artifacts/england.pkl' \
-POUND_BOAT_HIRE_ENRICHMENT_PATH='../data/boat-hire-enrichment.csv' \
+POUND_ARTIFACT_PATH='artifacts/england.pkl' \
+POUND_BOAT_HIRE_ENRICHMENT_PATH='data/boat-hire-enrichment.csv' \
 npm run test:smoke
 ```
 
 Although the command is launched from `web/`, Playwright starts Uvicorn with
-the repository root (`..`) as its working directory. The example's `../`
-paths are therefore relative to `web/`; absolute paths also work. The configured enrichment
+the repository root (`..`) as its working directory. Therefore relative
+`POUND_ARTIFACT_PATH` and `POUND_BOAT_HIRE_ENRICHMENT_PATH` values are
+repository-root-relative; absolute paths also work. The configured enrichment
 path must name an existing CSV before the smoke server starts.
 The runner refuses to reuse existing FastAPI or Vite servers so the acceptance
 test always exercises the supplied artifact and browser configuration.
