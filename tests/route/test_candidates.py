@@ -48,9 +48,12 @@ def test_nearest_candidates_rejects_nonpositive_limit(limit):
 
 def test_nearest_candidates_returns_empty_for_empty_graph():
     graph = nx.Graph()
-    assert nearest_coord_candidates(
-        0, 0, graph, GraphSpatialIndex(graph), artifact_revision="r", limit=3
-    ) == []
+    assert (
+        nearest_coord_candidates(
+            0, 0, graph, GraphSpatialIndex(graph), artifact_revision="r", limit=3
+        )
+        == []
+    )
 
 
 def test_nearest_candidates_uses_node_name_then_edge_name_then_fallback():
@@ -78,14 +81,17 @@ def test_nearest_candidates_uses_node_name_then_edge_name_then_fallback():
 
     isolated = nx.Graph()
     isolated.add_node(9, lat=51.0, lon=0.0)
-    assert nearest_coord_candidates(
-        51.0,
-        0.0,
-        isolated,
-        GraphSpatialIndex(isolated),
-        artifact_revision="r",
-        limit=1,
-    )[0].display_name == "Unnamed canal point"
+    assert (
+        nearest_coord_candidates(
+            51.0,
+            0.0,
+            isolated,
+            GraphSpatialIndex(isolated),
+            artifact_revision="r",
+            limit=1,
+        )[0].display_name
+        == "Unnamed canal point"
+    )
 
 
 def test_nearest_candidates_does_not_mutate_graph():
@@ -113,9 +119,7 @@ def test_indexed_candidates_equal_exhaustive_for_spherical_edge_cases(query, nod
         graph.add_node(uid, lat=lat, lon=lon)
     index = GraphSpatialIndex(graph)
 
-    result = nearest_coord_candidates(
-        *query, graph, index, artifact_revision="r", limit=limit
-    )
+    result = nearest_coord_candidates(*query, graph, index, artifact_revision="r", limit=limit)
     exhaustive = sorted(
         nodes,
         key=lambda node: (

@@ -36,9 +36,7 @@ def _infra_incident_states(features: WaterwayFeatures) -> dict[int, int]:
 
 def _non_navigable_infra_ids(features: WaterwayFeatures) -> set[int]:
     return {
-        node_id
-        for node_id, state in _infra_incident_states(features).items()
-        if state == _INCIDENT
+        node_id for node_id, state in _infra_incident_states(features).items() if state == _INCIDENT
     }
 
 
