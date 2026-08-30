@@ -106,6 +106,9 @@
     <div class="map-column">
       <fieldset class="map-target"><legend>Map click sets</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set destination from map</label></fieldset>
 		<MapCanvas load={dependencies.loadMapView} onclick={(coordinate) => dependencies.store.setEndpointCoordinate(active, coordinate)} onhirebaseselect={dependencies.store.selectHireBase} onready={(view) => dependencies.store.setMapView(view)} />
+    {#if $store.networkLoading && !$store.hasNetworkOverlay}
+      <p class="network-status" role="status">Loading canal network overlay…</p>
+    {/if}
     {#if $store.networkError}
       <p class="network-status" role="status">
         {$store.hasNetworkOverlay

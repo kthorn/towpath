@@ -65,6 +65,7 @@ export interface TripState {
   canalRoute: CanalRouteResponse | null;
   routeError: string | null;
   networkError: string | null;
+  networkLoading: boolean;
   selectedHireBaseIdentity: string | null;
   hasNetworkOverlay: boolean;
   routing: boolean;
@@ -158,7 +159,7 @@ export function createTripStore(dependencies: {
   let mapView = dependencies.mapView;
   const initial: TripState = {
     origin: emptyEndpoint(), destination: emptyEndpoint(), canalRoute: null, routeError: null, routing: false,
-    selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null, networkError: null,
+    selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null, networkError: null, networkLoading: false,
     selectedHireBaseIdentity: null, hasNetworkOverlay: false,
     catalog: { enabledKinds: [], places: [], loading: false, error: null },
     catalogRevision: null, catalogStatus: 'unknown', catalogMatchingCount: 0, catalogOverCap: false,
@@ -281,9 +282,13 @@ export function createTripStore(dependencies: {
         inner.update((current) => ({ ...current, networkError: message(error) }));
       })
       .finally(() => {
-        if (networkRequest?.generation === generation) networkRequest = undefined;
+        if (networkRequest?.generation === generation) {
+          networkRequest = undefined;
+          inner.update((current) => ({ ...current, networkLoading: false }));
+        }
       });
     networkRequest = { generation, promise };
+    inner.update((current) => ({ ...current, networkLoading: true }));
   };
   const cancelScheduledNetworkRefresh = () => {
     if (networkRefreshTimer === undefined) return;

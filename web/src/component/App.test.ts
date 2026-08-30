@@ -100,6 +100,7 @@ function setup(
 		mapReject?: boolean;
 		sameNode?: boolean;
 		networkError?: string;
+		networkLoading?: boolean;
 		hasNetworkOverlay?: boolean;
 	} = {},
 ) {
@@ -122,6 +123,7 @@ function setup(
 			: route,
 		routeError: null,
 		networkError: overrides.networkError ?? null,
+		networkLoading: overrides.networkLoading ?? false,
 		selectedHireBaseIdentity: null,
 		hasNetworkOverlay: overrides.hasNetworkOverlay ?? false,
 		routing: false,
@@ -549,6 +551,25 @@ describe("trip planning interface", () => {
 				movable_bridge_delay_min: null,
 			}),
 		);
+	});
+
+	it("reports a loading canal network overlay before the first response", () => {
+		render(App, {
+			props: {
+				dependencies: setup({ networkLoading: true }).dependencies,
+			},
+		});
+		expect(screen.getByRole("status")).toHaveTextContent(/loading canal network overlay/i);
+		expect(screen.getByRole("button", { name: /plan canal route/i })).toBeVisible();
+	});
+
+	it("does not show the loading notice once the overlay is available", () => {
+		render(App, {
+			props: {
+				dependencies: setup({ networkLoading: true, hasNetworkOverlay: true }).dependencies,
+			},
+		});
+		expect(screen.queryByText(/loading canal network overlay/i)).not.toBeInTheDocument();
 	});
 
 	it("reports an unavailable canal network overlay without blocking the planner", () => {

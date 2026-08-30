@@ -103,7 +103,54 @@ describe('trip store', () => {
     expect(canalNetwork).toHaveBeenCalledWith({ ...request, selected_base_identity: null });
     expect(map.hireBases).toHaveBeenCalledWith(network.bases, null);
     expect(map.fitNetwork).toHaveBeenCalledOnce();
-    expect(get(store)).toMatchObject({ hasNetworkOverlay: true, networkError: null });
+    expect(get(store)).toMatchObject({ hasNetworkOverlay: true, networkError: null, networkLoading: false });
+  });
+
+  it('flags the network as loading until the request settles', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveNetwork!: (value: CanalNetworkResponse) => void;
+      const canalNetwork = vi.fn(
+        (_request: CanalNetworkRequest) =>
+          new Promise<CanalNetworkResponse>((resolve) => { resolveNetwork = resolve; }),
+      );
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork });
+      store.setNetworkRequest(networkRequest());
+      store.setMapView(map);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(get(store).networkLoading).toBe(true);
+
+      resolveNetwork(networkResponse());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(get(store).networkLoading).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the loading flag when the request fails', async () => {
+    vi.useFakeTimers();
+    try {
+      let rejectNetwork!: (error: Error) => void;
+      const canalNetwork = vi.fn(
+        (_request: CanalNetworkRequest) =>
+          new Promise<CanalNetworkResponse>((_resolve, reject) => { rejectNetwork = reject; }),
+      );
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork });
+      store.setNetworkRequest(networkRequest());
+      store.setMapView(map);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(get(store).networkLoading).toBe(true);
+
+      rejectNetwork(new Error('network unavailable'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(get(store).networkLoading).toBe(false);
+      expect(get(store).networkError).toBe('network unavailable');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('posts once per current generation and ignores older network responses', async () => {
