@@ -14,14 +14,36 @@ from pound.models import (  # pyright: ignore[reportMissingImports]
     RuntimePoi,
     WayDimensions,
 )
-from pound_build.artifact import _prepare_build_artifact, prepare_artifact, write_artifact
+from pound_build.artifact import (
+    _prepare_build_artifact,
+    prepare_artifact,
+    validate_compact_graph,
+    write_artifact,
+)
+from pound_build.graph.compact import compact_graph
 from pound_build.ingest.ir import PointOfInterest
 
 
 def _graph() -> nx.Graph:
     graph = nx.Graph()
-    graph.add_node(0, lat=51.7520, lon=-1.2577, osm_node_ids={"100"}, movable_bridge_ids=())
-    graph.add_node(1, lat=51.7520, lon=-1.2560, osm_node_ids={"101"}, movable_bridge_ids=())
+    graph.add_node(
+        0,
+        lat=51.7520,
+        lon=-1.2577,
+        osm_node_ids={"100"},
+        movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
+    )
+    graph.add_node(
+        1,
+        lat=51.7520,
+        lon=-1.2560,
+        osm_node_ids={"101"},
+        movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
+    )
     graph.add_edge(
         0,
         1,
@@ -181,3 +203,15 @@ def test_trusted_build_poi_instance_is_accepted_without_revalidation(monkeypatch
     artifact = _prepare_build_artifact(_graph(), (poi,), {}, _metadata())
 
     assert artifact.pois[0].osm_id == poi.osm_id
+
+
+def test_compact_artifact_requires_turning_metadata():
+    source = _graph()
+    for data in source.nodes.values():
+        data["turning_point"] = False
+        data["turning_max_length_m"] = None
+    compact = compact_graph(source)
+    del compact.nodes[0]["turning_point"]
+
+    with pytest.raises(InvalidArtifactError, match="turning_point"):
+        validate_compact_graph(compact)

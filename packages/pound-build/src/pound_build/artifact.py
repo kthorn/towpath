@@ -24,11 +24,14 @@ from pound.geometry import (
 from pound.models import (  # pyright: ignore[reportMissingImports]
     POI_CORRIDOR_M,
     AccessCaveat,
+    OsmElementType,
+    PoiCategory,
     RuntimePoi,
 )
 from pydantic import ValidationError  # pyright: ignore[reportMissingImports]
 from shapely.geometry import Point
 
+from pound_build.graph.compact import _candidate_eligible
 from pound_build.graph.pois import (  # pyright: ignore[reportPrivateUsage,reportPrivateImportUsage]
     _routing_eligible,
     _to_bng,
@@ -46,10 +49,17 @@ _METADATA_FIELDS = {
     "validation",
     "poi_summary",
 }
-_NODE_FIELDS = {
+_DETAILED_NODE_FIELDS = {
     "lat",
     "lon",
     "osm_node_ids",
+    "movable_bridge_ids",
+    "turning_point",
+    "turning_max_length_m",
+}
+_COMPACT_NODE_FIELDS = {
+    "lat",
+    "lon",
     "movable_bridge_ids",
     "turning_point",
     "turning_max_length_m",
@@ -68,6 +78,7 @@ _EDGE_FIELDS = {
     "tunnel_restrictions",
     "access_caveats",
 }
+_COMPACT_EDGE_FIELDS = _EDGE_FIELDS | {"candidate_eligible"}
 _CORRIDOR_M = {category.value: distance for category, distance in POI_CORRIDOR_M.items()}
 
 
@@ -79,11 +90,7 @@ def _invalid(field: str, value: Any, problem: str) -> InvalidArtifactError:
 
 
 def _finite_coordinate(field: str, value: Any, lower: float, upper: float) -> None:
-    if (
-        not isinstance(value, (int, float))
-        or not math.isfinite(value)
-        or not lower <= value <= upper
-    ):
+    if type(value) not in (int, float) or not math.isfinite(value) or not lower <= value <= upper:
         raise _invalid(field, value, f"expected a finite value from {lower} through {upper}")
 
 
@@ -153,11 +160,13 @@ def _validate_access_caveats(edge: tuple[int, int], caveats: Any) -> None:
         )
 
 
-def _validate_graph(graph: Any) -> nx.Graph:
+def _validate_graph(graph: Any, *, compact: bool = False) -> nx.Graph:
     if not isinstance(graph, nx.Graph) or graph.is_directed() or graph.is_multigraph():
         raise _invalid("graph", type(graph).__name__, "expected an undirected networkx.Graph")
+    node_fields = _COMPACT_NODE_FIELDS if compact else _DETAILED_NODE_FIELDS
+    edge_fields = _COMPACT_EDGE_FIELDS if compact else _EDGE_FIELDS
     for uid, data in graph.nodes(data=True):
-        missing = _NODE_FIELDS - data.keys()
+        missing = node_fields - data.keys()
         if missing:
             attribute = sorted(missing)[0]
             raise _invalid(
@@ -183,15 +192,33 @@ def _validate_graph(graph: Any) -> nx.Graph:
                 maximum,
                 "expected None or a finite positive number",
             )
+        if compact and "osm_node_ids" in data:
+            raise _invalid(
+                f"graph node {uid} attribute osm_node_ids",
+                data["osm_node_ids"],
+                "build-only node fields are not permitted",
+            )
         _validate_sorted_bridge_ids(
             f"graph node {uid} attribute movable_bridge_ids", data["movable_bridge_ids"]
         )
     for u, v, data in graph.edges(data=True):
-        missing = _EDGE_FIELDS - data.keys()
+        missing = edge_fields - data.keys()
         if missing:
             attribute = sorted(missing)[0]
             raise _invalid(
                 f"graph edge {(u, v)} attribute {attribute}", None, "required attribute missing"
+            )
+        length_m = data["length_m"]
+        if type(length_m) not in (int, float) or not math.isfinite(length_m) or length_m < 0:
+            raise _invalid(
+                f"graph edge {(u, v)} attribute length_m",
+                length_m,
+                "expected a finite nonnegative number",
+            )
+        locks = data["locks"]
+        if type(locks) is not int or locks < 0:
+            raise _invalid(
+                f"graph edge {(u, v)} attribute locks", locks, "expected a nonnegative integer"
             )
         _validate_sorted_bridge_ids(
             f"graph edge {(u, v)} attribute movable_bridge_ids", data["movable_bridge_ids"]
@@ -218,6 +245,20 @@ def _validate_graph(graph: Any) -> nx.Graph:
                 f"graph edge {(u, v)} geometry[{index}].lon", coordinate[1], -180, 180
             )
         _validate_access_caveats((u, v), data["access_caveats"])
+        if compact:
+            candidate_eligible = data["candidate_eligible"]
+            if type(candidate_eligible) is not bool:
+                raise _invalid(
+                    f"graph edge {(u, v)} attribute candidate_eligible",
+                    candidate_eligible,
+                    "expected a boolean",
+                )
+            if candidate_eligible != _candidate_eligible(data):
+                raise _invalid(
+                    f"graph edge {(u, v)} attribute candidate_eligible",
+                    candidate_eligible,
+                    "does not match the lock and movable-bridge policy",
+                )
         if "lock_points" in data:
             lock_points = data["lock_points"]
             if not isinstance(lock_points, (list, tuple)):
@@ -320,6 +361,70 @@ def _validate_attachments(graph: nx.Graph, pois: tuple[PointOfInterest, ...]) ->
                 (poi.projected_lat, poi.projected_lon),
                 f"point is {offset_m:.6f} m from its attached edge; maximum is 0.01 m",
             )
+
+
+def validate_detailed_graph_and_attachments(
+    graph: nx.Graph, attached_pois
+) -> tuple[PointOfInterest, ...]:
+    """Validate the detailed graph and preserve the 0.01 m POI attachment gate."""
+    _validate_graph(graph)
+    try:
+        raw_pois = tuple(attached_pois)
+    except TypeError as exc:
+        raise _invalid("pois", attached_pois, "expected an iterable of attached POIs") from exc
+    parsed_pois = _parse_pois(raw_pois, trust_validated_instances=True)
+    _validate_attachments(graph, parsed_pois)
+    return parsed_pois
+
+
+def validate_compact_graph(graph: nx.Graph) -> nx.Graph:
+    """Validate the compact runtime graph contract."""
+    return _validate_graph(graph, compact=True)
+
+
+def _runtime_poi(poi: PointOfInterest) -> RuntimePoi:
+    return RuntimePoi(
+        osm_type=poi.osm_type,
+        osm_id=poi.osm_id,
+        category=poi.category,
+        kind=poi.kind,
+        name=poi.name,
+        lat=poi.lat,
+        lon=poi.lon,
+    )
+
+
+def _runtime_pois(attached_pois: tuple[PointOfInterest, ...]) -> tuple[RuntimePoi, ...]:
+    return tuple(_runtime_poi(poi) for poi in attached_pois)
+
+
+def validate_runtime_pois(pois) -> tuple[RuntimePoi, ...]:
+    """Validate attachment-free immutable runtime POI records."""
+    if not isinstance(pois, (list, tuple)):
+        raise _invalid("pois", pois, "expected a list or tuple")
+    identities = set()
+    validated: list[RuntimePoi] = []
+    for index, poi in enumerate(pois):
+        if type(poi) is not RuntimePoi:
+            raise _invalid(f"pois[{index}]", poi, "expected RuntimePoi")
+        if not isinstance(poi.osm_type, OsmElementType):
+            raise _invalid(f"pois[{index}].osm_type", poi.osm_type, "expected OsmElementType")
+        if type(poi.osm_id) is not int or poi.osm_id <= 0:
+            raise _invalid(f"pois[{index}].osm_id", poi.osm_id, "expected a positive integer")
+        if not isinstance(poi.category, PoiCategory):
+            raise _invalid(f"pois[{index}].category", poi.category, "expected PoiCategory")
+        if not isinstance(poi.kind, str) or not poi.kind:
+            raise _invalid(f"pois[{index}].kind", poi.kind, "expected a non-empty string")
+        if poi.name is not None and not isinstance(poi.name, str):
+            raise _invalid(f"pois[{index}].name", poi.name, "expected a string or null")
+        _finite_coordinate(f"pois[{index}].lat", poi.lat, -90, 90)
+        _finite_coordinate(f"pois[{index}].lon", poi.lon, -180, 180)
+        identity = (poi.osm_type, poi.osm_id, poi.kind)
+        if identity in identities:
+            raise _invalid(f"pois[{index}].identity", identity, "duplicate POI identity")
+        identities.add(identity)
+        validated.append(poi)
+    return tuple(validated)
 
 
 def _validate_metadata(metadata: Any) -> dict:
@@ -443,33 +548,72 @@ def prepare_artifact(graph: nx.Graph, pois, gazetteer: dict, metadata: dict) -> 
 def _prepare_build_artifact(
     graph: nx.Graph, pois, gazetteer: dict, metadata: dict
 ) -> RuntimeArtifact:
-    """Prepare CLI-owned POIs without serializing them for Pydantic revalidation."""
+    """Validate detailed build inputs and convert attached POIs to runtime records."""
+    attached_pois = validate_detailed_graph_and_attachments(graph, tuple(pois))
     complete_metadata = dict(metadata)
     complete_metadata.setdefault("artifact_revision", str(uuid4()))
     complete_metadata.setdefault("artifact_schema_version", ROUTING_ARTIFACT_SCHEMA_VERSION)
-    return _prepare_artifact(
-        graph,
-        tuple(pois),
-        gazetteer,
-        complete_metadata,
-        trust_validated_instances=True,
+    return RuntimeArtifact(
+        graph=graph,
+        pois=_runtime_pois(attached_pois),
+        gazetteer=_validate_gazetteer(gazetteer),
+        metadata=_validate_metadata(complete_metadata),
     )
 
 
-def write_artifact(artifact: RuntimeArtifact, path: Path) -> None:
-    """Atomically publish an already validated runtime artifact."""
-    if not isinstance(artifact, RuntimeArtifact):
-        raise _invalid("artifact", artifact, "expected RuntimeArtifact")
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _prepare_compact_artifact(
+    graph: nx.Graph, pois, gazetteer: dict, metadata: dict
+) -> RuntimeArtifact:
+    """Validate compact graph and attachment-free POIs immediately before writing."""
+    complete_metadata = dict(metadata)
+    complete_metadata.setdefault("artifact_revision", str(uuid4()))
+    complete_metadata.setdefault("artifact_schema_version", ROUTING_ARTIFACT_SCHEMA_VERSION)
+    return RuntimeArtifact(
+        graph=validate_compact_graph(graph),
+        pois=validate_runtime_pois(tuple(pois)),
+        gazetteer=_validate_gazetteer(gazetteer),
+        metadata=_validate_metadata(complete_metadata),
+    )
+
+
+def write_artifact(
+    artifact_or_graph: RuntimeArtifact | nx.Graph,
+    runtime_pois_or_path,
+    gazetteer: dict | None = None,
+    metadata: dict | None = None,
+    path: Path | None = None,
+) -> None:
+    """Atomically publish a validated compact artifact.
+
+    The two-argument RuntimeArtifact form remains for existing build utilities; new builds use
+    ``(graph, runtime_pois, gazetteer, metadata, path)`` so validation stays in the producer.
+    """
+    artifact: RuntimeArtifact
+    output_path: Path
+    if isinstance(artifact_or_graph, RuntimeArtifact):
+        if gazetteer is not None or metadata is not None or path is not None:
+            raise _invalid("artifact", artifact_or_graph, "unexpected compact artifact arguments")
+        artifact = artifact_or_graph
+        output_path = Path(runtime_pois_or_path)
+    else:
+        if path is None:
+            raise _invalid("path", path, "expected an output path for compact graph inputs")
+        artifact = _prepare_compact_artifact(
+            artifact_or_graph,
+            runtime_pois_or_path,
+            {} if gazetteer is None else gazetteer,
+            {} if metadata is None else metadata,
+        )
+        output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "graph": artifact.graph,
         "pois": list(artifact.pois),
         "gazetteer": artifact.gazetteer,
         "metadata": artifact.metadata,
     }
-    with NamedTemporaryFile("wb", dir=path.parent, delete=False) as stream:
+    with NamedTemporaryFile("wb", dir=output_path.parent, delete=False) as stream:
         pickle.dump(payload, stream)  # pi-lens-ignore: python-pickle
         stream.flush()
         os.fsync(stream.fileno())
-    os.replace(stream.name, path)
+    os.replace(stream.name, output_path)

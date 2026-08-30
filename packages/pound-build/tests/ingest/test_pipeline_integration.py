@@ -48,6 +48,12 @@ def test_build_oxford_artifact_has_connected_graph_and_gazetteer(tmp_path, monke
     assert "Hayfield" in artifact.gazetteer
     assert v["named_nodes_in_graph"] >= 2  # Oxford + Hayfield named on nodes
     assert v["place_nodes_in_gazetteer"] >= 3  # Oxford, Hayfield, Marston
+    assert all("osm_node_ids" not in data for _, data in artifact.graph.nodes(data=True))
+    assert all(
+        isinstance(data["candidate_eligible"], bool)
+        for _, _, data in artifact.graph.edges(data=True)
+    )
+    assert all(not hasattr(poi, "nearest_edge") for poi in artifact.pois)
     identities = {(poi.osm_id, poi.kind) for poi in artifact.pois}
     assert (2001, "water_point") in identities
     assert not {"toilets", "shower", "drinking_water"} & {poi.kind for poi in artifact.pois}

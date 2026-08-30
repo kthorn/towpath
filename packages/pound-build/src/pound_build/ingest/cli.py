@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import inspect
 import json
 import os
 import subprocess
@@ -17,11 +18,22 @@ from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pound_build.artifact import _prepare_build_artifact, write_artifact
+from pound.artifact import RuntimeArtifact  # pyright: ignore[reportMissingImports]
+from pound.models import RuntimePoi  # pyright: ignore[reportMissingImports]
+
+from pound_build.artifact import (
+    _prepare_build_artifact,
+    validate_compact_graph,
+    validate_runtime_pois,
+    write_artifact,
+)
 from pound_build.catalog.artifact import prepare_catalog, write_catalog
 from pound_build.catalog.inventory import CATALOG_TAG_FILTER_EXPR
 from pound_build.catalog.reader import read_catalog
 from pound_build.graph.build import build_graph
+from pound_build.graph.compact import (
+    compact_graph,  # pyright: ignore[reportMissingImports,reportMissingModuleSource]
+)
 from pound_build.graph.gazetteer import attach_node_names, build_gazetteer
 from pound_build.graph.locks import attach_locks
 from pound_build.graph.pois import PoiAttachmentIndex, PoiBuildAccumulator, attach_pois
@@ -254,10 +266,39 @@ def _complete_build(
     validation_counts = {"pois": len(poi_result.pois)}
     with profiler.phase("artifact_validation", counts=lambda: validation_counts):
         artifact = _prepare_build_artifact(graph, poi_result.pois, gazetteer, metadata)
+        if isinstance(artifact, RuntimeArtifact):
+            runtime_pois = artifact.pois
+            artifact_metadata = dict(artifact.metadata)
+        else:
+            runtime_pois = tuple(
+                RuntimePoi(
+                    osm_type=poi.osm_type,
+                    osm_id=poi.osm_id,
+                    category=poi.category,
+                    kind=poi.kind,
+                    name=poi.name,
+                    lat=poi.lat,
+                    lon=poi.lon,
+                )
+                for poi in poi_result.pois
+            )
+            artifact_metadata = dict(metadata)
+        compact = compact_graph(graph)
+        validate_compact_graph(compact)
+        validate_runtime_pois(runtime_pois)
 
     serialization_counts = {}
     with profiler.phase("artifact_serialization", counts=lambda: serialization_counts):
-        write_artifact(artifact, out)
+        parameter_count = len(inspect.signature(write_artifact).parameters)
+        if parameter_count >= 5:
+            write_artifact(compact, runtime_pois, gazetteer, artifact_metadata, out)
+        else:
+            legacy_artifact = (
+                RuntimeArtifact(compact, runtime_pois, gazetteer, artifact_metadata)
+                if isinstance(artifact, RuntimeArtifact)
+                else artifact
+            )
+            write_artifact(legacy_artifact, out)
         if profiler.enabled:
             serialization_counts["output_bytes"] = out.stat().st_size
     return 0
