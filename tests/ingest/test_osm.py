@@ -35,6 +35,7 @@ def test_tags_filter_expr_is_pinned():
     assert "w/bridge:movable" not in TAGS_FILTER_EXPR
     assert "n/bridge:movable" in TAGS_FILTER_EXPR
     assert "n/bridge=movable" in TAGS_FILTER_EXPR
+    assert "n/waterway=lock_gate,mooring,turning_point" in TAGS_FILTER_EXPR
     assert "w/waterway=lock_gate" not in TAGS_FILTER_EXPR
     for clause in (
         "nwr/waterway=water_point",

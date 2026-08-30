@@ -49,6 +49,7 @@ def build_query(bbox: tuple[float, float, float, float]) -> str:
   way["waterway"~"{_WAY_WATERWAY_RE}"]{b};
   way["lock"="yes"]{b};
   node["waterway"="lock_gate"]{b};
+  node["waterway"="turning_point"]{b};
   node["lock"="yes"]{b};
   node["bridge:movable"]{b};
   node["bridge"="movable"]{b};
