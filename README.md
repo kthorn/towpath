@@ -128,9 +128,10 @@ scenario below. Keep generated artifacts outside version control.
 FastAPI supports these environment variables:
 
 - `POUND_ARTIFACT_PATH` (required): graph artifact loaded once at startup.
-- `POUND_BOAT_HIRE_ENRICHMENT_PATH` (required): curated CSV seeds the displayed
-  boat-hire network overlay only; the graph, routing, candidates, POIs, and
-  catalog remain complete.
+- `POUND_BOAT_HIRE_ENRICHMENT_PATH` (required): curated CSV supplies boat-hire
+  graph/network overlay behavior and public `/api/places` `boat_hire` records
+  and provenance; it does not filter or replace the graph, routing, candidates,
+  POIs, or OSM catalog.
 - `POUND_STATIC_DIR` (default `web/dist`): production frontend files.
 - `POUND_CANDIDATE_POOL_SIZE` (default `20`): geometric candidates considered.
 - `POUND_GOOGLE_DESTINATION_LIMIT` (default `10`): candidates returned for the
@@ -390,7 +391,7 @@ peak RSS**. The explicit build gates are: exactly 185,029 records for the same
 source/filter (a source refresh requires a new inventory review), artifact size
 <= **100,000,000 bytes**, build wall time <= **300 s**, and build peak RSS <=
 **3,000,000 KiB**. The real build baseline passes all four build gates. The
-benchmark run rebuilt the catalog from `/home/kurtt/towpath/pound/data/england.osm.pbf`
+benchmark run rebuilt the catalog from `pound/data/england.osm.pbf`
 into a temporary artifact; `/usr/bin/time` measured **211.32 s** wall time and
 **2,527,792 KiB** peak RSS, also passing the build gates.
 
@@ -413,8 +414,8 @@ benchmark_json=$(mktemp)
 time_log=$(mktemp)
 trap 'rm -f "$benchmark_json" "$time_log"' EXIT
 /usr/bin/time -v uv run python scripts/catalog_query_benchmark.py \
-  --catalog-artifact /home/kurtt/towpath/pound/artifacts/england-catalog.pkl \
-  --routing-artifact /home/kurtt/towpath/pound/artifacts/england.pkl \
+  --catalog-artifact "$catalog_tmp/england-catalog.pkl" \
+  --routing-artifact pound/artifacts/england.pkl \
   --boat-hire-enrichment pound/data/boat-hire-enrichment.csv \
   --warmups 2 --iterations 5 >"$benchmark_json" 2>"$time_log"
 ```
