@@ -28,7 +28,14 @@ _METADATA_FIELDS = {
     "validation",
     "poi_summary",
 }
-_NODE_FIELDS = {"lat", "lon", "osm_node_ids", "movable_bridge_ids"}
+_NODE_FIELDS = {
+    "lat",
+    "lon",
+    "osm_node_ids",
+    "movable_bridge_ids",
+    "turning_point",
+    "turning_max_length_m",
+}
 _EDGE_FIELDS = {
     "osm_way_id",
     "name",
@@ -149,6 +156,24 @@ def _validate_graph(graph: Any) -> nx.Graph:
             )
         _finite_coordinate(f"graph node {uid} lat", data["lat"], -90, 90)
         _finite_coordinate(f"graph node {uid} lon", data["lon"], -180, 180)
+        if type(data["turning_point"]) is not bool:
+            raise _invalid(
+                f"graph node {uid} attribute turning_point",
+                data["turning_point"],
+                "expected a boolean",
+            )
+        maximum = data["turning_max_length_m"]
+        if maximum is not None and (
+            isinstance(maximum, bool)
+            or not isinstance(maximum, (int, float))
+            or not math.isfinite(maximum)
+            or maximum <= 0
+        ):
+            raise _invalid(
+                f"graph node {uid} attribute turning_max_length_m",
+                maximum,
+                "expected None or a finite positive number",
+            )
         _validate_sorted_bridge_ids(
             f"graph node {uid} attribute movable_bridge_ids", data["movable_bridge_ids"]
         )

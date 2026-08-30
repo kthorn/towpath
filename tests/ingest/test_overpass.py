@@ -26,6 +26,7 @@ def test_build_query_contains_bbox_and_filters():
     assert "(51.7,-1.35,51.8,-1.2)" in q
     assert "waterway" in q
     assert "lock_gate" in q
+    assert 'node["waterway"="turning_point"]' in q
     assert "out geom;" in q
 
 

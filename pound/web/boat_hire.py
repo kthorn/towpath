@@ -303,4 +303,34 @@ def select_boat_hire_reachability(
         for u, v, data in graph.edges(data=True)
         if u in distances and v in distances and edge_is_eligible(data)
     ]
-    return graph.edge_subgraph(reached_edges)
+    overlay = graph.edge_subgraph(reached_edges).copy()
+    eligible_degree = {
+        node: sum(edge_is_eligible(graph.edges[node, neighbor]) for neighbor in graph[node])
+        for node in overlay
+    }
+    protected = sources | {
+        node
+        for node, data in overlay.nodes(data=True)
+        if (
+            data["turning_point"]
+            and (
+                boat_length_m is None
+                or data["turning_max_length_m"] is None
+                or boat_length_m <= data["turning_max_length_m"]
+            )
+        )
+        or eligible_degree[node] >= 3
+    }
+    leaves = [node for node in overlay if overlay.degree[node] <= 1 and node not in protected]
+    while leaves:
+        node = leaves.pop()
+        if node not in overlay or node in protected or overlay.degree[node] > 1:
+            continue
+        neighbors = list(overlay.neighbors(node))
+        overlay.remove_node(node)
+        leaves.extend(
+            neighbor
+            for neighbor in neighbors
+            if neighbor in overlay and neighbor not in protected and overlay.degree[neighbor] <= 1
+        )
+    return overlay

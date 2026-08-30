@@ -147,6 +147,8 @@ def classify_node(tags: dict[str, str] | None) -> NodeKind | None:
         return NodeKind.LOCK
     if "bridge:movable" in tags or tags.get("bridge") == "movable":
         return NodeKind.MOVABLE_BRIDGE
+    if tags.get("waterway") == "turning_point":
+        return NodeKind.TURNING_POINT
     if "mooring" in tags:
         return NodeKind.MOORING
     if tags.get("leisure") == "marina":

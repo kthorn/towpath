@@ -5,8 +5,10 @@ import networkx as nx
 from pound.graph.build import build_graph
 from pound.ingest.ir import (
     AccessCaveat,
+    NodeKind,
     WaterwayFeatures,
     WaterwayKind,
+    WaterwayNode,
     WaterwayWay,
     WayDimensions,
 )
@@ -34,9 +36,13 @@ def _way(osm_id, tags, geometry, node_ids):
     )
 
 
-def _features_for(*ways):
+def _features_for(*ways, nodes=()):
     return WaterwayFeatures(
-        ways=list(ways), nodes=[], source="test", fetched_at="2026-08-23T00:00:00Z", bbox=None
+        ways=list(ways),
+        nodes=list(nodes),
+        source="test",
+        fetched_at="2026-08-23T00:00:00Z",
+        bbox=None,
     )
 
 
@@ -44,6 +50,75 @@ def test_build_returns_networkx_graph():
     g = build_graph(_features())
     assert isinstance(g, nx.Graph)
     assert all(data["movable_bridge_ids"] == () for _, data in g.nodes(data=True))
+    assert all(data["turning_point"] is False for _, data in g.nodes(data=True))
+    assert all(data["turning_max_length_m"] is None for _, data in g.nodes(data=True))
+
+
+def test_build_attaches_turning_point_and_maximum_length_to_waterway_node():
+    graph = build_graph(
+        _features_for(
+            _way(
+                11,
+                {"waterway": "canal"},
+                [(51.0, -1.0), (51.001, -1.0), (51.002, -1.0)],
+                [1, 2, 3],
+            ),
+            nodes=(
+                WaterwayNode(
+                    osm_id=2,
+                    lat=51.001,
+                    lon=-1.0,
+                    tags={"waterway": "turning_point", "maxlength": "21.5"},
+                    kind=NodeKind.TURNING_POINT,
+                ),
+            ),
+        )
+    )
+
+    turning = next(data for _, data in graph.nodes(data=True) if "2" in data["osm_node_ids"])
+    assert turning["turning_point"] is True
+    assert turning["turning_max_length_m"] == 21.5
+
+
+def test_build_attaches_turning_point_by_coordinate_identity():
+    graph = build_graph(
+        _features_for(
+            _way(11, {"waterway": "canal"}, [(51.0, -1.0), (51.001, -1.0)], [1, 2]),
+            nodes=(
+                WaterwayNode(
+                    osm_id=99,
+                    lat=51.001,
+                    lon=-1.0,
+                    tags={"waterway": "turning_point"},
+                    kind=NodeKind.TURNING_POINT,
+                ),
+            ),
+        )
+    )
+
+    turning = next(data for _, data in graph.nodes(data=True) if data["lat"] == 51.001)
+    assert turning["turning_point"] is True
+    assert turning["turning_max_length_m"] is None
+
+
+def test_build_does_not_create_unmatched_turning_point_node():
+    graph = build_graph(
+        _features_for(
+            _way(11, {"waterway": "canal"}, [(51.0, -1.0), (51.001, -1.0)], [1, 2]),
+            nodes=(
+                WaterwayNode(
+                    osm_id=99,
+                    lat=52.0,
+                    lon=-2.0,
+                    tags={"waterway": "turning_point"},
+                    kind=NodeKind.TURNING_POINT,
+                ),
+            ),
+        )
+    )
+
+    assert graph.number_of_nodes() == 2
+    assert all("99" not in data["osm_node_ids"] for _, data in graph.nodes(data=True))
 
 
 def test_build_excludes_derelict_ways():

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TypedDict, Unpack
 
 import networkx as nx
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 from shapely.geometry import Point
 
 import pound.web.boat_hire as boat_hire
@@ -237,10 +237,30 @@ def _seed(name: str, latitude: float = 51.0) -> BoatHireSeed:
     return BoatHireSeed("provider", f"base:{name}", latitude, -1.0)
 
 
+def _add_reachability_node(
+    graph: nx.Graph,
+    uid: int,
+    *,
+    turning_point: bool = False,
+    turning_max_length_m: float | None = None,
+) -> None:
+    graph.add_node(
+        uid,
+        movable_bridge_ids=(),
+        turning_point=turning_point,
+        turning_max_length_m=turning_max_length_m,
+    )
+
+
 def _reachable_graph() -> nx.Graph:
     graph = nx.Graph()
     for uid in range(1, 6):
-        graph.add_node(uid, movable_bridge_ids=())
+        graph.add_node(
+            uid,
+            movable_bridge_ids=(),
+            turning_point=False,
+            turning_max_length_m=None,
+        )
     dimensions = WayDimensions()
     graph.add_edge(
         1,
@@ -340,15 +360,109 @@ def test_reachability_uses_minimum_cost_from_any_anchor_and_excludes_ineligible_
 
     overlay = select_boat_hire_reachability(graph, anchors, **_reachability_kwargs())
 
-    assert set(overlay.edges) == {(1, 2), (2, 3), (4, 5)}
+    assert set(overlay.edges) == {(1, 2), (4, 5)}
     assert (2, 4) not in overlay.edges
+
+
+def test_reachability_prunes_linear_terminal_reaches_after_last_winding_hole():
+    graph = nx.Graph()
+    for uid in range(1, 5):
+        _add_reachability_node(graph, uid, turning_point=uid == 3)
+    dimensions = WayDimensions()
+    for start, end in ((1, 2), (2, 3), (3, 4)):
+        graph.add_edge(
+            start,
+            end,
+            length_m=0.0,
+            locks=0,
+            dimensions=dimensions,
+            movable_bridge_ids=(),
+        )
+
+    overlay = select_boat_hire_reachability(
+        graph,
+        (BoatHireAnchor(_seed("one"), (1, 2)),),
+        **_reachability_kwargs(cutoff_min=1.0, boat_beam_m=None),
+    )
+
+    assert set(overlay.edges) == {(1, 2), (2, 3)}
+    assert (3, 4) not in overlay.edges
+
+
+def test_reachability_prunes_terminal_reaches_after_junction_and_requires_eligible_approaches():
+    graph = nx.Graph()
+    for uid in range(1, 6):
+        _add_reachability_node(graph, uid)
+    dimensions = WayDimensions()
+    for start, end in ((1, 2), (2, 3), (3, 4), (3, 5)):
+        graph.add_edge(
+            start,
+            end,
+            length_m=0.0,
+            locks=0,
+            dimensions=dimensions,
+            movable_bridge_ids=(),
+        )
+    anchor = (BoatHireAnchor(_seed("one"), (1, 2)),)
+
+    junction_overlay = select_boat_hire_reachability(
+        graph, anchor, **_reachability_kwargs(cutoff_min=1.0, boat_beam_m=None)
+    )
+    assert set(junction_overlay.edges) == {(1, 2), (2, 3)}
+
+    graph.edges[3, 5]["dimensions"] = WayDimensions(max_beam_m=2.0)
+    ineligible_approach_overlay = select_boat_hire_reachability(
+        graph, anchor, **_reachability_kwargs(cutoff_min=1.0)
+    )
+    assert set(ineligible_approach_overlay.edges) == {(1, 2)}
+
+
+@pytest.mark.parametrize(
+    ("boat_length_m", "maximum", "expected_edges"),
+    [
+        (20.0, 21.0, {(1, 2), (2, 3)}),
+        (22.0, 21.0, {(1, 2)}),
+        (None, 21.0, {(1, 2), (2, 3)}),
+        (22.0, None, {(1, 2), (2, 3)}),
+    ],
+)
+def test_reachability_respects_turning_point_maximum_length(boat_length_m, maximum, expected_edges):
+    graph = nx.Graph()
+    for uid in range(1, 4):
+        _add_reachability_node(
+            graph,
+            uid,
+            turning_point=uid == 3,
+            turning_max_length_m=maximum if uid == 3 else None,
+        )
+    dimensions = WayDimensions()
+    for start, end in ((1, 2), (2, 3)):
+        graph.add_edge(
+            start,
+            end,
+            length_m=0.0,
+            locks=0,
+            dimensions=dimensions,
+            movable_bridge_ids=(),
+        )
+
+    overlay = select_boat_hire_reachability(
+        graph,
+        (BoatHireAnchor(_seed("one"), (1, 2)),),
+        **_reachability_kwargs(boat_length_m=boat_length_m, boat_beam_m=None),
+    )
+
+    assert set(overlay.edges) == expected_edges
 
 
 def test_reachability_includes_edges_at_the_exact_cutoff_and_hides_partial_edges():
     graph = nx.Graph()
     graph.add_nodes_from((1, 2, 3, 4))
+    nx.set_node_attributes(graph, dict.fromkeys(graph, False), "turning_point")
+    nx.set_node_attributes(graph, dict.fromkeys(graph, None), "turning_max_length_m")
     for uid in graph:
         graph.nodes[uid]["movable_bridge_ids"] = ()
+    graph.nodes[3]["turning_point"] = True
     graph.add_edge(
         1,
         2,
@@ -387,9 +501,12 @@ def test_reachability_includes_edges_at_the_exact_cutoff_and_hides_partial_edges
 def test_reachability_bridge_delay_changes_reached_edges():
     graph = nx.Graph()
     graph.add_nodes_from((1, 2, 3))
+    nx.set_node_attributes(graph, dict.fromkeys(graph, False), "turning_point")
+    nx.set_node_attributes(graph, dict.fromkeys(graph, None), "turning_max_length_m")
     graph.nodes[1]["movable_bridge_ids"] = ()
     graph.nodes[2]["movable_bridge_ids"] = ()
     graph.nodes[3]["movable_bridge_ids"] = ("node:3",)
+    graph.nodes[3]["turning_point"] = True
     graph.add_edge(
         1,
         2,
@@ -437,10 +554,11 @@ def test_reachability_does_not_mutate_the_full_graph():
     before_edges = {(u, v): data.copy() for u, v, data in graph.edges(data=True)}
     anchors = (BoatHireAnchor(_seed("one"), (1, 2)),)
 
-    select_boat_hire_reachability(graph, anchors, **_reachability_kwargs())
+    overlay = select_boat_hire_reachability(graph, anchors, **_reachability_kwargs())
 
     assert dict(graph.nodes(data=True)) == before_nodes
     assert {(u, v): data for u, v, data in graph.edges(data=True)} == before_edges
+    assert overlay is not graph
 
 
 def test_snap_pins_base_62_as_the_only_distance_exception():

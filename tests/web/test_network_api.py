@@ -1,8 +1,8 @@
 from typing import cast
 
-import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+import pytest  # pyright: ignore[reportMissingImports]
+from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
+from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
 
 from pound.web.app import create_app
 
@@ -101,6 +101,20 @@ def test_unknown_selected_base_does_not_override_network_budget(web_client: Test
 
     assert response.status_code == 413
     assert response.json()["detail"]["code"] == "network_query_budget_exceeded"
+
+
+def test_network_omits_unturnable_terminal_reach_but_keeps_base_marker(
+    web_client: TestClient,
+):
+    response = web_client.post("/api/canal-network", json=_network_request())
+
+    assert response.status_code == 200
+    coordinates = [
+        coordinate for line in response.json()["lines"] for coordinate in line["coordinates"]
+    ]
+    assert [-1.0, 51.0] in coordinates
+    assert [-1.002, 51.002] not in coordinates
+    assert response.json()["bases"]
 
 
 def test_network_uses_half_the_schedule_as_outward_return_trip_reach(

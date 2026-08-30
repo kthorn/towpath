@@ -9,8 +9,24 @@ from scripts.compare_build_artifacts import compare_artifacts, main
 
 def _graph() -> nx.Graph:
     graph = nx.Graph()
-    graph.add_node(2, lat=51.7520, lon=-1.2560, osm_node_ids={"102", "101"}, movable_bridge_ids=())
-    graph.add_node(1, lat=51.7520, lon=-1.2577, osm_node_ids={"100"}, movable_bridge_ids=())
+    graph.add_node(
+        2,
+        lat=51.7520,
+        lon=-1.2560,
+        osm_node_ids={"102", "101"},
+        movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
+    )
+    graph.add_node(
+        1,
+        lat=51.7520,
+        lon=-1.2577,
+        osm_node_ids={"100"},
+        movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
+    )
     graph.add_edge(
         2,
         1,

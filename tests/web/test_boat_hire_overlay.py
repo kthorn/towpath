@@ -23,6 +23,8 @@ def _two_component_graph(route_graph: nx.Graph) -> nx.Graph:
         lon=-2.001,
         osm_node_ids={"5"},
         movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
         name="Omitted end",
         tags={"kind": "canal"},
     )

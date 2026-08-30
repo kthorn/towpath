@@ -38,7 +38,7 @@ TAGS_FILTER_EXPR = r"""w/waterway=canal,river,fairway,lock,derelict_canal
 w/disused:waterway
 w/abandoned:waterway
 w/lock=yes
-n/waterway=lock_gate,mooring
+n/waterway=lock_gate,mooring,turning_point
 n/lock=yes
 n/bridge:movable
 n/bridge=movable
