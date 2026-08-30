@@ -10,6 +10,7 @@ from pound.schemas import (
     DayPlan,
     GeoJSONLineString,
     GeoJSONPoint,
+    NamedRouteRequest,
     OsmProvenance,
     PlaceResponse,
     PlacesRequest,
@@ -24,20 +25,23 @@ from pound.schemas import (
 from pydantic import TypeAdapter, ValidationError  # pyright: ignore[reportMissingImports]
 
 
-def test_canal_constraints_defaults():
-    c = CanalConstraints(start="Oxford", end="Heyford", days=1)
-    assert c.start == "Oxford"
-    assert c.end == "Heyford"
+def test_canal_constraints_share_only_day_and_boat_options():
+    c = CanalConstraints(days=1)
+    named = NamedRouteRequest(start="Oxford", end="Heyford", days=1)
+    assert named.start == "Oxford"
+    assert named.end == "Heyford"
     assert c.days == 1
     assert c.hours_per_day == 6.0
     assert c.boat_beam_m is None
     assert c.amenity_prefs == []
+    assert "start" not in CanalConstraints.model_fields
+    assert "end" not in CanalConstraints.model_fields
     assert "allow_derelict" not in CanalConstraints.model_fields
     assert "allow_derelict" not in ResolvedConstraints.model_fields
 
 
 def test_movable_bridge_delay_is_finite_and_nonnegative():
-    assert CanalConstraints(start="A", movable_bridge_delay_min=0).movable_bridge_delay_min == 0
+    assert CanalConstraints(movable_bridge_delay_min=0).movable_bridge_delay_min == 0
     with pytest.raises(ValidationError):
         ResolvedConstraints(start_uid=1, end_uid=2, movable_bridge_delay_min=float("inf"))
 
@@ -74,10 +78,8 @@ def test_route_result_round_trip():
     assert restored.access_segments == []
 
 
-def test_route_access_segment_uses_canonical_endpoint_order():
+def test_route_access_segment_uses_caveat_identity_without_graph_uids():
     segment = RouteAccessSegment(
-        from_uid=1,
-        to_uid=2,
         osm_way_id=10,
         kind="discouraged",
         tag="boat",
@@ -85,27 +87,11 @@ def test_route_access_segment_uses_canonical_endpoint_order():
     )
 
     assert segment.model_dump() == {
-        "from_uid": 1,
-        "to_uid": 2,
         "osm_way_id": 10,
         "kind": "discouraged",
         "tag": "boat",
         "value": "discouraged",
     }
-
-
-def test_route_access_segment_rejects_reverse_endpoint_order():
-    with pytest.raises(
-        ValidationError, match="access segment edge must use ascending endpoint uids"
-    ):
-        RouteAccessSegment(
-            from_uid=2,
-            to_uid=1,
-            osm_way_id=10,
-            kind="unknown",
-            tag="access",
-            value="customers",
-        )
 
 
 def test_resolved_constraints_has_uids_not_strings():
@@ -134,7 +120,7 @@ def test_resolved_constraints_rejects_hours_per_day_zero():
 @pytest.mark.parametrize(
     "model, payload",
     [
-        (CanalConstraints, {"start": "Oxford"}),
+        (CanalConstraints, {}),
         (ResolvedConstraints, {"start_uid": 1, "end_uid": 2}),
     ],
 )
@@ -154,16 +140,16 @@ def test_route_trust_boundaries_reject_nonfinite_hours_and_dimensions(model, pay
 
 def test_canal_constraints_rejects_days_zero():
     with pytest.raises(ValidationError):
-        CanalConstraints(start="Oxford", end="Banbury", days=0)
+        CanalConstraints(days=0)
 
 
 def test_canal_constraints_rejects_hours_per_day_zero():
     with pytest.raises(ValidationError):
-        CanalConstraints(start="Oxford", end="Banbury", days=1, hours_per_day=0)
+        CanalConstraints(days=1, hours_per_day=0)
 
 
 def test_canal_constraints_accepts_positive_days():
-    c = CanalConstraints(start="Oxford", end="Banbury", days=1, hours_per_day=6.0)
+    c = CanalConstraints(days=1, hours_per_day=6.0)
     assert c.days == 1
     assert c.hours_per_day == 6.0
 
@@ -172,7 +158,7 @@ def test_constraints_days_defaults_to_none_meaning_infer():
     # days=None => "infer day count from hours_per_day" (no cap).
     rc = ResolvedConstraints(start_uid=0, end_uid=1, hours_per_day=6.0)
     assert rc.days is None
-    c = CanalConstraints(start="Oxford", end="Banbury")
+    c = CanalConstraints()
     assert c.days is None
     assert c.hours_per_day == 6.0  # default unchanged
 
@@ -181,9 +167,7 @@ def test_constraints_days_defaults_to_none_meaning_infer():
 @pytest.mark.parametrize("field", ["boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"])
 @pytest.mark.parametrize("value", [0, -0.1])
 def test_constraints_reject_nonpositive_boat_dimensions(model, field: str, value: float):
-    payload: dict[str, object] = (
-        {"start": "Oxford"} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
-    )
+    payload: dict[str, object] = {} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
     payload[field] = value
     with pytest.raises(ValidationError):
         model.model_validate(payload)
@@ -191,9 +175,7 @@ def test_constraints_reject_nonpositive_boat_dimensions(model, field: str, value
 
 @pytest.mark.parametrize("model", [CanalConstraints, ResolvedConstraints])
 def test_constraints_accept_positive_boat_dimensions(model):
-    payload: dict[str, object] = (
-        {"start": "Oxford"} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
-    )
+    payload: dict[str, object] = {} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
     payload.update(
         boat_length_m=18,
         boat_beam_m=2.1,

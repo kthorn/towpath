@@ -21,8 +21,8 @@ from pound.catalog.metadata import CatalogMetadata
 
 
 class CanalConstraints(BaseModel):
-    start: str
-    end: str | None = None  # None => ring / round trip
+    """The day and boat options shared by every route input."""
+
     days: int | None = Field(gt=0, default=None)  # None => infer from hours_per_day (no cap)
     hours_per_day: FiniteFloat = Field(gt=0, default=6.0)
     movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
@@ -33,29 +33,16 @@ class CanalConstraints(BaseModel):
     amenity_prefs: list[str] = []  # ["pub", "water_point", "shop", ...]
 
 
-class ResolvedConstraints(BaseModel):
-    """The pure-routing input: resolved graph node uids, not place names.
+class NamedRouteRequest(CanalConstraints):
+    start: str
+    end: str | None = None  # None => ring / round trip
 
-    `start_uid`/`end_uid` are the graph's own synthetic internal node handles
-    (what `nx.shortest_path` consumes) — not coordinates, not place names.
-    Carrying uids means plan_route literally cannot need a name lookup or a
-    coord→uid mapping step: it operates on the handles the graph already
-    understands. The CLI / Agent Core obtain a ResolvedConstraints from a
-    CanalConstraints via route.resolve.resolve_place; a future map-click UI
-    obtains one via route.resolve.resolve_coord(lat, lon, graph). Request-scoped
-    — built by a resolver with graph access, consumed immediately, never
-    persisted across differently-built artifacts. (design §4 contract evolution.)
-    """
+
+class ResolvedConstraints(CanalConstraints):
+    """Temporary UID adapter retained until the old diagnostic API is removed."""
 
     start_uid: int
     end_uid: int
-    days: int | None = Field(gt=0, default=None)  # None => infer from hours_per_day (no cap)
-    hours_per_day: FiniteFloat = Field(gt=0, default=6.0)
-    movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
-    boat_length_m: FiniteFloat | None = Field(gt=0, default=None)
-    boat_beam_m: FiniteFloat | None = Field(gt=0, default=None)
-    boat_draft_m: FiniteFloat | None = Field(gt=0, default=None)
-    boat_height_m: FiniteFloat | None = Field(gt=0, default=None)
 
 
 class Amenity(BaseModel):
@@ -77,18 +64,10 @@ class RouteLeg(BaseModel):
 
 
 class RouteAccessSegment(BaseModel):
-    from_uid: int = Field(ge=0)
-    to_uid: int = Field(ge=0)
     osm_way_id: int = Field(gt=0)
     kind: Literal["discouraged", "unknown"]
     tag: Literal["boat", "access"]
     value: str
-
-    @model_validator(mode="after")
-    def require_canonical_edge(self):
-        if self.from_uid >= self.to_uid:
-            raise ValueError("access segment edge must use ascending endpoint uids")
-        return self
 
 
 class DayPlan(BaseModel):
@@ -135,6 +114,11 @@ class CanalPointHandle(BaseModel):
         if not math.isfinite(self.fraction) or not 0 <= self.fraction <= 1:
             raise ValueError("fraction must be finite and from 0 through 1")
         return self
+
+
+class ProjectedRouteConstraints(CanalConstraints):
+    start: CanalPointHandle
+    end: CanalPointHandle
 
 
 class ProjectedCanalPoint(BaseModel):

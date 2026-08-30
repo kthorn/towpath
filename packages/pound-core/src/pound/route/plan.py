@@ -1,47 +1,39 @@
-"""Request-time entry point — pure plan_route over ResolvedConstraints (design §5, Scope D).
-
-Routing runs Dijkstra by time-cost over the loaded graph (passed explicitly);
-leg names come from the `name` node attribute PR1 attached (falling back to a
-coordinate string). Zero network, zero LLM, hermetic by construction. Rings
-(end_uid not applicable / CanalConstraints.end is None) raise
-NotImplementedError. The Scope C `_graph`/`_features` test kwargs are retired;
-tests inject an in-memory graph directly.
-
-`plan_route_from_constraints` is the CanalConstraints -> resolve -> plan_route
-bridge the CLI and Agent Core use.
-"""
+"""Pure projected-point route planning over a compact runtime artifact."""
 
 import json
+import math
 from collections import Counter
 from dataclasses import dataclass
+from typing import Any
 
 import networkx as nx
 from networkx.exception import NetworkXNoPath
+from pyproj import Transformer
+from shapely import transform
+from shapely.geometry import Point
+from shapely.ops import substring
 
-from pound.geometry import (
-    LOCK_SOURCE_TOLERANCE_M,
-)
-from pound.geometry import (
-    haversine_m as _haversine_m,
-)
-from pound.geometry import (
-    node_key as _node_key,
-)
-from pound.geometry import (
-    project_point_to_line as project_point_to_edge,
-)
+from pound.artifact import RuntimeArtifact
+from pound.geometry import LOCK_SOURCE_TOLERANCE_M
+from pound.geometry import haversine_m as _haversine_m
+from pound.geometry import project_point_to_line as project_point_to_edge
+from pound.models import WayDimensions
+from pound.route.cost import is_eligible as _is_eligible
 from pound.route.cost import (
-    is_eligible,
+    partial_traversal_time_min,
     resolve_movable_bridge_delay,
     traversal_time_min,
 )
+from pound.route.project import canonical_edge_line_wgs84, metric_edge_line, project_handle
 from pound.route.resolve import resolve_place
 from pound.schemas import (
-    CanalConstraints,
+    CanalPointHandle,
     CanalRouteResponse,
     Coordinate,
     DayPlan,
     GeoJSONLineString,
+    NamedRouteRequest,
+    ProjectedRouteConstraints,
     ResolvedConstraints,
     RouteAccessSegment,
     RouteDayGeometry,
@@ -50,11 +42,49 @@ from pound.schemas import (
     RouteResult,
 )
 
+_TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
+_TO_WGS84 = Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
+_DAY_SEGMENT_M = 250.0
 
-@dataclass(frozen=True)
+
+@dataclass(frozen=True, slots=True)
+class TraversedEdge:
+    """One source-edge traversal, fractions always measured low UID to high UID."""
+
+    u: int
+    v: int
+    start_fraction: float
+    end_fraction: float
+    full: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ComputedTraversal:
+    edges: tuple[TraversedEdge, ...]
+    cost_min: float
+
+
+@dataclass(frozen=True, slots=True)
+class _RouteCandidate:
+    traversal: ComputedTraversal
+    endpoint_ids: tuple[int, ...]
+    path: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ReportSegment:
+    traversal_index: int
+    edge: TraversedEdge
+    cost_min: float
+    locks: int
+    unknown_dimensions: bool
+
+
+@dataclass(frozen=True, slots=True)
 class _ComputedRoute:
     route: RouteResult
-    path: tuple[int, ...]
+    traversal: ComputedTraversal
+    segments: tuple[_ReportSegment, ...]
     day_ranges: tuple[tuple[int, int], ...]
 
 
@@ -62,17 +92,40 @@ class RouteUnavailableError(ValueError):
     """Raised when valid route inputs cannot produce an eligible graph path."""
 
 
-def plan_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> RouteResult:
-    """Plan a point-to-point canal route over `graph`. Pure."""
-    return _compute_route(constraints, graph=graph).route
+def plan_projected_route(
+    constraints: ProjectedRouteConstraints, *, artifact: RuntimeArtifact
+) -> CanalRouteResponse:
+    """Plan a route between two immutable compact-edge handles without graph mutation."""
+    graph = artifact.graph
+    _validate_handle(constraints.start, graph, "start")
+    _validate_handle(constraints.end, graph, "end")
+    start_point = project_handle(constraints.start, graph).coordinate
 
+    if constraints.start == constraints.end:
+        route = RouteResult(
+            start=_point_name(constraints.start.edge, constraints.start.fraction, graph),
+            end=_point_name(constraints.end.edge, constraints.end.fraction, graph),
+            is_ring=False,
+            legs=[],
+            days=[],
+            total_km=0.0,
+            total_locks=0,
+            total_minutes=0,
+            amenities=[],
+            warnings=[],
+            access_segments=[],
+            graph_source_date=str(artifact.metadata.get("fetched_at", "")),
+        )
+        point = (start_point.lon, start_point.lat)
+        return CanalRouteResponse(
+            route=route, geometry=GeoJSONLineString(coordinates=[point, point])
+        )
 
-def plan_canal_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> CanalRouteResponse:
-    """Plan a route and retain its traversed geometry for web clients."""
-    computed = _compute_route(constraints, graph=graph)
+    computed = _compute_route(constraints, graph)
+    all_geometry = _joined_geometry(computed.traversal.edges, graph)
     day_geometries = []
     for day, (start, end) in enumerate(computed.day_ranges, start=1):
-        points = _path_geometry(computed.path[start : end + 1], graph)
+        points = _joined_geometry((segment.edge for segment in computed.segments[start:end]), graph)
         day_geometries.append(
             RouteDayGeometry(
                 day=day,
@@ -81,49 +134,404 @@ def plan_canal_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> Ca
                 end=Coordinate(lat=points[-1][0], lon=points[-1][1]),
             )
         )
+    route = computed.route.model_copy(
+        update={"graph_source_date": str(artifact.metadata.get("fetched_at", ""))}
+    )
     return CanalRouteResponse(
-        route=computed.route,
-        geometry=_to_geojson(_path_geometry(computed.path, graph)),
+        route=route,
+        geometry=_to_geojson(all_geometry),
         day_geometries=day_geometries,
-        locks=_route_locks(computed.path, graph, computed.day_ranges),
+        locks=_route_locks(computed, graph),
     )
 
 
-def _traversal_time_min(graph, u, v, edge, bridge_delay_min: float) -> float:
-    # Charge bridge IDs on the edge or arrived-at node; the starting node is exempt.
-    return traversal_time_min(
-        edge,
-        graph.nodes[v]["movable_bridge_ids"],
+def _validate_handle(handle: CanalPointHandle, graph: nx.Graph, field: str) -> None:
+    u, v = handle.edge
+    if not graph.has_edge(u, v):
+        raise ValueError(f"{field} edge {handle.edge!r} is absent from graph")
+    if 0 < handle.fraction < 1 and graph.edges[u, v].get("candidate_eligible", True) is False:
+        raise ValueError(f"{field} interior must use a candidate-eligible edge")
+
+
+def _edge_record(
+    edge: tuple[int, int], start_fraction: float, end_fraction: float
+) -> TraversedEdge:
+    u, v = edge
+    return TraversedEdge(
+        u=u,
+        v=v,
+        start_fraction=start_fraction,
+        end_fraction=end_fraction,
+        full={start_fraction, end_fraction} == {0.0, 1.0},
+    )
+
+
+def _full_edge(u: int, v: int) -> TraversedEdge:
+    low, high = sorted((u, v))
+    return _edge_record((low, high), float(u == high), float(v == high))
+
+
+def _arrived_node(edge: TraversedEdge) -> int | None:
+    if edge.end_fraction == 0:
+        return edge.u
+    if edge.end_fraction == 1:
+        return edge.v
+    return None
+
+
+def _edge_data(edge: TraversedEdge, graph: nx.Graph) -> dict[str, Any]:
+    return graph.edges[edge.u, edge.v]
+
+
+def _traversal_cost(edge: TraversedEdge, graph: nx.Graph, bridge_delay_min: float) -> float:
+    data = _edge_data(edge, graph)
+    arrived = _arrived_node(edge)
+    arrived_bridges = (
+        graph.nodes[arrived].get("movable_bridge_ids", ()) if arrived is not None else ()
+    )
+    if edge.full:
+        return traversal_time_min(
+            data,
+            arrived_bridges,
+            movable_bridge_delay_min=bridge_delay_min,
+        )
+    return partial_traversal_time_min(
+        data,
+        abs(edge.end_fraction - edge.start_fraction),
+        arrived_bridges,
         movable_bridge_delay_min=bridge_delay_min,
     )
 
 
-def _access_segments(path: list[int], graph: nx.Graph) -> list[RouteAccessSegment]:
-    segments = []
-    for u, v in zip(path, path[1:], strict=False):
-        low, high = sorted((u, v))
-        for caveat in graph.edges[u, v].get("access_caveats", ()):
-            segments.append(
-                RouteAccessSegment(
-                    from_uid=low,
-                    to_uid=high,
-                    osm_way_id=caveat.osm_way_id,
-                    kind=caveat.kind,
-                    tag=caveat.tag,
-                    value=caveat.value,
+def _edge_eligibility(
+    edge: TraversedEdge, constraints: ProjectedRouteConstraints, graph: nx.Graph
+) -> tuple[bool, bool]:
+    dimensions = _edge_data(edge, graph).get("dimensions", WayDimensions())
+    return _is_eligible(
+        constraints.boat_length_m,
+        constraints.boat_beam_m,
+        constraints.boat_draft_m,
+        constraints.boat_height_m,
+        dimensions,
+    )
+
+
+def _eligible_traversal(
+    edges: tuple[TraversedEdge, ...], constraints: ProjectedRouteConstraints, graph: nx.Graph
+) -> bool:
+    return all(_edge_eligibility(edge, constraints, graph)[0] for edge in edges)
+
+
+def _network_path(
+    start: int,
+    end: int,
+    constraints: ProjectedRouteConstraints,
+    graph: nx.Graph,
+    bridge_delay_min: float,
+) -> tuple[int, ...] | None:
+    def weight(u: int, v: int, data: dict[str, Any]) -> float | None:
+        eligible, _ = _is_eligible(
+            constraints.boat_length_m,
+            constraints.boat_beam_m,
+            constraints.boat_draft_m,
+            constraints.boat_height_m,
+            data.get("dimensions", WayDimensions()),
+        )
+        if not eligible:
+            return None
+        return traversal_time_min(
+            data,
+            graph.nodes[v].get("movable_bridge_ids", ()),
+            movable_bridge_delay_min=bridge_delay_min,
+        )
+
+    try:
+        return tuple(nx.shortest_path(graph, start, end, weight=weight))
+    except NetworkXNoPath:
+        return None
+
+
+def _candidate_for_endpoints(
+    constraints: ProjectedRouteConstraints,
+    graph: nx.Graph,
+    bridge_delay_min: float,
+    start_endpoint: tuple[int, float],
+    end_endpoint: tuple[int, float],
+) -> _RouteCandidate | None:
+    start_uid, start_fraction = start_endpoint
+    end_uid, end_fraction = end_endpoint
+    path = _network_path(start_uid, end_uid, constraints, graph, bridge_delay_min)
+    if path is None:
+        return None
+
+    records: list[TraversedEdge] = []
+    if constraints.start.fraction != start_fraction:
+        records.append(
+            _edge_record(constraints.start.edge, constraints.start.fraction, start_fraction)
+        )
+    records.extend(_full_edge(u, v) for u, v in zip(path, path[1:], strict=False))
+    if end_fraction != constraints.end.fraction:
+        records.append(_edge_record(constraints.end.edge, end_fraction, constraints.end.fraction))
+    edges = tuple(records)
+    if not _eligible_traversal(edges, constraints, graph):
+        return None
+    return _RouteCandidate(
+        traversal=ComputedTraversal(
+            edges=edges,
+            cost_min=sum(_traversal_cost(edge, graph, bridge_delay_min) for edge in edges),
+        ),
+        endpoint_ids=(start_uid, end_uid),
+        path=path,
+    )
+
+
+def _compute_traversal(
+    constraints: ProjectedRouteConstraints, graph: nx.Graph
+) -> ComputedTraversal:
+    bridge_delay_min = resolve_movable_bridge_delay(constraints.movable_bridge_delay_min)
+    candidates: list[_RouteCandidate] = []
+
+    if constraints.start.edge == constraints.end.edge:
+        direct = _edge_record(
+            constraints.start.edge,
+            constraints.start.fraction,
+            constraints.end.fraction,
+        )
+        if _eligible_traversal((direct,), constraints, graph):
+            candidates.append(
+                _RouteCandidate(
+                    traversal=ComputedTraversal(
+                        edges=(direct,),
+                        cost_min=_traversal_cost(direct, graph, bridge_delay_min),
+                    ),
+                    endpoint_ids=(),
+                    path=(),
                 )
             )
-    return sorted(
-        segments,
-        key=lambda segment: (
-            segment.from_uid,
-            segment.to_uid,
-            segment.osm_way_id,
-            segment.tag,
-            segment.value,
-            segment.kind,
+
+    for start_endpoint in zip(constraints.start.edge, (0.0, 1.0), strict=True):
+        for end_endpoint in zip(constraints.end.edge, (0.0, 1.0), strict=True):
+            candidate = _candidate_for_endpoints(
+                constraints,
+                graph,
+                bridge_delay_min,
+                start_endpoint,
+                end_endpoint,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+
+    if not candidates:
+        raise RouteUnavailableError(
+            "no path between the selected canal points meets the boat constraints"
+        )
+    return min(
+        candidates,
+        key=lambda candidate: (
+            candidate.traversal.cost_min,
+            candidate.endpoint_ids,
+            candidate.path,
         ),
+    ).traversal
+
+
+def _split_edge(edge: TraversedEdge, graph: nx.Graph) -> tuple[TraversedEdge, ...]:
+    if not _edge_data(edge, graph).get("geometry"):
+        return (edge,)
+    line = metric_edge_line(graph, (edge.u, edge.v))
+    if line.length <= 0:
+        return (edge,)
+    low, high = sorted((edge.start_fraction, edge.end_fraction))
+    fractions = [low]
+    boundary = math.floor(low * line.length / _DAY_SEGMENT_M + 1) * _DAY_SEGMENT_M
+    while boundary < high * line.length - 1e-9:
+        fractions.append(boundary / line.length)
+        boundary += _DAY_SEGMENT_M
+    fractions.append(high)
+    if edge.start_fraction > edge.end_fraction:
+        fractions.reverse()
+    return tuple(
+        TraversedEdge(edge.u, edge.v, start, end, False)
+        for start, end in zip(fractions, fractions[1:], strict=False)
     )
+
+
+def _report_segments(
+    traversal: ComputedTraversal, constraints: ProjectedRouteConstraints, graph: nx.Graph
+) -> tuple[_ReportSegment, ...]:
+    bridge_delay_min = resolve_movable_bridge_delay(constraints.movable_bridge_delay_min)
+    segments: list[_ReportSegment] = []
+    for traversal_index, edge in enumerate(traversal.edges):
+        pieces = _split_edge(edge, graph)
+        cruise_costs = [
+            partial_traversal_time_min(
+                _edge_data(piece, graph),
+                abs(piece.end_fraction - piece.start_fraction),
+                (),
+                movable_bridge_delay_min=bridge_delay_min,
+            )
+            for piece in pieces
+        ]
+        final_cost = _traversal_cost(edge, graph, bridge_delay_min) - sum(cruise_costs)
+        _, unknown = _edge_eligibility(edge, constraints, graph)
+        for index, (piece, cost) in enumerate(zip(pieces, cruise_costs, strict=True)):
+            is_last = index == len(pieces) - 1
+            segments.append(
+                _ReportSegment(
+                    traversal_index=traversal_index,
+                    edge=piece,
+                    cost_min=cost + (final_cost if is_last else 0),
+                    locks=int(_edge_data(edge, graph).get("locks", 0))
+                    if edge.full and is_last
+                    else 0,
+                    unknown_dimensions=unknown,
+                )
+            )
+    return tuple(segments)
+
+
+def _compute_route(constraints: ProjectedRouteConstraints, graph: nx.Graph) -> _ComputedRoute:
+    traversal = _compute_traversal(constraints, graph)
+    segments = _report_segments(traversal, constraints, graph)
+    legs = [
+        RouteLeg(
+            from_place=_point_name(
+                (segment.edge.u, segment.edge.v), segment.edge.start_fraction, graph
+            ),
+            to_place=_point_name(
+                (segment.edge.u, segment.edge.v), segment.edge.end_fraction, graph
+            ),
+            distance_km=round(
+                float(_edge_data(segment.edge, graph)["length_m"])
+                * abs(segment.edge.end_fraction - segment.edge.start_fraction)
+                / 1000.0,
+                4,
+            ),
+            locks=segment.locks,
+            est_minutes=round(segment.cost_min),
+            flagged_unknown_dims=segment.unknown_dimensions,
+        )
+        for segment in segments
+    ]
+    day_ranges = _day_path_ranges(legs, constraints.hours_per_day, constraints.days)
+    access_segments = _access_segments(traversal, graph)
+    unknown_edges = {
+        str(_edge_data(edge, graph).get("osm_way_id"))
+        for edge in traversal.edges
+        if _edge_eligibility(edge, constraints, graph)[1]
+    }
+    warnings: list[str] = []
+    if unknown_edges:
+        warnings.append(f"draft/beam unknown on {len(unknown_edges)} segment(s)")
+    warnings.extend(_access_warnings(access_segments))
+    warnings.extend(_tunnel_warnings(traversal, graph, access_segments))
+    days = _chunk_days(legs, constraints.hours_per_day, constraints.days)
+    if any(day.cruising_minutes > constraints.hours_per_day * 60 for day in days):
+        warnings.append("one or more days exceed hours_per_day budget")
+    return _ComputedRoute(
+        route=RouteResult(
+            start=_point_name(constraints.start.edge, constraints.start.fraction, graph),
+            end=_point_name(constraints.end.edge, constraints.end.fraction, graph),
+            is_ring=False,
+            legs=legs,
+            days=days,
+            total_km=round(
+                sum(
+                    float(_edge_data(edge, graph)["length_m"])
+                    * abs(edge.end_fraction - edge.start_fraction)
+                    / 1000.0
+                    for edge in traversal.edges
+                ),
+                4,
+            ),
+            total_locks=sum(
+                int(_edge_data(edge, graph).get("locks", 0))
+                for edge in traversal.edges
+                if edge.full
+            ),
+            total_minutes=sum(leg.est_minutes for leg in legs),
+            amenities=[],
+            warnings=warnings,
+            access_segments=access_segments,
+            graph_source_date="",
+        ),
+        traversal=traversal,
+        segments=segments,
+        day_ranges=tuple(day_ranges),
+    )
+
+
+def _coordinate_at_fraction(edge: tuple[int, int], fraction: float, graph: nx.Graph) -> Coordinate:
+    return project_handle(CanalPointHandle(edge=edge, fraction=fraction), graph).coordinate
+
+
+def _point_name(edge: tuple[int, int], fraction: float, graph: nx.Graph) -> str:
+    data = graph.edges[edge]
+    if isinstance(data.get("name"), str) and data["name"].strip():
+        return data["name"].strip()
+    options = [
+        (abs(fraction - endpoint_fraction), str(graph.nodes[uid]["name"]))
+        for uid, endpoint_fraction in zip(edge, (0.0, 1.0), strict=True)
+        if graph.nodes[uid].get("name")
+    ]
+    if options:
+        return min(options)[1]
+    coordinate = _coordinate_at_fraction(edge, fraction, graph)
+    return f"{coordinate.lat:.6f},{coordinate.lon:.6f}"
+
+
+def _edge_geometry(edge: TraversedEdge, graph: nx.Graph) -> list[tuple[float, float]]:
+    if edge.full:
+        coordinates = [
+            (float(y), float(x))
+            for x, y in canonical_edge_line_wgs84(graph, (edge.u, edge.v)).coords
+        ]
+    else:
+        line = metric_edge_line(graph, (edge.u, edge.v))
+        low, high = sorted((edge.start_fraction, edge.end_fraction))
+        sliced = substring(line, low * line.length, high * line.length)
+        projected = transform(sliced, _TO_WGS84.transform, interleaved=False)
+        coordinates = [(float(y), float(x)) for x, y in projected.coords]
+    if edge.start_fraction > edge.end_fraction:
+        coordinates.reverse()
+    if not edge.full:
+        start = _coordinate_at_fraction((edge.u, edge.v), edge.start_fraction, graph)
+        end = _coordinate_at_fraction((edge.u, edge.v), edge.end_fraction, graph)
+        coordinates[0] = (start.lat, start.lon)
+        coordinates[-1] = (end.lat, end.lon)
+    return coordinates
+
+
+def _joined_geometry(edges: Any, graph: nx.Graph) -> list[tuple[float, float]]:
+    joined: list[tuple[float, float]] = []
+    for edge in edges:
+        points = _edge_geometry(edge, graph)
+        if joined and _same_coordinate(joined[-1], points[0]):
+            joined.extend(points[1:])
+        else:
+            joined.extend(points)
+    return joined
+
+
+def _same_coordinate(first: tuple[float, float], second: tuple[float, float]) -> bool:
+    return round(first[0], 7) == round(second[0], 7) and round(first[1], 7) == round(second[1], 7)
+
+
+def _to_geojson(points: list[tuple[float, float]]) -> GeoJSONLineString:
+    """Convert internal (lat, lon) coordinates to GeoJSON (lon, lat)."""
+    return GeoJSONLineString(coordinates=[(lon, lat) for lat, lon in points])
+
+
+def _access_segments(traversal: ComputedTraversal, graph: nx.Graph) -> list[RouteAccessSegment]:
+    records = {
+        (caveat.osm_way_id, caveat.kind, caveat.tag, caveat.value)
+        for edge in traversal.edges
+        for caveat in _edge_data(edge, graph).get("access_caveats", ())
+    }
+    return [
+        RouteAccessSegment(osm_way_id=way_id, kind=kind, tag=tag, value=value)
+        for way_id, kind, tag, value in sorted(records)
+    ]
 
 
 def _access_warnings(segments: list[RouteAccessSegment]) -> list[str]:
@@ -142,112 +550,18 @@ def _access_warnings(segments: list[RouteAccessSegment]) -> list[str]:
     return warnings
 
 
-def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _ComputedRoute:
-    """Compute the public route result together with its selected graph path."""
-    # ResolvedConstraints carries the graph's own node handles — no coord->uid
-    # mapping, no name lookup, no graph mutation. Pure on the resolved uids.
-    start, end = constraints.start_uid, constraints.end_uid
-    bridge_delay_min = resolve_movable_bridge_delay(constraints.movable_bridge_delay_min)
-
-    def _name_attr(uid):
-        n = graph.nodes[uid]
-        return n.get("name") or f"{n['lat']},{n['lon']}"
-
-    start_name = _name_attr(start)
-
-    unknown_edges: list[str] = []
-
-    def weight(u, v, d):
-        eligible, unknown = is_eligible(
-            constraints.boat_length_m,
-            constraints.boat_beam_m,
-            constraints.boat_draft_m,
-            constraints.boat_height_m,
-            d["dimensions"],
-        )
-        if not eligible:
-            return None
-        if unknown:
-            unknown_edges.append(str(d["osm_way_id"]))
-        return _traversal_time_min(graph, u, v, d, bridge_delay_min)
-
-    try:
-        path = nx.shortest_path(graph, start, end, weight=weight)
-    except NetworkXNoPath:
-        if nx.has_path(graph, start, end):
-            raise RouteUnavailableError(
-                f"no path between '{start_name}' and '{_name_attr(end)}' "
-                f"meets the boat's dimensions"
-            ) from None
-        raise RouteUnavailableError(
-            f"no path between '{start_name}' and '{_name_attr(end)}' "
-            f"(graph is not connected between these nodes)"
-        ) from None
-
-    access_segments = _access_segments(path, graph)
-
-    legs: list[RouteLeg] = []
-    for u, v in zip(path, path[1:], strict=False):
-        d = graph.edges[u, v]
-        km = d["length_m"] / 1000.0
-        locks = d.get("locks", 0)
-        legs.append(
-            RouteLeg(
-                from_place=_name_attr(u),
-                to_place=_name_attr(v),
-                distance_km=round(km, 4),
-                locks=locks,
-                est_minutes=round(_traversal_time_min(graph, u, v, d, bridge_delay_min)),
-                flagged_unknown_dims=str(d["osm_way_id"]) in set(unknown_edges),
-            )
-        )
-
-    total_km = round(sum(leg.distance_km for leg in legs), 4)
-    total_locks = sum(leg.locks for leg in legs)
-    total_minutes = sum(leg.est_minutes for leg in legs)
-
-    warnings: list[str] = []
-    if unknown_edges:
-        warnings.append(f"draft/beam unknown on {len(set(unknown_edges))} segment(s)")
-    warnings.extend(_access_warnings(access_segments))
-    warnings.extend(_tunnel_warnings(path, graph, access_segments))
-
-    day_ranges = _day_path_ranges(legs, constraints.hours_per_day, constraints.days)
-    days = _chunk_days(legs, constraints.hours_per_day, constraints.days)
-    budget = constraints.hours_per_day * 60
-    if any(day.cruising_minutes > budget for day in days):
-        warnings.append("one or more days exceed hours_per_day budget")
-
-    return _ComputedRoute(
-        route=RouteResult(
-            start=start_name,
-            end=_name_attr(end),
-            is_ring=False,
-            legs=legs,
-            days=days,
-            total_km=total_km,
-            total_locks=total_locks,
-            total_minutes=total_minutes,
-            amenities=[],
-            warnings=warnings,
-            access_segments=access_segments,
-            graph_source_date=graph.graph.get("fetched_at", ""),
-        ),
-        path=tuple(path),
-        day_ranges=tuple(day_ranges),
-    )
-
-
 def _tunnel_warnings(
-    path: list[int], graph: nx.Graph, access_segments: list[RouteAccessSegment]
+    traversal: ComputedTraversal,
+    graph: nx.Graph,
+    access_segments: list[RouteAccessSegment],
 ) -> list[str]:
     surfaced_access = {
         (segment.osm_way_id, segment.tag, segment.value) for segment in access_segments
     }
     restrictions = {
         item
-        for u, v in zip(path, path[1:], strict=False)
-        for item in graph.edges[u, v]["tunnel_restrictions"]
+        for edge in traversal.edges
+        for item in _edge_data(edge, graph).get("tunnel_restrictions", ())
         if item not in surfaced_access
     }
     return [
@@ -256,110 +570,86 @@ def _tunnel_warnings(
     ]
 
 
-def _path_geometry(path: tuple[int, ...], graph: nx.Graph) -> list[tuple[float, float]]:
-    """Return edge geometry in path traversal order as internal (lat, lon) pairs."""
-    if len(path) == 1:
-        node = graph.nodes[path[0]]
-        point = (node["lat"], node["lon"])
-        return [point, point]
-
-    joined: list[tuple[float, float]] = []
-    for u, v in zip(path, path[1:], strict=False):
-        segment = [tuple(point) for point in graph.edges[u, v]["geometry"]]
-        u_key = _node_key(graph.nodes[u]["lat"], graph.nodes[u]["lon"])
-        if _node_key(*segment[0]) == u_key:
-            pass
-        elif _node_key(*segment[-1]) == u_key:
-            segment.reverse()
-        else:
-            raise ValueError(f"edge geometry for {u!r}-{v!r} does not meet node {u!r}")
-        if joined and joined[-1] == segment[0]:
-            joined.extend(segment[1:])
-        else:
-            joined.extend(segment)
-    return joined
+def _lock_points(edge: TraversedEdge, graph: nx.Graph) -> tuple[tuple[Coordinate, bool], ...]:
+    data = _edge_data(edge, graph)
+    geometry = data.get("geometry", ())
+    points: list[tuple[Coordinate, bool]] = []
+    for source_point in data.get("lock_points", ()):
+        try:
+            source_lat, source_lon = source_point
+        except (TypeError, ValueError):
+            continue
+        projection = project_point_to_edge(geometry, source_lat, source_lon)
+        if projection is not None and projection[1] <= LOCK_SOURCE_TOLERANCE_M:
+            lat, lon = projection[0]
+            points.append((Coordinate(lat=lat, lon=lon), False))
+    if points or not data.get("locks", 0):
+        return tuple(points)
+    return ((_approximate_lock_coordinate(edge, graph), True),)
 
 
-def _to_geojson(points: list[tuple[float, float]]) -> GeoJSONLineString:
-    """Convert internal (lat, lon) coordinates to GeoJSON (lon, lat)."""
-    return GeoJSONLineString(coordinates=[(lon, lat) for lat, lon in points])
+def _approximate_lock_coordinate(edge: TraversedEdge, graph: nx.Graph) -> Coordinate:
+    geometry = _edge_data(edge, graph).get("geometry", ())
+    if len(geometry) < 2:
+        return _coordinate_at_fraction((edge.u, edge.v), 0.5, graph)
+    lengths = [_haversine_m(start, end) for start, end in zip(geometry, geometry[1:], strict=False)]
+    midpoint = sum(lengths) / 2
+    distance = 0.0
+    for start, end, length in zip(geometry, geometry[1:], lengths, strict=True):
+        if distance + length >= midpoint:
+            fraction = (midpoint - distance) / length if length else 0.0
+            return Coordinate(
+                lat=start[0] + fraction * (end[0] - start[0]),
+                lon=start[1] + fraction * (end[1] - start[1]),
+            )
+        distance += length
+    lat, lon = geometry[-1]
+    return Coordinate(lat=lat, lon=lon)
 
 
-def _route_locks(
-    path: tuple[int, ...], graph: nx.Graph, day_ranges: tuple[tuple[int, int], ...]
-) -> list[RouteLock]:
-    """Extract lock points from traversed edges and assign them to route days."""
+def _coordinate_fraction(edge: tuple[int, int], coordinate: Coordinate, graph: nx.Graph) -> float:
+    line = metric_edge_line(graph, edge)
+    point = Point(*_TO_BNG.transform(coordinate.lon, coordinate.lat))
+    return float(line.project(point) / line.length) if line.length else 0.5
+
+
+def _route_locks(computed: _ComputedRoute, graph: nx.Graph) -> list[RouteLock]:
+    day_by_segment = {
+        segment_index: day
+        for day, (start, end) in enumerate(computed.day_ranges, start=1)
+        for segment_index in range(start, end)
+    }
     route_locks: list[RouteLock] = []
-    for edge_index, (u, v) in enumerate(zip(path, path[1:], strict=False)):
-        edge = graph.edges[u, v]
-        geometry = edge.get("geometry", [])
-        lock_points = []
-        for source_point in edge.get("lock_points", []):
-            try:
-                source_lat, source_lon = source_point
-            except (TypeError, ValueError):
+    for traversal_index, edge in enumerate(computed.traversal.edges):
+        if not edge.full:
+            continue
+        matching_segments = [
+            (index, segment)
+            for index, segment in enumerate(computed.segments)
+            if segment.traversal_index == traversal_index
+        ]
+        for coordinate, approximate in _lock_points(edge, graph):
+            fraction = _coordinate_fraction((edge.u, edge.v), coordinate, graph)
+            selected = next(
+                (
+                    (index, segment)
+                    for index, segment in matching_segments
+                    if min(segment.edge.start_fraction, segment.edge.end_fraction) - 1e-9
+                    <= fraction
+                    <= max(segment.edge.start_fraction, segment.edge.end_fraction) + 1e-9
+                ),
+                matching_segments[-1] if matching_segments else None,
+            )
+            if selected is None:
                 continue
-            projection = project_point_to_edge(geometry, source_lat, source_lon)
-            if projection is not None and projection[1] <= LOCK_SOURCE_TOLERANCE_M:
-                lock_points.append(projection[0])
-        approximate = not lock_points
-        if not lock_points and edge.get("locks", 0):
-            if geometry:
-                total_length = sum(
-                    _haversine_m(start, end)
-                    for start, end in zip(geometry, geometry[1:], strict=False)
-                )
-                midpoint = total_length / 2
-                distance = 0.0
-                lock_point = geometry[-1]
-                for start, end in zip(geometry, geometry[1:], strict=False):
-                    segment_length = _haversine_m(start, end)
-                    if distance + segment_length >= midpoint:
-                        fraction = (midpoint - distance) / segment_length if segment_length else 0.0
-                        lock_point = (
-                            start[0] + fraction * (end[0] - start[0]),
-                            start[1] + fraction * (end[1] - start[1]),
-                        )
-                        break
-                    distance += segment_length
-                lock_points = [lock_point]
-            else:
-                lock_points = [
-                    (
-                        (graph.nodes[u]["lat"] + graph.nodes[v]["lat"]) / 2,
-                        (graph.nodes[u]["lon"] + graph.nodes[v]["lon"]) / 2,
-                    )
-                ]
-        if not lock_points:
-            continue
-        day = next(
-            (
-                day_index
-                for day_index, (start, end) in enumerate(day_ranges, start=1)
-                if start <= edge_index < end
-            ),
-            None,
-        )
-        if day is None:
-            continue
-        edge_name = edge.get("name")
-        for lat, lon in lock_points:
-            name = edge_name
-            if name is None:
-                named_nodes = [
-                    (
-                        (lat - graph.nodes[uid]["lat"]) ** 2 + (lon - graph.nodes[uid]["lon"]) ** 2,
-                        graph.nodes[uid].get("name"),
-                    )
-                    for uid in (u, v)
-                    if graph.nodes[uid].get("name")
-                ]
-                if named_nodes:
-                    name = min(named_nodes)[1]
+            segment_index, _ = selected
+            day = day_by_segment.get(segment_index)
+            if day is None:
+                continue
             route_locks.append(
                 RouteLock(
-                    coordinate=Coordinate(lat=lat, lon=lon),
-                    name=name,
+                    coordinate=coordinate,
+                    name=_point_name((edge.u, edge.v), fraction, graph),
                     day=day,
                     approximate=approximate,
                 )
@@ -367,39 +657,13 @@ def _route_locks(
     return route_locks
 
 
-def plan_route_from_constraints(
-    c: CanalConstraints,
-    *,
-    graph: nx.Graph,
-    gazetteer: dict | None = None,
-    snap_tolerance_m: float = 50.0,
-) -> RouteResult:
-    """CanalConstraints -> resolve -> plan_route. The CLI/Agent Core path."""
-    if c.end is None:
-        raise NotImplementedError("rings not yet supported (design §5.3)")
-    resolved = ResolvedConstraints(
-        start_uid=resolve_place(
-            c.start, graph, gazetteer=gazetteer, snap_tolerance_m=snap_tolerance_m
-        ),
-        end_uid=resolve_place(c.end, graph, gazetteer=gazetteer, snap_tolerance_m=snap_tolerance_m),
-        days=c.days,
-        hours_per_day=c.hours_per_day,
-        movable_bridge_delay_min=c.movable_bridge_delay_min,
-        boat_length_m=c.boat_length_m,
-        boat_beam_m=c.boat_beam_m,
-        boat_draft_m=c.boat_draft_m,
-        boat_height_m=c.boat_height_m,
-    )
-    return plan_route(resolved, graph=graph)
-
-
-def _day_path_ranges(legs, hours_per_day, max_days) -> list[tuple[int, int]]:
-    """Return half-open path-edge ranges matching ``_chunk_days`` grouping."""
+def _day_path_ranges(
+    legs: list[RouteLeg], hours_per_day: float, max_days: int | None
+) -> list[tuple[int, int]]:
     budget = hours_per_day * 60.0
     ranges: list[tuple[int, int]] = []
     current_start: int | None = None
     current_min = 0
-
     for edge_index, leg in enumerate(legs):
         if current_start is not None and current_min + leg.est_minutes > budget:
             ranges.append((current_start, edge_index))
@@ -412,14 +676,12 @@ def _day_path_ranges(legs, hours_per_day, max_days) -> list[tuple[int, int]]:
         if current_start is None:
             current_start = edge_index
         current_min += leg.est_minutes
-
     if current_start is not None:
         ranges.append((current_start, len(legs)))
     return ranges
 
 
-def _chunk_days(legs, hours_per_day, max_days) -> list[DayPlan]:
-    """Greedy cumulative-minute packing. max_days=None => no cap (infer)."""
+def _chunk_days(legs: list[RouteLeg], hours_per_day: float, max_days: int | None) -> list[DayPlan]:
     return [
         DayPlan(
             day=day_index,
@@ -431,3 +693,72 @@ def _chunk_days(legs, hours_per_day, max_days) -> list[DayPlan]:
             _day_path_ranges(legs, hours_per_day, max_days), start=1
         )
     ]
+
+
+# Temporary UID adapters retained for callers that Task 9 migrates away. They
+# translate to projected endpoint handles and never route on an alternate model.
+def _node_handle(uid: int, graph: nx.Graph) -> CanalPointHandle:
+    neighbors = sorted(graph.neighbors(uid))
+    if not neighbors:
+        raise RouteUnavailableError(f"node {uid} has no traversable edge")
+    other = neighbors[0]
+    low, high = sorted((uid, other))
+    return CanalPointHandle(edge=(low, high), fraction=float(uid == high))
+
+
+def _legacy_projected(
+    constraints: ResolvedConstraints, graph: nx.Graph
+) -> ProjectedRouteConstraints:
+    return ProjectedRouteConstraints(
+        start=_node_handle(constraints.start_uid, graph),
+        end=_node_handle(constraints.end_uid, graph),
+        **constraints.model_dump(exclude={"start_uid", "end_uid"}),
+    )
+
+
+def _legacy_artifact(graph: nx.Graph) -> RuntimeArtifact:
+    return RuntimeArtifact(
+        graph=graph,
+        pois=(),
+        gazetteer={},
+        metadata={"fetched_at": graph.graph.get("fetched_at", "")},
+    )
+
+
+def plan_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> RouteResult:
+    return plan_projected_route(
+        _legacy_projected(constraints, graph), artifact=_legacy_artifact(graph)
+    ).route
+
+
+def plan_canal_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> CanalRouteResponse:
+    return plan_projected_route(
+        _legacy_projected(constraints, graph), artifact=_legacy_artifact(graph)
+    )
+
+
+def plan_route_from_constraints(
+    constraints: NamedRouteRequest,
+    *,
+    graph: nx.Graph,
+    gazetteer: dict | None = None,
+    snap_tolerance_m: float = 50.0,
+) -> RouteResult:
+    if constraints.end is None:
+        raise NotImplementedError("rings not yet supported")
+    projected = ProjectedRouteConstraints(
+        start=_node_handle(
+            resolve_place(
+                constraints.start, graph, gazetteer=gazetteer, snap_tolerance_m=snap_tolerance_m
+            ),
+            graph,
+        ),
+        end=_node_handle(
+            resolve_place(
+                constraints.end, graph, gazetteer=gazetteer, snap_tolerance_m=snap_tolerance_m
+            ),
+            graph,
+        ),
+        **constraints.model_dump(exclude={"start", "end"}),
+    )
+    return plan_projected_route(projected, artifact=_legacy_artifact(graph)).route

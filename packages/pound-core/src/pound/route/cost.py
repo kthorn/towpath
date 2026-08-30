@@ -51,6 +51,26 @@ def traversal_time_min(
     )
 
 
+def partial_traversal_time_min(
+    edge: Mapping[str, object],
+    fraction: float,
+    arrived_movable_bridge_ids: Collection[str],
+    *,
+    movable_bridge_delay_min: float,
+) -> float:
+    """Time for a non-infrastructure substring of one source edge.
+
+    Discrete edge events cannot occur on a permitted partial edge. A node bridge
+    at the arrived endpoint remains a whole event rather than a scaled cost.
+    """
+    return time_min(
+        float(cast(float, edge["length_m"])) * fraction,
+        0,
+        movable_bridges=len(set(arrived_movable_bridge_ids)),
+        movable_bridge_delay_min=movable_bridge_delay_min,
+    )
+
+
 def is_eligible(
     boat_length_m: float | None,
     boat_beam_m: float | None,

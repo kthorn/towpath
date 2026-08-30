@@ -4,6 +4,7 @@ from pound.route.cost import (
     DEFAULT_MOVABLE_BRIDGE_DELAY_MIN,
     LOCK_MINUTES,
     is_eligible,
+    partial_traversal_time_min,
     time_min,
 )
 
@@ -24,6 +25,22 @@ def test_time_min_formula():
     assert time_min(9500.0, 2, movable_bridge_delay_min=DEFAULT_MOVABLE_BRIDGE_DELAY_MIN) == 142.75
     # zero distance, zero locks
     assert time_min(0.0, 0, movable_bridge_delay_min=DEFAULT_MOVABLE_BRIDGE_DELAY_MIN) == 0.0
+
+
+def test_partial_traversal_scales_only_cruising_distance_and_keeps_arrival_bridge_whole():
+    edge = {"length_m": 1_000.0}
+
+    assert partial_traversal_time_min(
+        edge,
+        0.25,
+        ("node:2",),
+        movable_bridge_delay_min=DEFAULT_MOVABLE_BRIDGE_DELAY_MIN,
+    ) == time_min(
+        250.0,
+        0,
+        movable_bridges=1,
+        movable_bridge_delay_min=DEFAULT_MOVABLE_BRIDGE_DELAY_MIN,
+    )
 
 
 def test_is_eligible_passes_when_within_dims():

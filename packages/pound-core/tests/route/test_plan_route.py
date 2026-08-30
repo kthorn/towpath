@@ -11,7 +11,7 @@ from pound.route.cost import (
     traversal_time_min,
 )
 from pound.route.plan import plan_canal_route, plan_route, plan_route_from_constraints
-from pound.schemas import CanalConstraints, Coordinate, ResolvedConstraints
+from pound.schemas import Coordinate, NamedRouteRequest, ResolvedConstraints
 
 from tests.fixtures import routing_test_graph
 
@@ -305,16 +305,12 @@ def test_route_reports_selected_access_caveats_without_mutating_graph():
     route = plan_route(ResolvedConstraints(start_uid=1, end_uid=3), graph=graph)
     assert [segment.model_dump() for segment in route.access_segments] == [
         {
-            "from_uid": 1,
-            "to_uid": 2,
             "osm_way_id": 10,
             "kind": "discouraged",
             "tag": "boat",
             "value": "discouraged",
         },
         {
-            "from_uid": 2,
-            "to_uid": 3,
             "osm_way_id": 20,
             "kind": "unknown",
             "tag": "access",
@@ -401,10 +397,10 @@ def test_graph_source_date_from_metadata():
 
 def test_ring_raises_not_implemented():
     # Rings are not modelled in ResolvedConstraints (end_uid is required);
-    # CanalConstraints(end=None) -> plan_route_from_constraints raises.
+    # NamedRouteRequest(end=None) -> plan_route_from_constraints raises.
     g, _ = _graph_and_gaz()
     with pytest.raises(NotImplementedError, match="rings not yet supported"):
-        plan_route_from_constraints(CanalConstraints(start="Oxford", end=None, days=1), graph=g)
+        plan_route_from_constraints(NamedRouteRequest(start="Oxford", end=None, days=1), graph=g)
 
 
 def test_single_day_plan_wraps_legs():
@@ -577,7 +573,7 @@ def test_approximate_lock_uses_midpoint_along_curved_geometry():
 def test_plan_route_from_constraints_bridge():
     g, _ = _graph_and_gaz()
     r = plan_route_from_constraints(
-        CanalConstraints(start="Oxford", end="Hayfield", days=1), graph=g
+        NamedRouteRequest(start="Oxford", end="Hayfield", days=1), graph=g
     )
     assert r.start == "Oxford"
     assert r.end == "Hayfield"

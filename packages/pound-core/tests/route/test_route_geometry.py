@@ -43,7 +43,9 @@ def test_plan_canal_route_orients_and_joins_geometry_in_traversal_order():
 
     response = plan_canal_route(ResolvedConstraints(start_uid=1, end_uid=3), graph=graph)
 
-    assert [leg.from_place for leg in response.route.legs] == ["Start", "Middle"]
+    assert response.route.legs[0].from_place == "Start"
+    assert response.route.legs[-1].to_place == "End"
+    assert any(leg.from_place == "Middle" for leg in response.route.legs)
     assert response.geometry.type == "LineString"
     assert response.geometry.coordinates == [
         (-1.0, 51.0),
@@ -59,7 +61,9 @@ def test_plan_canal_route_reverses_geometry_with_the_route():
 
     response = plan_canal_route(ResolvedConstraints(start_uid=3, end_uid=1), graph=graph)
 
-    assert [leg.from_place for leg in response.route.legs] == ["End", "Middle"]
+    assert response.route.legs[0].from_place == "End"
+    assert response.route.legs[-1].to_place == "Start"
+    assert any(leg.from_place == "Middle" for leg in response.route.legs)
     assert response.geometry.coordinates == [
         (-1.2, 51.2),
         (-1.1, 51.1),

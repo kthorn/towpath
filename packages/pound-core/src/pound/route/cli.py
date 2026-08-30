@@ -32,7 +32,7 @@ from pydantic import ValidationError
 from pound.artifact import load_artifact
 from pound.route.plan import plan_route, plan_route_from_constraints
 from pound.route.resolve import resolve_place
-from pound.schemas import CanalConstraints, ResolvedConstraints
+from pound.schemas import NamedRouteRequest, ResolvedConstraints
 
 _DEFAULT_ARTIFACT = Path("pound/artifacts/england.pkl")
 
@@ -65,12 +65,11 @@ def _resolve_start_end(
     boat_draft_m: float | None,
     boat_height_m: float | None,
     movable_bridge_delay_min: float | None,
-) -> CanalConstraints | ResolvedConstraints:
+) -> NamedRouteRequest | ResolvedConstraints:
     """Build the routing constraints, auto-detecting uid vs name per token.
 
     Returns a ResolvedConstraints when any token was a uid (caller routes via
-    pure plan_route) or a CanalConstraints when both are names (caller uses the
-    plan_route_from_constraints bridge, unchanged from PR2). Mixed uid/name is
+    the temporary adapter) or a NamedRouteRequest when both are names. Mixed uid/name is
     allowed. Dispatch is by isinstance, so the caller does not need a flag.
     """
     start_is_uid = _is_uid(start_tok)
@@ -103,7 +102,7 @@ def _resolve_start_end(
             hours_per_day=hours_per_day,
             **cast(Any, boat),
         )
-    return CanalConstraints(
+    return NamedRouteRequest(
         start=start_tok,
         end=end_tok,
         days=days,
