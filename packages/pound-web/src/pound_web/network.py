@@ -1,9 +1,10 @@
 """Pure preparation of bounded display geometry for the canal network."""
 
 import math
+from collections.abc import Iterable
 
 import networkx as nx
-from pound.schemas import GeoJSONLineString
+from pound.schemas import GeoJSONLineString  # pyright: ignore[reportMissingImports]
 from shapely.geometry import LineString, MultiLineString
 from shapely.ops import linemerge, unary_union
 
@@ -12,15 +13,35 @@ _DISPLAY_SIMPLIFY_TOLERANCE = 1e-5
 
 
 def prepare_network_geometry(
-    graph: nx.Graph, max_vertices: int = MAX_NETWORK_VERTICES
+    graph: nx.Graph,
+    full_edge_keys: Iterable[tuple[int, int]] | int | None = None,
+    clipped_lines: Iterable[tuple[tuple[float, float], ...]] = (),
+    max_vertices: int = MAX_NETWORK_VERTICES,
 ) -> tuple[GeoJSONLineString, ...]:
-    """Convert graph edge geometry to simplified, branch-preserving GeoJSON lines."""
+    """Convert selected full edges and clipped lines to GeoJSON geometry.
+
+    ``full_edge_keys=None`` retains the legacy all-edges behavior for callers that
+    prepare an unfiltered graph directly. The graph is read-only; clipped lines
+    are supplied separately so source-edge geometry is never replaced.
+    """
+    if isinstance(full_edge_keys, bool):
+        raise ValueError("full_edge_keys must be edge keys, not a boolean")
+    if isinstance(full_edge_keys, int):
+        if clipped_lines:
+            raise ValueError("clipped_lines cannot accompany a positional vertex ceiling")
+        max_vertices = full_edge_keys
+        full_edge_keys = None
     if isinstance(max_vertices, bool) or not isinstance(max_vertices, int) or max_vertices < 1:
         raise ValueError("max_vertices must be a positive integer")
 
+    if full_edge_keys is None:
+        edge_keys = tuple((u, v) for u, v, _data in graph.edges(data=True))
+    else:
+        edge_keys = tuple(full_edge_keys)
     source_lines = []
-    for u, v, data in graph.edges(data=True):
+    for u, v in edge_keys:
         try:
+            data = graph.edges[u, v]
             coordinates = [(float(lon), float(lat)) for lat, lon in data["geometry"]]
             if len(coordinates) < 2 or any(
                 not math.isfinite(value) for coordinate in coordinates for value in coordinate
@@ -32,6 +53,20 @@ def prepare_network_geometry(
             source_lines.append(line)
         except Exception as exc:
             raise ValueError(f"Could not convert geometry for graph edge {u!r}-{v!r}") from exc
+
+    for line_number, coordinates in enumerate(clipped_lines):
+        try:
+            line_coordinates = [(float(lon), float(lat)) for lat, lon in coordinates]
+            if len(line_coordinates) < 2 or any(
+                not math.isfinite(value) for coordinate in line_coordinates for value in coordinate
+            ):
+                raise ValueError("expected at least two finite coordinates")
+            line = LineString(line_coordinates)
+            if line.is_empty or not line.is_valid:
+                raise ValueError("expected valid line geometry")
+            source_lines.append(line)
+        except Exception as exc:
+            raise ValueError(f"Could not convert clipped network line {line_number}") from exc
 
     if not source_lines:
         return ()

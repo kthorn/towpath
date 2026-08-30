@@ -4,12 +4,23 @@ import csv
 import math
 import re
 from dataclasses import dataclass
+from heapq import heappop, heappush
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 import networkx as nx
-from pound.route.cost import is_eligible, traversal_time_min
+from pound.models import WayDimensions  # pyright: ignore[reportMissingImports]
+from pound.route.cost import (  # pyright: ignore[reportMissingImports]
+    is_eligible,
+    partial_traversal_time_min,
+    traversal_time_min,
+)
+from pound.route.project import metric_edge_line  # pyright: ignore[reportMissingImports]
+from pound.schemas import CanalPointHandle, Coordinate  # pyright: ignore[reportMissingImports]
+from pyproj import Transformer  # pyright: ignore[reportMissingImports]
+from shapely import transform
+from shapely.ops import substring
 
 BOAT_HIRE_ENRICHMENT_FIELDS: tuple[str, ...] = (
     "record_type",
@@ -49,6 +60,7 @@ BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M: dict[str, float] = {
 _ALLOWED_EXCLUDE_VALUES = frozenset({"", "true", "false"})
 _ALLOWED_RECORD_TYPES = frozenset({"company_base", "review_positive"})
 _OSM_PATH = re.compile(r"^/(node|way|relation)/([1-9][0-9]*)$")
+_TO_WGS84 = Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
 
 
 @dataclass(frozen=True)
@@ -92,10 +104,62 @@ class BoatHireSeed:
         return self.location_name or self.location_id
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BoatHireAnchor:
     seed: BoatHireSeed
-    edge: tuple[int, int]
+    handle: CanalPointHandle
+    coordinate: Coordinate | None = None
+    snap_distance_m: float | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.handle, CanalPointHandle):
+            edge = tuple(sorted(self.handle))
+            object.__setattr__(self, "handle", CanalPointHandle(edge=edge, fraction=0.0))
+        if self.coordinate is None:
+            object.__setattr__(
+                self,
+                "coordinate",
+                Coordinate(lat=self.seed.latitude, lon=self.seed.longitude),
+            )
+        if self.snap_distance_m is None:
+            object.__setattr__(self, "snap_distance_m", 0.0)
+
+    @property
+    def edge(self) -> tuple[int, int]:
+        """Compatibility view of the canonical projected handle edge."""
+        return cast(Any, self.handle).edge
+
+    @property
+    def projected(self) -> Coordinate:
+        """Projected WGS84 coordinate retained for reporting and diagnostics."""
+        return cast(Coordinate, self.coordinate)
+
+
+@dataclass(frozen=True, slots=True)
+class ReachabilityGeometry:
+    """Immutable full-edge and clipped-source geometry selected for an overlay."""
+
+    full_edge_keys: tuple[tuple[int, int], ...]
+    clipped_lines: tuple[tuple[tuple[float, float], ...], ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "full_edge_keys", tuple(tuple(edge) for edge in self.full_edge_keys)
+        )
+        object.__setattr__(
+            self,
+            "clipped_lines",
+            tuple(tuple(tuple(point) for point in line) for line in self.clipped_lines),
+        )
+
+    @property
+    def edges(self) -> tuple[tuple[int, int], ...]:
+        """Compatibility view used by callers that only inspect full edges."""
+        return self.full_edge_keys
+
+    @property
+    def nodes(self) -> tuple[int, ...]:
+        return tuple(sorted({uid for edge in self.full_edge_keys for uid in edge}))
 
 
 def _is_https_url(value: str) -> bool:
@@ -238,10 +302,21 @@ def load_boat_hire_seeds(path: Path) -> tuple[BoatHireSeed, ...]:
 
 def snap_boat_hire_bases(spatial_index, seeds):
     anchors = []
+    candidate_index = getattr(spatial_index, "candidate_index", None)
     for seed in seeds:
-        edge, _projected, distance_m = spatial_index.project_to_nearest_edge(
-            seed.latitude, seed.longitude
-        )
+        if candidate_index is not None:
+            projected_result = candidate_index.nearest_projection(seed.latitude, seed.longitude)
+            if projected_result is None:
+                raise ValueError(f"Boat-hire seed {seed.identity} could not be projected")
+            projected, distance_m = projected_result
+            handle = projected.handle
+            coordinate = projected.coordinate
+        else:
+            edge, projected, distance_m = spatial_index.project_to_nearest_edge(
+                seed.latitude, seed.longitude
+            )
+            handle = CanalPointHandle(edge=tuple(sorted(edge)), fraction=0.0)
+            coordinate = Coordinate(lat=float(projected.y), lon=float(projected.x))
         limit_m = BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M.get(
             seed.identity, BOAT_HIRE_OVERLAY_DISTANCE_M
         )
@@ -249,8 +324,83 @@ def snap_boat_hire_bases(spatial_index, seeds):
             raise ValueError(
                 f"Boat-hire seed {seed.identity} is farther than {limit_m:g} m from a routing edge"
             )
-        anchors.append(BoatHireAnchor(seed, edge))
+        anchors.append(BoatHireAnchor(seed, handle, coordinate, float(distance_m)))
     return tuple(anchors)
+
+
+def _canonical_edge(edge: tuple[int, int]) -> tuple[int, int]:
+    return min(edge[0], edge[1]), max(edge[0], edge[1])
+
+
+def _partial_seed_cost(
+    data: dict[str, Any],
+    fraction: float,
+    endpoint: int,
+    graph: nx.Graph,
+    bridge_delay_min: float,
+) -> float:
+    if fraction == 0:
+        return 0.0
+    return partial_traversal_time_min(
+        data,
+        fraction,
+        graph.nodes[endpoint].get("movable_bridge_ids", ()),
+        movable_bridge_delay_min=bridge_delay_min,
+    )
+
+
+def _reachable_side_fraction(
+    data: dict[str, Any],
+    side_fraction: float,
+    endpoint: int,
+    graph: nx.Graph,
+    cutoff_min: float,
+    bridge_delay_min: float,
+) -> float:
+    if side_fraction <= 0:
+        return 0.0
+    endpoint_cost = _partial_seed_cost(data, side_fraction, endpoint, graph, bridge_delay_min)
+    if endpoint_cost <= cutoff_min + 1e-9:
+        return side_fraction
+    cruising_cost = partial_traversal_time_min(
+        data, 1.0, (), movable_bridge_delay_min=bridge_delay_min
+    )
+    if cruising_cost <= 0:
+        return 0.0
+    fraction = min(side_fraction, cutoff_min / cruising_cost)
+    if fraction >= side_fraction:
+        return math.nextafter(side_fraction, 0.0)
+    return max(0.0, fraction)
+
+
+def _clipped_source_line(
+    graph: nx.Graph,
+    edge: tuple[int, int],
+    fraction: float,
+    data: dict[str, Any],
+    cutoff_min: float,
+    bridge_delay_min: float,
+) -> tuple[tuple[float, float], ...] | None:
+    if not data.get("geometry"):
+        return None
+    line = metric_edge_line(graph, edge)
+    if line.length <= 0:
+        return None
+    low_reach = _reachable_side_fraction(
+        data, fraction, edge[0], graph, cutoff_min, bridge_delay_min
+    )
+    high_reach = _reachable_side_fraction(
+        data, 1.0 - fraction, edge[1], graph, cutoff_min, bridge_delay_min
+    )
+    low = max(0.0, fraction - low_reach) * line.length
+    high = min(1.0, fraction + high_reach) * line.length
+    if high - low <= 1e-9:
+        return None
+    clipped = substring(line, low, high)
+    if clipped.is_empty or not hasattr(clipped, "coords"):
+        return None
+    wgs84 = transform(clipped, cast(Any, _TO_WGS84.transform), interleaved=False)
+    return tuple((float(y), float(x)) for x, y in wgs84.coords)
 
 
 def select_boat_hire_reachability(
@@ -263,73 +413,84 @@ def select_boat_hire_reachability(
     boat_draft_m: float | None,
     boat_height_m: float | None,
     movable_bridge_delay_min: float,
-) -> nx.Graph:
-    def edge_is_eligible(edge) -> bool:
+) -> ReachabilityGeometry:
+    if not math.isfinite(cutoff_min) or cutoff_min < 0:
+        raise ValueError("cutoff_min must be finite and non-negative")
+
+    def edge_is_eligible(data: dict[str, Any]) -> bool:
         return is_eligible(
             boat_length_m,
             boat_beam_m,
             boat_draft_m,
             boat_height_m,
-            edge["dimensions"],
+            data.get("dimensions", WayDimensions()),
         )[0]
 
-    sources = {
-        endpoint
-        for anchor in anchors
-        if edge_is_eligible(graph.edges[anchor.edge])
-        for endpoint in anchor.edge
-    }
-    if not sources:
-        return graph.edge_subgraph(())
-
-    def weight(u, v, data):
+    distances: dict[int, float] = {}
+    queue: list[tuple[float, int]] = []
+    source_edges: list[tuple[tuple[int, int], float, dict[str, Any]]] = []
+    for anchor in anchors:
+        handle: Any = anchor.handle
+        edge = _canonical_edge(handle.edge)
+        if not graph.has_edge(*edge):
+            continue
+        data = graph.edges[edge]
         if not edge_is_eligible(data):
-            return None
-        return traversal_time_min(
-            data,
-            graph.nodes[v]["movable_bridge_ids"],
-            movable_bridge_delay_min=movable_bridge_delay_min,
-        )
+            continue
+        fraction = handle.fraction
+        source_edges.append((edge, fraction, data))
+        for endpoint, side_fraction in ((edge[0], fraction), (edge[1], 1.0 - fraction)):
+            cost = _partial_seed_cost(
+                data, side_fraction, endpoint, graph, movable_bridge_delay_min
+            )
+            if cost > cutoff_min + 1e-9:
+                continue
+            if cost < distances.get(endpoint, math.inf):
+                distances[endpoint] = cost
+                heappush(queue, (cost, endpoint))
 
-    distances = nx.multi_source_dijkstra_path_length(
-        graph,
-        sources,
-        cutoff=cutoff_min,
-        weight=weight,
+    while queue:
+        cost, node = heappop(queue)
+        if cost != distances.get(node):
+            continue
+        for neighbor in sorted(graph.neighbors(node)):
+            data = graph.edges[node, neighbor]
+            if not edge_is_eligible(data):
+                continue
+            edge_cost = traversal_time_min(
+                data,
+                graph.nodes[neighbor].get("movable_bridge_ids", ()),
+                movable_bridge_delay_min=movable_bridge_delay_min,
+            )
+            candidate = cost + edge_cost
+            if candidate > cutoff_min + 1e-9:
+                continue
+            if candidate < distances.get(neighbor, math.inf):
+                distances[neighbor] = candidate
+                heappush(queue, (candidate, neighbor))
+
+    full_edge_keys = tuple(
+        sorted(
+            edge
+            for edge in {_canonical_edge((u, v)) for u, v in graph.edges}
+            if edge[0] in distances and edge[1] in distances and edge_is_eligible(graph.edges[edge])
+        )
     )
-    reached_edges = [
-        (u, v)
-        for u, v, data in graph.edges(data=True)
-        if u in distances and v in distances and edge_is_eligible(data)
-    ]
-    overlay = graph.edge_subgraph(reached_edges).copy()
-    eligible_degree = {
-        node: sum(edge_is_eligible(graph.edges[node, neighbor]) for neighbor in graph[node])
-        for node in overlay
-    }
-    protected = sources | {
-        node
-        for node, data in overlay.nodes(data=True)
+    full_edges = set(full_edge_keys)
+    clipped_lines = tuple(
+        clipped
+        for edge, fraction, data in source_edges
+        if edge not in full_edges
         if (
-            data["turning_point"]
-            and (
-                boat_length_m is None
-                or data["turning_max_length_m"] is None
-                or boat_length_m <= data["turning_max_length_m"]
+            clipped := _clipped_source_line(
+                graph,
+                edge,
+                fraction,
+                data,
+                cutoff_min,
+                movable_bridge_delay_min,
             )
         )
-        or eligible_degree[node] >= 3
-    }
-    leaves = [node for node in overlay if overlay.degree[node] <= 1 and node not in protected]
-    while leaves:
-        node = leaves.pop()
-        if node not in overlay or node in protected or overlay.degree[node] > 1:
-            continue
-        neighbors = list(overlay.neighbors(node))
-        overlay.remove_node(node)
-        leaves.extend(
-            neighbor
-            for neighbor in neighbors
-            if neighbor in overlay and neighbor not in protected and overlay.degree[neighbor] <= 1
-        )
-    return overlay
+        is not None
+    )
+    return ReachabilityGeometry(full_edge_keys, clipped_lines)
