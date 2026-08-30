@@ -58,11 +58,14 @@ def verify_boat_hire_snaps(
     old_index = GraphSpatialIndex(_graph(old_artifact))
     new_index = GraphSpatialIndex(_graph(new_artifact))
     entries = tuple(_entry(seed, old_index, new_index) for seed in boat_hire_seeds)
+    old_threshold_breaches: list[str] = []
     threshold_breaches: list[str] = []
     required_exception_changes: list[str] = []
     for seed, entry in zip(boat_hire_seeds, entries, strict=True):
         default_limit = BOAT_HIRE_OVERLAY_DISTANCE_M
         limit = BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M.get(seed.identity, default_limit)
+        if entry["old_snap_distance_m"] > limit:
+            old_threshold_breaches.append(seed.identity)
         new_distance = entry["new_snap_distance_m"]
         if new_distance > limit:
             threshold_breaches.append(seed.identity)
@@ -75,6 +78,7 @@ def verify_boat_hire_snaps(
 
     return {
         "bases": list(entries),
+        "old_threshold_breaches": old_threshold_breaches,
         "threshold_breaches": threshold_breaches,
         "required_exception_changes": required_exception_changes,
     }
@@ -102,7 +106,13 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 1 if report["threshold_breaches"] or report["required_exception_changes"] else 0
+    return (
+        1
+        if report["old_threshold_breaches"]
+        or report["threshold_breaches"]
+        or report["required_exception_changes"]
+        else 0
+    )
 
 
 if __name__ == "__main__":

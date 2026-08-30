@@ -40,9 +40,11 @@ def _seeds() -> tuple:
     )
 
 
-def _artifacts(tmp_path: Path, *, new_west: float = -1.01) -> tuple[Path, Path]:
+def _artifacts(
+    tmp_path: Path, *, old_west: float = -1.01, new_west: float = -1.01
+) -> tuple[Path, Path]:
     old_path = write_runtime_artifact(
-        _graph((1, 2)), [], tmp_path / "old.pkl", artifact_metadata("old")
+        _graph((1, 2), west=old_west), [], tmp_path / "old.pkl", artifact_metadata("old")
     )
     new_path = write_runtime_artifact(
         _graph((3, 4), west=new_west), [], tmp_path / "new.pkl", artifact_metadata("new")
@@ -65,6 +67,55 @@ def test_verification_reports_sorted_old_and_new_projection_for_every_base(tmp_p
     assert all(entry["new_snap_distance_m"] < 1.0 for entry in report["bases"])
     assert report["threshold_breaches"] == []
     assert report["required_exception_changes"] == []
+
+
+def test_verification_command_reports_old_threshold_breaches_even_when_new_is_valid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    old_path, new_path = _artifacts(tmp_path, old_west=-1.03)
+    report = verify_boat_hire_snaps(old_path, new_path, _seeds())
+
+    assert report["threshold_breaches"] == []
+    assert report["old_threshold_breaches"] == [
+        "canal-holidays/base:62",
+        "provider/base:one",
+    ]
+    assert report["required_exception_changes"] == []
+
+    seed_path = write_boat_hire_enrichment(
+        tmp_path / "boat-hire.csv",
+        rows=[
+            {
+                "source_provider_id": "canal-holidays",
+                "location_id": "base:62",
+                "latitude": "51.0",
+                "longitude": "-1.005",
+            },
+            {
+                "source_provider_id": "provider",
+                "location_id": "base:one",
+                "latitude": "51.0",
+                "longitude": "-1.005",
+            },
+        ],
+    )
+    result = main(
+        [
+            "--before",
+            str(old_path),
+            "--after",
+            str(new_path),
+            "--boat-hire-enrichment",
+            str(seed_path),
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    assert output["old_threshold_breaches"] == [
+        "canal-holidays/base:62",
+        "provider/base:one",
+    ]
 
 
 def test_verification_command_reports_base_62_and_fails_new_threshold_breaches(
