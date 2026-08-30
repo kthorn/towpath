@@ -111,6 +111,21 @@ class PlacesIndex:
         self.catalog_index = catalog_index
         self.waterway_index = waterway_index
         self.boat_hire_seeds = tuple(seed for seed in boat_hire_seeds if seed.is_public_place)
+        hire_osm_ids = {
+            (identity.osm_type, identity.osm_id)
+            for seed in self.boat_hire_seeds
+            if (identity := seed.osm_identity) is not None
+        }
+        catalog_kinds_by_hire_identity: dict[tuple[str, int], set[str]] = {
+            identity: set() for identity in hire_osm_ids
+        }
+        for place in catalog_index.places:
+            identity = (place.osm_type.value, place.osm_id)
+            if identity in catalog_kinds_by_hire_identity:
+                catalog_kinds_by_hire_identity[identity].add(place.kind)
+        self._catalog_kinds_by_hire_identity = {
+            identity: frozenset(kinds) for identity, kinds in catalog_kinds_by_hire_identity.items()
+        }
         self.max_kinds = max_kinds
         self.max_radius_m = max_radius_m
         self.max_viewport_span_deg = max_viewport_span_deg
@@ -232,7 +247,8 @@ class PlacesIndex:
                 route_bng=route_bng,
                 day_bng=day_bng,
                 work_budget=remaining_work,
-                result_budget=remaining_results + len(self._hire_osm_ids(hire_matches)),
+                result_budget=remaining_results
+                + self._suppression_headroom(osm_kinds, hire_matches),
                 stats=stats,
             )
             remaining_work -= osm_result.work_used
@@ -275,7 +291,8 @@ class PlacesIndex:
                     kinds=osm_kinds,
                     target_bng=target_bng,
                     work_budget=remaining_work,
-                    result_budget=remaining_results + len(self._hire_osm_ids(hire_matches)),
+                    result_budget=remaining_results
+                    + self._suppression_headroom(osm_kinds, hire_matches),
                     target_id=target.id,
                     stats=stats,
                 )
@@ -478,6 +495,16 @@ class PlacesIndex:
             for match in hire_matches
             if (identity := match.seed.osm_identity) is not None
         }
+
+    def _suppression_headroom(
+        self,
+        selected_kinds: frozenset[str],
+        hire_matches: tuple[_BoatHireMatch, ...],
+    ) -> int:
+        return sum(
+            len(selected_kinds & self._catalog_kinds_by_hire_identity.get(identity, frozenset()))
+            for identity in self._hire_osm_ids(hire_matches)
+        )
 
     @staticmethod
     def _suppress_osm(

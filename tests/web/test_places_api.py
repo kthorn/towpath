@@ -5,6 +5,7 @@ import pytest  # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
 from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
 
+from pound.catalog.manifest import CATALOG_KINDS
 from pound.graph.artifact import save_artifact
 from pound.web.app import create_app
 from pound.web.config import WebSettings
@@ -166,6 +167,83 @@ def test_places_query_budget_is_structured_413(web_client: TestClient, monkeypat
         "code": "places_query_budget_exceeded",
         "message": "The places query exceeds its configured budget.",
         "fields": ["route_geometry", "day_geometry"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("payload", "fields"),
+    [
+        pytest.param(
+            valid_viewport_payload(kinds=sorted(CATALOG_KINDS)[:17]),
+            ["kinds"],
+            id="viewport-kinds",
+        ),
+        pytest.param(
+            valid_viewport_payload(
+                bounds={"south": 50.0, "west": -1.1, "north": 61.0, "east": -0.9}
+            ),
+            ["bounds"],
+            id="viewport-span",
+        ),
+        pytest.param(
+            valid_viewport_payload(policy={"basis": "route", "radius_m": 2_001}),
+            ["policy.radius_m"],
+            id="viewport-radius",
+        ),
+        pytest.param(
+            valid_viewport_payload(
+                route_geometry={
+                    "type": "LineString",
+                    "coordinates": [[-1.0, 51.0]] * 10_001,
+                }
+            ),
+            ["route_geometry", "day_geometry"],
+            id="viewport-vertices",
+        ),
+        pytest.param(valid_nearby_payload(radius_m=2_001), ["radius_m"], id="nearby-radius"),
+        pytest.param(
+            valid_nearby_payload(
+                targets=[
+                    {
+                        "id": str(index),
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [-1.001, 51.0],
+                        },
+                    }
+                    for index in range(65)
+                ]
+            ),
+            ["targets"],
+            id="nearby-targets",
+        ),
+        pytest.param(
+            valid_nearby_payload(
+                targets=[
+                    {
+                        "id": "long-line",
+                        "geometry": {
+                            "type": "LineString",
+                            "coordinates": [[-1.0, 51.0]] * 10_001,
+                        },
+                    }
+                ]
+            ),
+            ["targets"],
+            id="nearby-vertices",
+        ),
+    ],
+)
+def test_places_hard_budget_ceilings_are_structured_413(
+    web_client: TestClient, payload: dict, fields: list[str]
+):
+    response = web_client.post("/api/places", json=payload)
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == {
+        "code": "places_query_budget_exceeded",
+        "message": "The places query exceeds its configured budget.",
+        "fields": fields,
     }
 
 

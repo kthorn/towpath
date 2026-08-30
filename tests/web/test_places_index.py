@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Literal, cast
 
 import networkx as nx
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 from shapely import wkb
 from shapely.geometry import LineString, Point
 
@@ -84,12 +84,12 @@ def _viewport_request(
         bounds=_bounds(),
         text=text,
         route_geometry=(
-            {"type": "LineString", "coordinates": route_geometry}
+            cast(Any, {"type": "LineString", "coordinates": route_geometry})
             if route_geometry is not None
             else None
         ),
         day_geometry=(
-            {"type": "LineString", "coordinates": day_geometry}
+            cast(Any, {"type": "LineString", "coordinates": day_geometry})
             if day_geometry is not None
             else None
         ),
@@ -109,13 +109,17 @@ def _nearby_request(
         kinds=kinds,
         radius_m=radius_m,
         text=text,
-        targets=targets
-        or [
-            {
-                "id": "point",
-                "geometry": {"type": "Point", "coordinates": [-1.0, 51.0]},
-            }
-        ],
+        targets=cast(
+            Any,
+            targets
+            if targets is not None
+            else [
+                {
+                    "id": "point",
+                    "geometry": {"type": "Point", "coordinates": [-1.0, 51.0]},
+                }
+            ],
+        ),
     )
 
 
@@ -302,6 +306,36 @@ def test_result_capacity_is_charged_after_osm_identity_suppression():
 
     assert len(response.places) == 1
     assert response.places[0].provenance.source == "boat_hire"
+
+
+@pytest.mark.parametrize("mode", ["viewport", "nearby"])
+def test_suppression_headroom_counts_each_selected_catalog_kind(mode: str):
+    shared_identity = tuple(_place(kind, 2) for kind in ("marina", "museum", "pub"))
+    unrelated = _place("cafe", 1, lon=-1.001)
+    seed = BoatHireSeed(
+        "provider",
+        "base:shared",
+        51.0,
+        -1.0,
+        osm_url="https://www.openstreetmap.org/node/2",
+    )
+    places_index = _index(shared_identity + (unrelated,), (seed,))
+    places_index.max_results = 2
+
+    if mode == "viewport":
+        request = _viewport_request(
+            ["marina", "museum", "pub", "cafe", "boat_hire"],
+        )
+    else:
+        request = _nearby_request(
+            ["marina", "museum", "pub", "cafe", "boat_hire"],
+            radius_m=200,
+        )
+
+    response = places_index.query(request)
+
+    assert len(response.places) == 2
+    assert {place.kind for place in response.places} == {"boat_hire", "cafe"}
 
 
 def test_exact_osm_identity_suppresses_osm_only_when_hire_is_emitted():
