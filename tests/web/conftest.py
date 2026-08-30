@@ -101,6 +101,8 @@ def route_graph() -> nx.Graph:
         lon=-1.0,
         osm_node_ids={"1"},
         movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
         name="Start",
         tags={"kind": "canal"},
     )
@@ -110,6 +112,8 @@ def route_graph() -> nx.Graph:
         lon=-1.001,
         osm_node_ids={"2"},
         movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
         name="Middle",
         tags={"kind": "canal"},
     )
@@ -119,6 +123,8 @@ def route_graph() -> nx.Graph:
         lon=-1.002,
         osm_node_ids={"3"},
         movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
         name="End",
         tags={"kind": "canal"},
     )
@@ -128,6 +134,8 @@ def route_graph() -> nx.Graph:
         lon=-2.0,
         osm_node_ids={"4"},
         movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
         name="Island",
         tags={"kind": "canal"},
     )

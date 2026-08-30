@@ -20,8 +20,24 @@ from pound.ingest.ir import AccessCaveat, PointOfInterest
 
 def _graph() -> nx.Graph:
     graph = nx.Graph()
-    graph.add_node(0, lat=51.7520, lon=-1.2577, osm_node_ids={"100"}, movable_bridge_ids=())
-    graph.add_node(1, lat=51.7520, lon=-1.2560, osm_node_ids={"101"}, movable_bridge_ids=())
+    graph.add_node(
+        0,
+        lat=51.7520,
+        lon=-1.2577,
+        osm_node_ids={"100"},
+        movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
+    )
+    graph.add_node(
+        1,
+        lat=51.7520,
+        lon=-1.2560,
+        osm_node_ids={"101"},
+        movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
+    )
     graph.add_edge(
         0,
         1,
@@ -231,6 +247,8 @@ def test_load_rejects_directed_or_non_graph_payloads(tmp_path: Path, graph):
         ("node", "lon"),
         ("node", "osm_node_ids"),
         ("node", "movable_bridge_ids"),
+        ("node", "turning_point"),
+        ("node", "turning_max_length_m"),
         ("edge", "geometry"),
         ("edge", "movable_bridge_ids"),
         ("edge", "tunnel_restrictions"),
@@ -270,6 +288,41 @@ def test_load_rejects_malformed_bridge_and_tunnel_annotations(
     _write(path, payload)
 
     _assert_rebuild_error(path, attribute)
+
+
+@pytest.mark.parametrize(
+    ("attribute", "value"),
+    [
+        ("turning_point", 1),
+        ("turning_point", None),
+        ("turning_max_length_m", True),
+        ("turning_max_length_m", 0.0),
+        ("turning_max_length_m", -1.0),
+        ("turning_max_length_m", float("inf")),
+        ("turning_max_length_m", float("nan")),
+        ("turning_max_length_m", "21.5"),
+    ],
+)
+def test_load_rejects_malformed_turning_metadata(tmp_path: Path, attribute: str, value: object):
+    path = tmp_path / "graph.pkl"
+    payload = _valid_payload()
+    payload["graph"].nodes[0][attribute] = value
+    _write(path, payload)
+
+    _assert_rebuild_error(path, attribute)
+
+
+def test_load_round_trips_turning_metadata(tmp_path: Path):
+    path = tmp_path / "graph.pkl"
+    graph = _graph()
+    graph.nodes[0]["turning_point"] = True
+    graph.nodes[0]["turning_max_length_m"] = 21.5
+
+    save_artifact(graph, [_poi()], path, _metadata())
+
+    loaded = load_artifact(path).graph.nodes[0]
+    assert loaded["turning_point"] is True
+    assert loaded["turning_max_length_m"] == 21.5
 
 
 @pytest.mark.parametrize("geometry", [[], [(51.0, -1.0)], [(float("nan"), -1.0)], ["bad", "data"]])

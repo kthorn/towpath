@@ -271,8 +271,26 @@ def test_empty_oneway_value_survives_artifact_validation_and_warns():
     from pound.graph.artifact import prepare_artifact
 
     graph = nx.Graph()
-    graph.add_node(1, lat=51.0, lon=-1.0, name="Start", osm_node_ids={"1"}, movable_bridge_ids=())
-    graph.add_node(2, lat=51.0, lon=-0.98, name="End", osm_node_ids={"2"}, movable_bridge_ids=())
+    graph.add_node(
+        1,
+        lat=51.0,
+        lon=-1.0,
+        name="Start",
+        osm_node_ids={"1"},
+        movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
+    )
+    graph.add_node(
+        2,
+        lat=51.0,
+        lon=-0.98,
+        name="End",
+        osm_node_ids={"2"},
+        movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
+    )
     graph.add_edge(
         1,
         2,

@@ -23,7 +23,7 @@ import math
 import networkx as nx
 
 from pound.graph.locks import LOCK_SOURCE_TOLERANCE_M, project_point_to_edge
-from pound.ingest.filters import extract_access_caveats
+from pound.ingest.filters import extract_access_caveats, extract_dimensions
 from pound.ingest.ir import NodeKind, WaterwayFeatures, WaterwayKind, WayDimensions
 
 _ROUND = 7
@@ -117,7 +117,15 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
             uid = coord_idx[coord]
         if uid is None:
             uid = next(uid_counter)
-            g.add_node(uid, lat=coord[0], lon=coord[1], osm_node_ids=set(), movable_bridge_ids=())
+            g.add_node(
+                uid,
+                lat=coord[0],
+                lon=coord[1],
+                osm_node_ids=set(),
+                movable_bridge_ids=(),
+                turning_point=False,
+                turning_max_length_m=None,
+            )
             coord_idx[coord] = uid
         if sid is not None:
             osm_idx[sid] = uid
@@ -235,6 +243,19 @@ def build_graph(features: WaterwayFeatures) -> nx.Graph:
                     tunnel_restrictions=tunnel_restrictions,
                     access_caveats=access_caveats,
                 )
+
+    for node in features.nodes:
+        if node.kind != NodeKind.TURNING_POINT:
+            continue
+        uid = osm_idx.get(str(node.osm_id))
+        if uid is None:
+            uid = coord_idx.get(_node_key(node.lat, node.lon))
+        if uid is None:
+            continue
+        data = g.nodes[uid]
+        data["turning_point"] = True
+        maximum = extract_dimensions(node.tags).max_length_m
+        data["turning_max_length_m"] = _min_nonnone(data["turning_max_length_m"], maximum)
 
     for node in features.nodes:
         if node.kind != NodeKind.MOVABLE_BRIDGE:
