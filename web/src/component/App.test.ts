@@ -418,7 +418,7 @@ describe("trip planning interface", () => {
 		expect(hours).toHaveAttribute("max", "24");
 		expect(
 			screen.getByText(
-				/The map shows the one-way cruising reach from any hire base for the selected Days and Hours per day, capped at 168 cruising hours\./,
+				/The map shows canal routes that can return to the same hire base within the selected Days and Hours per day, capped at 168 cruising hours\./,
 			),
 		).toBeVisible();
 		await fireEvent.input(days, { target: { value: "4" } });
