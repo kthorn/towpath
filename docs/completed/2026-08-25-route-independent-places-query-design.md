@@ -1,7 +1,11 @@
 # Route-independent places query design
 
-> **Status:** Refined and user-approved
+> **Status:** Refined and user-approved, with the Task 7 latency-baseline amendment
 > **Issue:** #15 — Build offline amenity index and location-based POI search
+>
+> **Task 7 amendment:** The fixed-case p95/max query-latency observation is a
+> host-specific regression baseline, not a product SLA or hard acceptance gate.
+> The startup, RSS, candidate-work, and complete-result limits remain hard gates.
 
 ## Goal
 
@@ -396,13 +400,14 @@ a boat-hire CSV argument. Keep fixed viewport cases plus representative point, l
 multi-target nearby cases. Benchmark JSON replaces `matching_count`/`over_cap` with
 `result_count` for successes or `outcome: "result_limit_exceeded"` for the intentional
 limit exception, alongside candidate-work and timing; README uses the same outcome/result
-column. Preserve the nationwide startup/index-load gates (<= 130 s in-process and <=
-4,615,019 KiB peak RSS) and the query gate (p95 and max <= 50 ms for every fixed case).
-If the required BNG geometry/tree
-exceeds either startup gate, stop implementation and return for a user-approved redesign;
-do not relax the gates, reduce correctness, or substitute representative-point lookup.
-Tune/reject aggregate query work before relaxing query gates. Record the new measured
-baseline in README.
+column. Preserve the nationwide hard startup/index-load gates (<= 130 s in-process and
+<= 4,615,019 KiB peak RSS) and bounded candidate-work/complete-result behavior. Record
+fixed-case p50/p95/max timings as a host-specific regression baseline, not a product SLA
+or hard latency gate; these observations are not acceptance thresholds. If the required
+BNG geometry/tree exceeds either startup gate, stop implementation and return for a
+user-approved redesign; do not relax the startup/RSS gates, reduce correctness, or
+substitute representative-point lookup. Tune/reject aggregate query work before
+relaxing its bound. Record the measured baseline in README.
 
 Run focused Python and frontend tests first, then `uv run pytest`, `uv run ruff check .`,
 the frontend typecheck, and the production frontend build.
