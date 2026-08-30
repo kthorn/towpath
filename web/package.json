@@ -16,7 +16,7 @@
     "@sveltejs/vite-plugin-svelte": "6.1.0",
     "@testing-library/jest-dom": "6.6.4",
     "@testing-library/svelte": "5.2.8",
-    "@types/node": "24.1.0",
+    "@types/node": "26.2.0",
     "jsdom": "26.1.0",
     "svelte": "5.56.4",
     "svelte-check": "4.3.0",
