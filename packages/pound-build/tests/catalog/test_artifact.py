@@ -1,11 +1,14 @@
 import pickle
 from pathlib import Path
 
-import pytest
-from pound.catalog.artifact import InvalidCatalogError, load_catalog
-from pound.catalog.metadata import CatalogMetadata
-from pound.catalog.models import CatalogPlace
-from pound.models import OsmElementType
+import pytest  # pyright: ignore[reportMissingImports]
+from pound.catalog.artifact import (  # pyright: ignore[reportMissingImports]
+    InvalidCatalogError,
+    load_catalog,
+)
+from pound.catalog.metadata import CatalogMetadata  # pyright: ignore[reportMissingImports]
+from pound.catalog.models import CatalogPlace  # pyright: ignore[reportMissingImports]
+from pound.models import OsmElementType  # pyright: ignore[reportMissingImports]
 from pound_build.catalog.artifact import prepare_catalog, write_catalog
 from shapely import wkb
 from shapely.geometry import Point
@@ -62,7 +65,7 @@ def _write_catalog_payload(
         pickle.dump({"places": list(artifact.places), "metadata": metadata}, stream)
 
 
-@pytest.mark.parametrize("version", [1, 2, "3", True])
+@pytest.mark.parametrize("version", [1, 2, "3", True, 3.0])
 def test_catalog_loader_rejects_incompatible_schema_versions(
     tmp_path: Path,
     version,
@@ -73,6 +76,15 @@ def test_catalog_loader_rejects_incompatible_schema_versions(
 
     with pytest.raises(InvalidCatalogError, match="catalog_schema_version"):
         load_catalog(path)
+
+
+@pytest.mark.parametrize("version", [True, 3.0])
+def test_catalog_builder_rejects_non_integer_schema_version(version):
+    metadata = _metadata()
+    metadata["catalog_schema_version"] = version
+
+    with pytest.raises(InvalidCatalogError, match="catalog_schema_version"):
+        prepare_catalog([_place()], metadata)
 
 
 def test_catalog_loader_rejects_missing_schema_version(tmp_path: Path):

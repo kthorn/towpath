@@ -18,7 +18,7 @@ class InvalidArtifactError(ValueError):
 class RuntimeArtifact:
     graph: nx.Graph
     pois: tuple[RuntimePoi, ...]
-    gazetteer: dict[str, tuple[float, float]]
+    gazetteer: dict[str, tuple[float, float] | list[tuple[float, float]]]
     metadata: dict[str, object]
 
 
@@ -28,7 +28,8 @@ def load_artifact(path: Path) -> RuntimeArtifact:
     if not isinstance(payload, dict) or set(payload) != _PAYLOAD_FIELDS:
         raise InvalidArtifactError("invalid top-level artifact shape")
     metadata = payload["metadata"]
-    if not isinstance(metadata, dict) or metadata.get("artifact_schema_version") != 1:
+    version = metadata.get("artifact_schema_version") if isinstance(metadata, dict) else None
+    if type(version) is not int or version != ROUTING_ARTIFACT_SCHEMA_VERSION:
         raise InvalidArtifactError("unsupported artifact schema version")
     if not isinstance(metadata.get("artifact_revision"), str) or not metadata["artifact_revision"]:
         raise InvalidArtifactError("artifact revision is required")

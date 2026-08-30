@@ -130,6 +130,36 @@ def test_prepare_rejects_invalid_access_caveat():
         prepare_artifact(graph, [_poi()], {}, _metadata())
 
 
+@pytest.mark.parametrize("version", [True, 1.0])
+def test_prepare_rejects_non_integer_schema_version(version):
+    with pytest.raises(InvalidArtifactError, match="artifact_schema_version"):
+        prepare_artifact(_graph(), [], {}, _metadata(artifact_schema_version=version))
+
+
+@pytest.mark.parametrize(
+    "gazetteer",
+    [
+        {1: (51.0, -1.0)},
+        {"Oxford": "not a coordinate"},
+        {"Oxford": (float("nan"), -1.0)},
+        {"Oxford": (51.0, float("inf"))},
+        {"Oxford": [(51.0, -1.0)]},
+        {"Oxford": [(51.0, -1.0), (52.0, "bad")]},
+    ],
+)
+def test_prepare_rejects_invalid_gazetteer(gazetteer):
+    with pytest.raises(InvalidArtifactError, match="gazetteer"):
+        prepare_artifact(_graph(), [], gazetteer, _metadata())
+
+
+def test_prepare_accepts_duplicate_name_gazetteer():
+    gazetteer = {"Oxford": [(51.0, -1.0), (52.0, -2.0)]}
+
+    artifact = prepare_artifact(_graph(), [], gazetteer, _metadata())
+
+    assert artifact.gazetteer == gazetteer
+
+
 def test_prepare_generates_revision_once_when_absent(monkeypatch):
     monkeypatch.setattr(artifact_module, "uuid4", lambda: "generated-revision")
     metadata = _metadata()

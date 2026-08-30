@@ -13,12 +13,26 @@ from typing import Any
 from uuid import uuid4
 
 import networkx as nx
-from pound.artifact import ROUTING_ARTIFACT_SCHEMA_VERSION, InvalidArtifactError, RuntimeArtifact
-from pound.models import POI_CORRIDOR_M, AccessCaveat, RuntimePoi
-from pydantic import ValidationError
+from pound.artifact import (  # pyright: ignore[reportMissingImports]
+    ROUTING_ARTIFACT_SCHEMA_VERSION,
+    InvalidArtifactError,
+    RuntimeArtifact,
+)
+from pound.geometry import (
+    edge_line_wgs84 as _edge_line_wgs84,  # pyright: ignore[reportMissingImports]
+)
+from pound.models import (  # pyright: ignore[reportMissingImports]
+    POI_CORRIDOR_M,
+    AccessCaveat,
+    RuntimePoi,
+)
+from pydantic import ValidationError  # pyright: ignore[reportMissingImports]
 from shapely.geometry import Point
 
-from pound_build.graph.pois import _edge_line_wgs84, _routing_eligible, _to_bng
+from pound_build.graph.pois import (  # pyright: ignore[reportPrivateUsage,reportPrivateImportUsage]
+    _routing_eligible,
+    _to_bng,
+)
 from pound_build.ingest.filters import extract_access_caveats
 from pound_build.ingest.ir import PointOfInterest
 
@@ -318,10 +332,11 @@ def _validate_metadata(metadata: Any) -> dict:
         detail = f"metadata fields must be exact; missing={missing}, unexpected={unexpected}"
         field = missing[0] if missing else "metadata fields"
         raise _invalid(field, metadata, detail)
-    if metadata["artifact_schema_version"] != ROUTING_ARTIFACT_SCHEMA_VERSION:
+    version = metadata["artifact_schema_version"]
+    if type(version) is not int or version != ROUTING_ARTIFACT_SCHEMA_VERSION:
         raise _invalid(
             "metadata.artifact_schema_version",
-            metadata["artifact_schema_version"],
+            version,
             f"expected supported version {ROUTING_ARTIFACT_SCHEMA_VERSION}",
         )
     for field in ("artifact_revision", "source", "fetched_at", "built_at"):
@@ -331,6 +346,52 @@ def _validate_metadata(metadata: Any) -> dict:
         if not isinstance(metadata[field], dict):
             raise _invalid(f"metadata.{field}", metadata[field], "expected a mapping")
     return dict(metadata)
+
+
+def _validate_gazetteer(gazetteer: Any) -> dict:
+    if not isinstance(gazetteer, dict):
+        raise _invalid("gazetteer", gazetteer, "expected a mapping")
+
+    for name, entry in gazetteer.items():
+        if type(name) is not str or not name:
+            raise _invalid("gazetteer key", name, "expected a non-empty string")
+        if isinstance(entry, tuple):
+            coordinates = (entry,)
+            if len(entry) != 2:
+                raise _invalid(
+                    f"gazetteer[{name!r}]", entry, "expected a (latitude, longitude) pair"
+                )
+        elif isinstance(entry, list) and len(entry) >= 2:
+            coordinates = entry
+        else:
+            raise _invalid(
+                f"gazetteer[{name!r}]",
+                entry,
+                "expected a coordinate pair or a duplicate-name list",
+            )
+
+        for index, coordinate in enumerate(coordinates):
+            if type(coordinate) is not tuple or len(coordinate) != 2:
+                raise _invalid(
+                    f"gazetteer[{name!r}][{index}]",
+                    coordinate,
+                    "expected a (latitude, longitude) pair",
+                )
+            latitude, longitude = coordinate
+            if (
+                type(latitude) not in (int, float)
+                or not math.isfinite(latitude)
+                or not -90 <= latitude <= 90
+                or type(longitude) not in (int, float)
+                or not math.isfinite(longitude)
+                or not -180 <= longitude <= 180
+            ):
+                raise _invalid(
+                    f"gazetteer[{name!r}][{index}]",
+                    coordinate,
+                    "expected finite latitude/longitude values in geographic bounds",
+                )
+    return gazetteer
 
 
 def _prepare_artifact(
@@ -345,8 +406,7 @@ def _prepare_artifact(
     parsed_pois = _parse_pois(pois, trust_validated_instances=trust_validated_instances)
     metadata = _validate_metadata(metadata)
     _validate_attachments(graph, parsed_pois)
-    if not isinstance(gazetteer, dict):
-        raise _invalid("gazetteer", gazetteer, "expected a mapping")
+    gazetteer = _validate_gazetteer(gazetteer)
     return RuntimeArtifact(
         graph=graph,
         pois=tuple(

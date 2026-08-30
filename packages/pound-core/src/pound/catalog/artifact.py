@@ -55,7 +55,8 @@ def load_catalog(path: Path) -> CatalogArtifact:
     metadata = payload["metadata"]
     if type(metadata) is not dict:
         raise _invalid("invalid metadata section type")
-    if metadata.get("catalog_schema_version") != CATALOG_SCHEMA_VERSION:
+    version = metadata.get("catalog_schema_version")
+    if type(version) is not int or version != CATALOG_SCHEMA_VERSION:
         raise _invalid("unsupported catalog_schema_version")
     if not isinstance(metadata.get("catalog_revision"), str) or not metadata["catalog_revision"]:
         raise _invalid("catalog revision is required")

@@ -2,7 +2,7 @@ import pickle
 from pathlib import Path
 
 import networkx as nx
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 from pound.artifact import ROUTING_ARTIFACT_SCHEMA_VERSION, load_artifact
 
 
@@ -34,4 +34,22 @@ def test_runtime_loader_rejects_old_payload_shape(tmp_path: Path):
     path = tmp_path / "old.pkl"
     path.write_bytes(pickle.dumps({"graph": nx.Graph(), "pois": (), "metadata": {}}))
     with pytest.raises(ValueError, match="top-level"):
+        load_artifact(path)
+
+
+@pytest.mark.parametrize("version", [True, 1.0])
+def test_runtime_loader_rejects_non_integer_schema_version(tmp_path: Path, version):
+    path = tmp_path / "wrong-version.pkl"
+    payload = {
+        "graph": nx.Graph(),
+        "pois": (),
+        "gazetteer": {},
+        "metadata": {
+            "artifact_schema_version": version,
+            "artifact_revision": "r1",
+        },
+    }
+    path.write_bytes(pickle.dumps(payload))
+
+    with pytest.raises(ValueError, match="schema version"):
         load_artifact(path)

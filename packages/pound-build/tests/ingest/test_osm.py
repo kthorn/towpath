@@ -2,11 +2,12 @@ import json
 from pathlib import Path
 
 import pytest
-from fixtures import oxford_fixture_path
+from fixtures import oxford_fixture_path, poi_fixture_path, tiny_bulk_fixture_path
+from pound.models import OsmElementType  # pyright: ignore[reportMissingImports]
 from pound_build.graph.build import build_graph
 from pound_build.graph.pois import PoiAttachmentIndex, PoiBuildAccumulator, attach_pois
 from pound_build.ingest.diagnostics import PoiDiagnostics
-from pound_build.ingest.ir import NodeKind, OsmElementType
+from pound_build.ingest.ir import NodeKind
 from pound_build.ingest.osm import (
     TAGS_FILTER_EXPR,
     _normalized_geometry_wkt,
@@ -23,7 +24,7 @@ pytestmark = pytest.mark.bulk
 
 
 def _tiny_pbf_path() -> Path:
-    return Path(__file__).parent.parent / "fixtures" / "tiny_bulk.osm"
+    return tiny_bulk_fixture_path()
 
 
 def test_tags_filter_expr_is_pinned():
@@ -343,7 +344,7 @@ def test_tags_filter_round_trip_matches_overpass_shape(monkeypatch, tmp_path):
 def test_bulk_poi_candidates_match_overpass_after_source_fields_are_excluded():
     from pound_build.ingest.overpass import parse
 
-    fixture = Path(__file__).parent.parent / "fixtures" / "poi_overpass_sample.json"
+    fixture = poi_fixture_path()
     overpass = parse(json.loads(fixture.read_text())["elements"], None)
     bulk = read_pbf(_tiny_pbf_path())
 

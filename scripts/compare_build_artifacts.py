@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from pound.artifact import RuntimeArtifact, load_artifact
+from pound.artifact import RuntimeArtifact, load_artifact  # pyright: ignore[reportMissingImports]
 
 _IGNORED_METADATA_FIELDS = {"artifact_revision", "built_at"}
 
@@ -54,6 +54,7 @@ def compare_artifacts(before: RuntimeArtifact, after: RuntimeArtifact) -> list[s
         ("graph nodes", _nodes(before), _nodes(after)),
         ("graph edges", _edges(before), _edges(after)),
         ("pois", _pois(before), _pois(after)),
+        ("gazetteer", _normalized(before.gazetteer), _normalized(after.gazetteer)),
         ("metadata", _metadata(before), _metadata(after)),
     )
     return [

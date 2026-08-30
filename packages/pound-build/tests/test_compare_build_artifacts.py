@@ -1,12 +1,15 @@
 from copy import deepcopy
 
 import networkx as nx
-from pound.artifact import RuntimeArtifact
-from pound.models import WayDimensions
+from pound.artifact import RuntimeArtifact  # pyright: ignore[reportMissingImports]
+from pound.models import WayDimensions  # pyright: ignore[reportMissingImports]
 from pound_build.artifact import prepare_artifact, write_artifact
 from pound_build.ingest.ir import PointOfInterest
 
-from scripts.compare_build_artifacts import compare_artifacts, main
+from scripts.compare_build_artifacts import (  # pyright: ignore[reportMissingImports]
+    compare_artifacts,
+    main,
+)
 
 
 def _graph() -> nx.Graph:
@@ -83,9 +86,18 @@ def _metadata(**overrides) -> dict:
 
 
 def _artifact(
-    *, graph: nx.Graph | None = None, pois: tuple[PointOfInterest, ...] | None = None, **metadata
+    *,
+    graph: nx.Graph | None = None,
+    pois: tuple[PointOfInterest, ...] | None = None,
+    gazetteer: dict | None = None,
+    **metadata,
 ) -> RuntimeArtifact:
-    return prepare_artifact(graph or _graph(), pois or (_poi(),), {}, _metadata(**metadata))
+    return prepare_artifact(
+        graph or _graph(),
+        pois or (_poi(),),
+        {} if gazetteer is None else gazetteer,
+        _metadata(**metadata),
+    )
 
 
 def _write(artifact: RuntimeArtifact, path) -> None:
@@ -99,6 +111,13 @@ def test_compare_artifacts_ignores_only_revision_and_build_time():
         )
         == []
     )
+
+
+def test_compare_artifacts_reports_changed_gazetteer():
+    before = _artifact(gazetteer={"Oxford": (51.75, -1.25)})
+    after = _artifact(gazetteer={"Oxford": (51.76, -1.25)})
+
+    assert compare_artifacts(before, after) == ["gazetteer differ"]
 
 
 def test_compare_artifacts_reports_changed_edge_and_poi():
