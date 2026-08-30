@@ -9,16 +9,11 @@ Usage:
                [--boat-beam M] [--boat-draft M] [--boat-length M] [--boat-height M]
                [--verbose] [--locks] [--artifact PATH]
 
-`start` and `end` each accept EITHER a place name (resolved via the gazetteer)
-OR a graph node uid (the integer `pound-locate` prints). Auto-detected by shape:
-all-digits -> uid, else -> name. Mixed (one uid, one name) is allowed. A place
-literally named "42" would mis-resolve as a uid (vanishingly rare; gazetteer
-keys are "Oxford"/"Banbury"/etc.); add --start-uid/--end-uid flags if it ever bites.
-
-`--days` is optional: omit it and the day count is inferred from `--hours-per-day`
-(you get as many days as the route needs, no cap). Default output is the route
-header + totals + the per-day summary + warnings; the node-to-node `Legs:` list
-is only printed with `--verbose`.
+`start` and `end` are place names resolved through the artifact gazetteer.
+`--days` is optional: omit it and the day count is inferred from
+`--hours-per-day` (you get as many days as the route needs, no cap). Default
+output is the route header + totals + the per-day summary + warnings; the leg
+list is only printed with `--verbose`.
 """
 
 import argparse
@@ -29,17 +24,13 @@ from typing import Any, cast
 
 from pydantic import ValidationError  # pyright: ignore[reportMissingImports]
 
-from pound.artifact import load_artifact
-from pound.route.plan import plan_route, plan_route_from_constraints
+from pound.artifact import RuntimeArtifact, load_artifact
+from pound.graph.spatial import CandidateSpatialIndex
+from pound.route.plan import plan_projected_route
 from pound.route.resolve import resolve_place
-from pound.schemas import NamedRouteRequest, ResolvedConstraints
+from pound.schemas import ProjectedRouteConstraints
 
 _DEFAULT_ARTIFACT = Path("pound/artifacts/england.pkl")
-
-
-def _is_uid(tok: str) -> bool:
-    """A bare all-digits token is a uid; anything else is a place name."""
-    return tok.isdigit()
 
 
 def _finite_nonnegative(value: str) -> float:
@@ -53,11 +44,11 @@ def _finite_nonnegative(value: str) -> float:
 
 
 def _resolve_start_end(
-    start_tok: str,
-    end_tok: str,
-    graph,
+    start_name: str,
+    end_name: str,
+    artifact: RuntimeArtifact,
+    candidate_index: CandidateSpatialIndex,
     *,
-    gazetteer: dict | None = None,
     days: int | None,
     hours_per_day: float,
     boat_length_m: float | None,
@@ -65,27 +56,8 @@ def _resolve_start_end(
     boat_draft_m: float | None,
     boat_height_m: float | None,
     movable_bridge_delay_min: float | None,
-) -> NamedRouteRequest | ResolvedConstraints:
-    """Build the routing constraints, auto-detecting uid vs name per token.
-
-    Returns a ResolvedConstraints when any token was a uid (caller routes via
-    the temporary adapter) or a NamedRouteRequest when both are names. Mixed uid/name is
-    allowed. Dispatch is by isinstance, so the caller does not need a flag.
-    """
-    start_is_uid = _is_uid(start_tok)
-    end_is_uid = _is_uid(end_tok)
-
-    def _resolve(tok: str, is_uid: bool) -> int:
-        if is_uid:
-            uid = int(tok)
-            if uid not in graph:
-                raise ValueError(f"uid {uid} is not a node in the graph")
-            return uid
-        return resolve_place(tok, graph, gazetteer=gazetteer)
-
-    start_uid = _resolve(start_tok, start_is_uid)
-    end_uid = _resolve(end_tok, end_is_uid)
-
+) -> ProjectedRouteConstraints:
+    """Build projected routing constraints from two gazetteer place names."""
     boat = dict(
         boat_length_m=boat_length_m,
         boat_beam_m=boat_beam_m,
@@ -93,18 +65,9 @@ def _resolve_start_end(
         boat_height_m=boat_height_m,
         movable_bridge_delay_min=movable_bridge_delay_min,
     )
-
-    if start_is_uid or end_is_uid:
-        return ResolvedConstraints(
-            start_uid=start_uid,
-            end_uid=end_uid,
-            days=days,
-            hours_per_day=hours_per_day,
-            **cast(Any, boat),
-        )
-    return NamedRouteRequest(
-        start=start_tok,
-        end=end_tok,
+    return ProjectedRouteConstraints(
+        start=resolve_place(start_name, artifact, candidate_index),
+        end=resolve_place(end_name, artifact, candidate_index),
         days=days,
         hours_per_day=hours_per_day,
         **cast(Any, boat),
@@ -151,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         help="max day count; omit to infer from --hours-per-day",
     )
     p.add_argument("--hours-per-day", type=float, default=6.0)
-    p.add_argument("--verbose", action="store_true", help="show the per-leg node-to-node list")
+    p.add_argument("--verbose", action="store_true", help="show the per-leg list")
     p.add_argument(
         "--locks",
         action="store_true",
@@ -165,20 +128,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--artifact", default=str(_DEFAULT_ARTIFACT))
     args = p.parse_args(argv)
 
-    artifact = Path(args.artifact)
-    if not artifact.exists():
-        print(f"artifact not found: {artifact}", file=sys.stderr)
+    artifact_path = Path(args.artifact)
+    if not artifact_path.exists():
+        print(f"artifact not found: {artifact_path}", file=sys.stderr)
         return 2
 
-    loaded = load_artifact(artifact)
-    graph = loaded.graph
+    loaded = load_artifact(artifact_path)
+    candidate_index = CandidateSpatialIndex(loaded.graph)
 
     try:
         constraints = _resolve_start_end(
             args.start,
             args.end,
-            graph,
-            gazetteer=loaded.gazetteer,
+            loaded,
+            candidate_index,
             days=args.days,
             hours_per_day=args.hours_per_day,
             boat_length_m=args.boat_length,
@@ -195,12 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        if isinstance(constraints, ResolvedConstraints):
-            result = plan_route(constraints, graph=graph)
-        else:
-            result = plan_route_from_constraints(
-                constraints, graph=graph, gazetteer=loaded.gazetteer
-            )
+        result = plan_projected_route(constraints, artifact=loaded).route
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 1

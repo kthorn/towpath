@@ -1,48 +1,44 @@
 import networkx as nx
-import pytest
-from pound.graph.spatial import GraphSpatialIndex
+import pytest  # pyright: ignore[reportMissingImports]
+from pound.graph.spatial import CandidateSpatialIndex
 from pound.route.resolve import resolve_coord
+from pound.schemas import CanalPointHandle
 
 
-def _graph_with_gazetteer(gaz, nodes):
-    """nodes: list of (uid, lat, lon). Mirror build_graph's uid-keyed graph."""
-    g = nx.Graph()
-    for uid, lat, lon in nodes:
-        g.add_node(uid, lat=lat, lon=lon)
-    g.graph["gazetteer"] = gaz
-    return g
+def _resolve(lat: float, lon: float, graph: nx.Graph) -> tuple[CanalPointHandle, float]:
+    return resolve_coord(lat, lon, graph, CandidateSpatialIndex(graph))
 
 
-def test_resolve_coord_returns_nearest_uid_and_distance():
-    g = _graph_with_gazetteer({}, [(0, 51.75, -1.26), (1, 52.06, -1.34)])
-    uid, dist = resolve_coord(51.7501, -1.2601, g, GraphSpatialIndex(g))
-    assert uid == 0
-    assert dist == pytest.approx(13, abs=5)  # ~13 m from node 0
+def _graph() -> nx.Graph:
+    graph = nx.Graph()
+    graph.add_node(1, lat=51.0, lon=-1.0)
+    graph.add_node(2, lat=51.0, lon=-0.98)
+    graph.add_edge(1, 2, geometry=[(51.0, -1.0), (51.0, -0.98)])
+    return graph
 
 
-def test_resolve_coord_picks_closer_of_two_nodes():
-    g = _graph_with_gazetteer({}, [(0, 51.75, -1.26), (1, 52.06, -1.34)])
-    uid, dist = resolve_coord(52.0599, -1.3399, g, GraphSpatialIndex(g))
-    assert uid == 1
-    assert dist < 50
+def test_resolve_coord_projects_midpoint_to_canonical_edge():
+    graph = _graph()
+
+    handle, distance = _resolve(51.0, -0.99, graph)
+
+    assert handle.edge == (1, 2)
+    assert handle.fraction == pytest.approx(0.5, abs=2e-6)
+    assert distance == pytest.approx(0, abs=0.1)
 
 
-def test_resolve_coord_exact_node_returns_zero_distance():
-    g = _graph_with_gazetteer({}, [(0, 51.75, -1.26)])
-    uid, dist = resolve_coord(51.75, -1.26, g, GraphSpatialIndex(g))
-    assert uid == 0
-    assert dist == 0
+def test_resolve_coord_returns_projected_endpoint_for_exact_coordinate():
+    graph = _graph()
+
+    handle, distance = _resolve(51.0, -1.0, graph)
+
+    assert handle.edge == (1, 2)
+    assert handle.fraction == 0
+    assert distance == 0
 
 
 def test_resolve_coord_empty_graph_raises():
-    g = nx.Graph()
-    with pytest.raises(ValueError, match="no graph nodes"):
-        resolve_coord(51.75, -1.26, g, GraphSpatialIndex(g))
+    graph = nx.Graph()
 
-
-def test_resolve_coord_deterministic_tie_uses_lowest_uid():
-    graph = _graph_with_gazetteer({}, [(9, 0, -0.01), (2, 0, 0.01)])
-
-    uid, _ = resolve_coord(0, 0, graph, GraphSpatialIndex(graph))
-
-    assert uid == 2
+    with pytest.raises(ValueError, match="no navigable edges"):
+        _resolve(51.75, -1.26, graph)

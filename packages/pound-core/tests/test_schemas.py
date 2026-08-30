@@ -2,12 +2,11 @@ import pytest  # pyright: ignore[reportMissingImports]
 from pound import schemas
 from pound.catalog.metadata import CatalogMetadata
 from pound.schemas import (
-    Amenity,
     BoatHireProvenance,
     CanalConstraints,
+    CanalPointHandle,
     CanalRouteResponse,
     Coordinate,
-    DayPlan,
     GeoJSONLineString,
     GeoJSONPoint,
     NamedRouteRequest,
@@ -15,114 +14,65 @@ from pound.schemas import (
     PlaceResponse,
     PlacesRequest,
     PlacesResponse,
-    ResolvedConstraints,
-    RouteAccessSegment,
+    ProjectedRouteConstraints,
     RouteDayGeometry,
-    RouteLeg,
     RouteLock,
     RouteResult,
 )
 from pydantic import TypeAdapter, ValidationError  # pyright: ignore[reportMissingImports]
 
 
+def _projected_payload() -> dict[str, object]:
+    return {
+        "start": {"edge": (1, 2), "fraction": 0.0},
+        "end": {"edge": (1, 2), "fraction": 1.0},
+    }
+
+
 def test_canal_constraints_share_only_day_and_boat_options():
     c = CanalConstraints(days=1)
     named = NamedRouteRequest(start="Oxford", end="Heyford", days=1)
+    projected = ProjectedRouteConstraints.model_validate(_projected_payload())
     assert named.start == "Oxford"
     assert named.end == "Heyford"
+    assert projected.start == CanalPointHandle(edge=(1, 2), fraction=0)
     assert c.days == 1
     assert c.hours_per_day == 6.0
     assert c.boat_beam_m is None
     assert c.amenity_prefs == []
     assert "start" not in CanalConstraints.model_fields
     assert "end" not in CanalConstraints.model_fields
-    assert "allow_derelict" not in CanalConstraints.model_fields
-    assert "allow_derelict" not in ResolvedConstraints.model_fields
+    assert "allow_derelict" not in ProjectedRouteConstraints.model_fields
 
 
 def test_movable_bridge_delay_is_finite_and_nonnegative():
     assert CanalConstraints(movable_bridge_delay_min=0).movable_bridge_delay_min == 0
     with pytest.raises(ValidationError):
-        ResolvedConstraints(start_uid=1, end_uid=2, movable_bridge_delay_min=float("inf"))
+        ProjectedRouteConstraints.model_validate(
+            {**_projected_payload(), "movable_bridge_delay_min": float("inf")}
+        )
 
 
-def test_route_result_round_trip():
-    leg = RouteLeg(
-        from_place="Oxford",
-        to_place="Heyford",
-        distance_km=9.5,
-        locks=2,
-        est_minutes=131,
-    )
-    day = DayPlan(day=1, legs=[leg], end_near="Heyford", cruising_minutes=131)
-    amenity = Amenity(
-        kind="pub", name="The Navigation", lat=51.75, lon=-1.26, distance_m=120.0, source="osm"
-    )
-    result = RouteResult(
-        start="Oxford",
-        end="Heyford",
-        is_ring=False,
-        legs=[leg],
-        days=[day],
-        total_km=9.5,
-        total_locks=2,
-        total_minutes=131,
-        amenities=[amenity],
-        graph_source_date="2026-06-21",
-    )
-    dumped = result.model_dump_json()
-    restored = RouteResult.model_validate_json(dumped)
-    assert restored == result
-    assert restored.legs[0].flagged_unknown_dims is False
-    assert restored.warnings == []
-    assert restored.access_segments == []
+def test_projected_constraints_have_handles_not_node_ids():
+    constraints = ProjectedRouteConstraints.model_validate(_projected_payload())
+    assert constraints.start.edge == (1, 2)
+    assert constraints.end.fraction == 1
+    assert not hasattr(constraints, "start_node")
 
 
-def test_route_access_segment_uses_caveat_identity_without_graph_uids():
-    segment = RouteAccessSegment(
-        osm_way_id=10,
-        kind="discouraged",
-        tag="boat",
-        value="discouraged",
-    )
-
-    assert segment.model_dump() == {
-        "osm_way_id": 10,
-        "kind": "discouraged",
-        "tag": "boat",
-        "value": "discouraged",
-    }
-
-
-def test_resolved_constraints_has_uids_not_strings():
-    rc = ResolvedConstraints(
-        start_uid=42,
-        end_uid=43,
-        days=3,
-    )
-    assert rc.start_uid == 42
-    assert rc.end_uid == 43
-    assert rc.hours_per_day == 6.0
-    assert not hasattr(rc, "start")
-    assert not hasattr(rc, "start_node")
-
-
-def test_resolved_constraints_rejects_days_zero():
+def test_projected_constraints_reject_days_zero():
     with pytest.raises(ValidationError):
-        ResolvedConstraints(start_uid=0, end_uid=1, days=0)
+        ProjectedRouteConstraints.model_validate({**_projected_payload(), "days": 0})
 
 
-def test_resolved_constraints_rejects_hours_per_day_zero():
+def test_projected_constraints_reject_hours_per_day_zero():
     with pytest.raises(ValidationError):
-        ResolvedConstraints(start_uid=0, end_uid=1, days=1, hours_per_day=0)
+        ProjectedRouteConstraints.model_validate({**_projected_payload(), "hours_per_day": 0})
 
 
 @pytest.mark.parametrize(
     "model, payload",
-    [
-        (CanalConstraints, {}),
-        (ResolvedConstraints, {"start_uid": 1, "end_uid": 2}),
-    ],
+    [(CanalConstraints, {}), (ProjectedRouteConstraints, _projected_payload())],
 )
 @pytest.mark.parametrize(
     "field",
@@ -155,27 +105,26 @@ def test_canal_constraints_accepts_positive_days():
 
 
 def test_constraints_days_defaults_to_none_meaning_infer():
-    # days=None => "infer day count from hours_per_day" (no cap).
-    rc = ResolvedConstraints(start_uid=0, end_uid=1, hours_per_day=6.0)
-    assert rc.days is None
+    projected = ProjectedRouteConstraints.model_validate(_projected_payload())
+    assert projected.days is None
     c = CanalConstraints()
     assert c.days is None
-    assert c.hours_per_day == 6.0  # default unchanged
+    assert c.hours_per_day == 6.0
 
 
-@pytest.mark.parametrize("model", [CanalConstraints, ResolvedConstraints])
+@pytest.mark.parametrize("model", [CanalConstraints, ProjectedRouteConstraints])
 @pytest.mark.parametrize("field", ["boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"])
 @pytest.mark.parametrize("value", [0, -0.1])
 def test_constraints_reject_nonpositive_boat_dimensions(model, field: str, value: float):
-    payload: dict[str, object] = {} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
+    payload = {} if model is CanalConstraints else _projected_payload()
     payload[field] = value
     with pytest.raises(ValidationError):
         model.model_validate(payload)
 
 
-@pytest.mark.parametrize("model", [CanalConstraints, ResolvedConstraints])
+@pytest.mark.parametrize("model", [CanalConstraints, ProjectedRouteConstraints])
 def test_constraints_accept_positive_boat_dimensions(model):
-    payload: dict[str, object] = {} if model is CanalConstraints else {"start_uid": 1, "end_uid": 2}
+    payload = {} if model is CanalConstraints else _projected_payload()
     payload.update(
         boat_length_m=18,
         boat_beam_m=2.1,

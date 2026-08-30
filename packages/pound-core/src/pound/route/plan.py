@@ -26,16 +26,13 @@ from pound.route.cost import (
 )
 from pound.route.cost import is_eligible as _is_eligible
 from pound.route.project import canonical_edge_line_wgs84, metric_edge_line, project_handle
-from pound.route.resolve import resolve_place
 from pound.schemas import (
     CanalPointHandle,
     CanalRouteResponse,
     Coordinate,
     DayPlan,
     GeoJSONLineString,
-    NamedRouteRequest,
     ProjectedRouteConstraints,
-    ResolvedConstraints,
     RouteAccessSegment,
     RouteDayGeometry,
     RouteLeg,
@@ -276,9 +273,9 @@ def _candidate_for_endpoints(
     start_endpoint: tuple[int, float],
     end_endpoint: tuple[int, float],
 ) -> _RouteCandidate | None:
-    start_uid, start_fraction = start_endpoint
-    end_uid, end_fraction = end_endpoint
-    path = _network_path(start_uid, end_uid, constraints, graph, bridge_delay_min)
+    start_node, start_fraction = start_endpoint
+    end_node, end_fraction = end_endpoint
+    path = _network_path(start_node, end_node, constraints, graph, bridge_delay_min)
     if path is None:
         return None
 
@@ -298,7 +295,7 @@ def _candidate_for_endpoints(
             edges=edges,
             cost_min=sum(_traversal_cost(edge, graph, bridge_delay_min) for edge in edges),
         ),
-        endpoint_ids=(start_uid, end_uid),
+        endpoint_ids=(start_node, end_node),
         path=path,
     )
 
@@ -757,72 +754,3 @@ def _chunk_days(legs: list[RouteLeg], hours_per_day: float, max_days: int | None
             _day_path_ranges(legs, hours_per_day, max_days), start=1
         )
     ]
-
-
-# Temporary UID adapters retained for callers that Task 9 migrates away. They
-# translate to projected endpoint handles and never route on an alternate model.
-def _node_handle(uid: int, graph: nx.Graph) -> CanalPointHandle:
-    neighbors = sorted(graph.neighbors(uid))
-    if not neighbors:
-        raise RouteUnavailableError(f"node {uid} has no traversable edge")
-    other = neighbors[0]
-    low, high = sorted((uid, other))
-    return CanalPointHandle(edge=(low, high), fraction=float(uid == high))
-
-
-def _legacy_projected(
-    constraints: ResolvedConstraints, graph: nx.Graph
-) -> ProjectedRouteConstraints:
-    return ProjectedRouteConstraints(
-        start=_node_handle(constraints.start_uid, graph),
-        end=_node_handle(constraints.end_uid, graph),
-        **constraints.model_dump(exclude={"start_uid", "end_uid"}),
-    )
-
-
-def _legacy_artifact(graph: nx.Graph) -> RuntimeArtifact:
-    return RuntimeArtifact(
-        graph=graph,
-        pois=(),
-        gazetteer={},
-        metadata={"fetched_at": graph.graph.get("fetched_at", "")},
-    )
-
-
-def plan_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> RouteResult:
-    return plan_projected_route(
-        _legacy_projected(constraints, graph), artifact=_legacy_artifact(graph)
-    ).route
-
-
-def plan_canal_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> CanalRouteResponse:
-    return plan_projected_route(
-        _legacy_projected(constraints, graph), artifact=_legacy_artifact(graph)
-    )
-
-
-def plan_route_from_constraints(
-    constraints: NamedRouteRequest,
-    *,
-    graph: nx.Graph,
-    gazetteer: dict | None = None,
-    snap_tolerance_m: float = 50.0,
-) -> RouteResult:
-    if constraints.end is None:
-        raise NotImplementedError("rings not yet supported")
-    projected = ProjectedRouteConstraints(
-        start=_node_handle(
-            resolve_place(
-                constraints.start, graph, gazetteer=gazetteer, snap_tolerance_m=snap_tolerance_m
-            ),
-            graph,
-        ),
-        end=_node_handle(
-            resolve_place(
-                constraints.end, graph, gazetteer=gazetteer, snap_tolerance_m=snap_tolerance_m
-            ),
-            graph,
-        ),
-        **constraints.model_dump(exclude={"start", "end"}),
-    )
-    return plan_projected_route(projected, artifact=_legacy_artifact(graph)).route

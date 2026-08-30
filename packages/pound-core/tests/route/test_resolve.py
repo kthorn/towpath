@@ -1,51 +1,62 @@
 import networkx as nx
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
+from pound.artifact import RuntimeArtifact
+from pound.graph.spatial import CandidateSpatialIndex
 from pound.route.resolve import resolve_place
 
 
-def _graph_with_gazetteer(gaz, nodes):
-    """nodes: list of (uid, lat, lon). Mirror build_graph's uid-keyed graph."""
-    g = nx.Graph()
-    for uid, lat, lon in nodes:
-        g.add_node(uid, lat=lat, lon=lon)
-    g.graph["gazetteer"] = gaz
-    return g
-
-
-def test_resolve_place_returns_exact_node_when_in_gazetteer():
-    g = _graph_with_gazetteer(
-        {"Oxford": (51.75, -1.26), "Banbury": (52.06, -1.34)},
-        [(0, 51.75, -1.26), (1, 52.06, -1.34)],
+def _artifact_with_gazetteer(gaz: dict, *, edge: tuple[int, int] = (1, 2)):
+    graph = nx.Graph()
+    graph.add_node(edge[0], lat=51.0, lon=-1.0)
+    graph.add_node(edge[1], lat=51.0, lon=-0.98)
+    graph.add_edge(
+        *edge,
+        geometry=[
+            (graph.nodes[edge[0]]["lat"], graph.nodes[edge[0]]["lon"]),
+            (graph.nodes[edge[1]]["lat"], graph.nodes[edge[1]]["lon"]),
+        ],
     )
-    assert resolve_place("Oxford", g) == 0
-    assert resolve_place("Banbury", g) == 1
+    return RuntimeArtifact(graph=graph, pois=(), gazetteer=gaz, metadata={})
 
 
-def test_resolve_place_snaps_to_nearest_graph_node_within_tolerance():
-    # Place coordinate ~140 m from the nearest graph node; 50 m tolerance fails,
-    # 200 m tolerance succeeds and returns the matched node's uid (the nearest uid).
-    g = _graph_with_gazetteer(
-        {"Pub": (51.7509, -1.2609)},
-        [(0, 51.75, -1.26), (1, 51.80, -1.30)],
-    )
-    with pytest.raises(ValueError, match="not within"):
-        resolve_place("Pub", g, snap_tolerance_m=50.0)
-    assert resolve_place("Pub", g, snap_tolerance_m=200.0) == 0  # nearest uid
+def test_resolve_place_projects_gazetteer_coordinate_to_compact_edge_midpoint():
+    artifact = _artifact_with_gazetteer({"Oxford": (51.0, -0.99)})
+    index = CandidateSpatialIndex(artifact.graph)
+
+    handle = resolve_place("oXfOrD", artifact, index)
+
+    assert handle.edge == (1, 2)
+    assert handle.fraction == pytest.approx(0.5, abs=2e-6)
+
+
+def test_resolve_place_rejects_gazetteer_coordinate_beyond_tolerance():
+    artifact = _artifact_with_gazetteer({"Pub": (51.001, -1.0)})
+
+    with pytest.raises(ValueError, match="not within 50.0 m"):
+        resolve_place(  # pyright: ignore[reportCallIssue]
+            "Pub",
+            artifact,
+            CandidateSpatialIndex(artifact.graph),  # pyright: ignore[reportCallIssue]
+        )
 
 
 def test_resolve_place_unknown_name_raises_with_count():
-    g = _graph_with_gazetteer(
-        {"Oxford": (51.75, -1.26)},
-        [(0, 51.75, -1.26)],
-    )
+    artifact = _artifact_with_gazetteer({"Oxford": (51.0, -0.99)})
+
     with pytest.raises(ValueError, match="not found in gazetteer.*covers 1 places"):
-        resolve_place("Narnia", g)
+        resolve_place(  # pyright: ignore[reportCallIssue]
+            "Narnia",
+            artifact,
+            CandidateSpatialIndex(artifact.graph),  # pyright: ignore[reportCallIssue]
+        )
 
 
 def test_resolve_place_ambiguous_name_raises():
-    g = _graph_with_gazetteer(
-        {"Newton": [(52.0, -1.0), (53.0, -2.0)]},
-        [(0, 52.0, -1.0), (1, 53.0, -2.0)],
-    )
+    artifact = _artifact_with_gazetteer({"Newton": [(52.0, -1.0), (53.0, -2.0)]})
+
     with pytest.raises(ValueError, match="matches 2 places"):
-        resolve_place("Newton", g)
+        resolve_place(  # pyright: ignore[reportCallIssue]
+            "Newton",
+            artifact,
+            CandidateSpatialIndex(artifact.graph),  # pyright: ignore[reportCallIssue]
+        )

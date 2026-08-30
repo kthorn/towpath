@@ -83,9 +83,6 @@ def test_concurrent_candidates_share_and_do_not_mutate_spatial_index(
     app = cast(FastAPI, web_client.app)
     spatial_index = app.state.spatial_index
     before = (
-        spatial_index.node_uids,
-        spatial_index.node_points,
-        spatial_index.node_tree,
         spatial_index.edge_keys,
         spatial_index.edge_lines,
         spatial_index.edge_tree,
@@ -102,9 +99,6 @@ def test_concurrent_candidates_share_and_do_not_mutate_spatial_index(
     assert all(status == 200 for status, _ in results)
     assert spatial_index is app.state.spatial_index
     assert before == (
-        spatial_index.node_uids,
-        spatial_index.node_points,
-        spatial_index.node_tree,
         spatial_index.edge_keys,
         spatial_index.edge_lines,
         spatial_index.edge_tree,

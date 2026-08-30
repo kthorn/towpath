@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import networkx as nx
-from pyproj import Transformer
+from pyproj import Transformer  # pyright: ignore[reportMissingImports]
 from shapely import transform, wkb
 from shapely.geometry import LineString, Point, box
 from shapely.geometry.base import BaseGeometry
@@ -33,7 +33,6 @@ from pound.schemas import (
 
 _EARTH_RADIUS_M = 6_371_000.0
 _MAX_RADIUS_M = math.pi * _EARTH_RADIUS_M
-_INITIAL_RADIUS_M = 100.0
 _TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
 _TO_WGS84 = Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
 
@@ -150,27 +149,14 @@ class PoiSpatialIndex:
 
 @dataclass(frozen=True)
 class GraphSpatialIndex:
-    """Stable node and navigable-edge STRtrees derived from one graph snapshot."""
+    """Stable navigable-edge STRtrees derived from one graph snapshot."""
 
-    node_uids: tuple[int, ...]
-    node_points: tuple[Point, ...]
-    node_tree: STRtree | None
     edge_keys: tuple[tuple[int, int], ...]
     edge_lines: tuple[Any, ...]
     edge_tree: STRtree | None
     candidate_index: Any
 
     def __init__(self, graph: nx.Graph) -> None:
-        node_uids = tuple(sorted(graph.nodes))
-        node_points = tuple(
-            Point(
-                *lat_lon_to_xy(
-                    lat=graph.nodes[uid]["lat"],
-                    lon=graph.nodes[uid]["lon"],
-                )
-            )
-            for uid in node_uids
-        )
         edge_records = sorted(
             (
                 (min(u, v), max(u, v)),
@@ -185,22 +171,10 @@ class GraphSpatialIndex:
         )
         edge_keys = tuple(record[0] for record in edge_records)
         edge_lines = tuple(record[1] for record in edge_records)
-        object.__setattr__(self, "node_uids", node_uids)
-        object.__setattr__(self, "node_points", node_points)
-        object.__setattr__(self, "node_tree", STRtree(node_points) if node_points else None)
         object.__setattr__(self, "edge_keys", edge_keys)
         object.__setattr__(self, "edge_lines", edge_lines)
         object.__setattr__(self, "edge_tree", STRtree(edge_lines) if edge_lines else None)
         object.__setattr__(self, "candidate_index", CandidateSpatialIndex(graph))
-
-    def query_node_uids(self, envelopes: tuple[Any, ...]) -> tuple[int, ...]:
-        """Return stable UIDs whose points intersect any supplied envelope."""
-        if self.node_tree is None:
-            return ()
-        positions = {
-            int(position) for envelope in envelopes for position in self.node_tree.query(envelope)
-        }
-        return tuple(self.node_uids[position] for position in sorted(positions))
 
     def distance_to_waterway(self, geometry: BaseGeometry | bytes) -> float | None:
         """Return metric distance from normalized catalog geometry to a navigable edge."""
@@ -553,49 +527,3 @@ class CandidateSpatialIndex:
 
     def sample_envelope_covers_all(self, lat: float, lon: float, radius_m: float) -> bool:
         return radius_m >= _MAX_RADIUS_M
-
-
-def nearest_node_distances(
-    lat: float,
-    lon: float,
-    graph: nx.Graph,
-    index: GraphSpatialIndex,
-    *,
-    limit: int,
-) -> list[tuple[float, int]]:
-    """Return exact haversine nearest nodes via a conservative expanding query."""
-    if limit <= 0:
-        raise ValueError("limit must be greater than zero")
-    k = min(limit, len(index.node_uids))
-    if k == 0:
-        return []
-    x, y = lat_lon_to_xy(lat=lat, lon=lon)
-    radius = _INITIAL_RADIUS_M
-    while True:
-        whole_world = radius >= _MAX_RADIUS_M
-        search_radius = _MAX_RADIUS_M if whole_world else radius
-        envelopes = spherical_envelopes(lon=x, lat=y, radius_m=search_radius)
-        envelope_covers_world = len(envelopes) == 1 and envelopes[0].bounds == (
-            -180.0,
-            -90.0,
-            180.0,
-            90.0,
-        )
-        uids = index.query_node_uids(envelopes)
-        ranked = sorted(
-            (
-                _haversine_m(
-                    (lat, lon),
-                    (graph.nodes[uid]["lat"], graph.nodes[uid]["lon"]),
-                ),
-                uid,
-            )
-            for uid in uids
-        )
-        if (
-            whole_world
-            or envelope_covers_world
-            or (len(ranked) >= k and ranked[k - 1][0] <= search_radius)
-        ):
-            return ranked[:k]
-        radius = min(radius * 2, _MAX_RADIUS_M)

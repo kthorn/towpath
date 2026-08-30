@@ -1,8 +1,4 @@
-"""Shared Pydantic models — the frozen contract Pound and the Agent Core both import.
-
-Per design §6. Field names are the integration seam; do not rename without
-coordinating with labyrinth-core / labyrinth-agent.
-"""
+"""Shared Pydantic models — the frozen contract Pound and the Agent Core both import."""
 
 import math
 from typing import Annotated, Literal
@@ -36,13 +32,6 @@ class CanalConstraints(BaseModel):
 class NamedRouteRequest(CanalConstraints):
     start: str
     end: str | None = None  # None => ring / round trip
-
-
-class ResolvedConstraints(CanalConstraints):
-    """Temporary UID adapter retained until the old diagnostic API is removed."""
-
-    start_uid: int
-    end_uid: int
 
 
 class Amenity(BaseModel):

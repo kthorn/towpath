@@ -1,9 +1,33 @@
 import copy
 
 import networkx as nx
+from pound.artifact import RuntimeArtifact
 from pound.models import WayDimensions
-from pound.route.plan import _to_geojson, plan_canal_route
-from pound.schemas import ResolvedConstraints
+from pound.route.plan import _to_geojson, plan_projected_route
+from pound.schemas import CanalPointHandle, ProjectedRouteConstraints
+
+
+def _artifact(graph: nx.Graph) -> RuntimeArtifact:
+    return RuntimeArtifact(
+        graph=graph,
+        pois=(),
+        gazetteer={},
+        metadata={"fetched_at": graph.graph.get("fetched_at", "")},
+    )
+
+
+def _node_handle(uid: int, graph: nx.Graph) -> CanalPointHandle:
+    other = sorted(graph.neighbors(uid))[0]
+    low, high = sorted((uid, other))
+    edge = (low, high)
+    return CanalPointHandle(edge=edge, fraction=float(uid == high))
+
+
+def _response(start: int, end: int, graph: nx.Graph):
+    constraints = ProjectedRouteConstraints(
+        start=_node_handle(start, graph), end=_node_handle(end, graph)
+    )
+    return plan_projected_route(constraints, artifact=_artifact(graph))
 
 
 def _three_node_graph() -> nx.Graph:
@@ -37,11 +61,11 @@ def _three_node_graph() -> nx.Graph:
     return graph
 
 
-def test_plan_canal_route_orients_and_joins_geometry_in_traversal_order():
+def test_projected_route_orients_and_joins_geometry_in_traversal_order():
     graph = _three_node_graph()
     before = copy.deepcopy(graph)
 
-    response = plan_canal_route(ResolvedConstraints(start_uid=1, end_uid=3), graph=graph)
+    response = _response(1, 3, graph)
 
     assert response.route.legs[0].from_place == "Start"
     assert response.route.legs[-1].to_place == "End"
@@ -56,10 +80,10 @@ def test_plan_canal_route_orients_and_joins_geometry_in_traversal_order():
     assert graph.edges == before.edges
 
 
-def test_plan_canal_route_reverses_geometry_with_the_route():
+def test_projected_route_reverses_geometry_with_the_route():
     graph = _three_node_graph()
 
-    response = plan_canal_route(ResolvedConstraints(start_uid=3, end_uid=1), graph=graph)
+    response = _response(3, 1, graph)
 
     assert response.route.legs[0].from_place == "End"
     assert response.route.legs[-1].to_place == "Start"
@@ -98,7 +122,7 @@ def test_reverse_route_orients_high_precision_variable_length_geometry():
         tunnel_restrictions=(),
     )
 
-    response = plan_canal_route(ResolvedConstraints(start_uid=2, end_uid=1), graph=graph)
+    response = _response(2, 1, graph)
 
     assert response.geometry.coordinates == [
         (-1.223456789, 51.223456789),

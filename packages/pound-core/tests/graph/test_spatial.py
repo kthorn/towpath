@@ -2,9 +2,8 @@ import copy
 import math
 
 import networkx as nx
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 from pound.graph.spatial import (
-    _INITIAL_RADIUS_M,
     GraphSpatialIndex,
     PoiSpatialIndex,
     lat_lon_to_xy,
@@ -25,26 +24,17 @@ def _graph() -> nx.Graph:
     return graph
 
 
-def test_index_builds_stable_axis_correct_node_and_eligible_edge_mappings():
+def test_index_builds_stable_eligible_edge_mappings():
     index = GraphSpatialIndex(_graph())
 
-    assert index.node_uids == (2, 5, 9)
-    assert [(point.x, point.y) for point in index.node_points] == [
-        (-0.99, 51.0),
-        (-0.99, 51.01),
-        (-1.0, 51.0),
-    ]
     assert index.edge_keys == ((2, 9),)
-    assert index.node_tree is not None
     assert index.edge_tree is not None
 
 
 def test_empty_index_has_no_trees_and_queries_empty():
     index = GraphSpatialIndex(nx.Graph())
 
-    assert index.node_tree is None
     assert index.edge_tree is None
-    assert index.query_node_uids((Point(-1, 51),)) == ()
     with pytest.raises(ValueError, match="navigable edges"):
         index.project_to_nearest_edge(51, -1)
 
@@ -89,7 +79,6 @@ def test_spherical_envelopes_split_antimeridian_and_cover_all_longitudes_at_pole
 def test_spherical_envelope_whole_world_and_named_axis_helper():
     envelopes = spherical_envelopes(lon=123, lat=-45, radius_m=math.pi * 6_371_000)
 
-    assert _INITIAL_RADIUS_M > 0
     assert envelopes[0].bounds == (-180.0, -90.0, 180.0, 90.0)
     assert lat_lon_to_xy(lat=12.5, lon=-7.25) == (-7.25, 12.5)
 
@@ -98,13 +87,13 @@ def test_index_construction_and_queries_do_not_mutate_graph_or_index():
     graph = _graph()
     graph_before = copy.deepcopy(graph)
     index = GraphSpatialIndex(graph)
-    state = (index.node_uids, index.edge_keys, index.node_points, index.edge_lines)
+    state = (index.edge_keys, index.edge_lines)
 
-    first = index.query_node_uids(spherical_envelopes(lon=-1, lat=51, radius_m=2_000))
-    second = index.query_node_uids(spherical_envelopes(lon=-1, lat=51, radius_m=2_000))
+    first = index.project_to_nearest_edge(51.0, -0.995)
+    second = index.project_to_nearest_edge(51.0, -0.995)
 
     assert first == second
-    assert (index.node_uids, index.edge_keys, index.node_points, index.edge_lines) == state
+    assert (index.edge_keys, index.edge_lines) == state
     assert nx.utils.graphs_equal(graph, graph_before)
 
 

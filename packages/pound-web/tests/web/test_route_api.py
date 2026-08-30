@@ -101,7 +101,7 @@ def test_route_requires_exact_request_fields(web_client: TestClient):
         del payload[field]
         assert web_client.post("/api/canal-route", json=payload).status_code == 422
     assert (
-        web_client.post("/api/canal-route", json=_request(start_uid=1, end_uid=3)).status_code
+        web_client.post("/api/canal-route", json=_request(legacy_start=1, legacy_end=3)).status_code
         == 422
     )
 
