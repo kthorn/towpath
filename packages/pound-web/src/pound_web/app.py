@@ -12,10 +12,17 @@ from fastapi.exception_handlers import (  # pyright: ignore[reportMissingImports
 )
 from fastapi.exceptions import RequestValidationError  # pyright: ignore[reportMissingImports]
 from fastapi.responses import FileResponse, JSONResponse  # pyright: ignore[reportMissingImports]
-from pound.artifact import InvalidArtifactError, RuntimeArtifact, load_artifact
-from pound.catalog.artifact import load_catalog
-from pound.catalog.spatial import CatalogSpatialIndex
-from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
+from pound.artifact import (  # pyright: ignore[reportMissingImports]
+    InvalidArtifactError,
+    RuntimeArtifact,
+    load_artifact,
+)
+from pound.catalog.artifact import load_catalog  # pyright: ignore[reportMissingImports]
+from pound.catalog.spatial import CatalogSpatialIndex  # pyright: ignore[reportMissingImports]
+from pound.graph.spatial import (  # pyright: ignore[reportMissingImports]
+    GraphSpatialIndex,
+    PoiSpatialIndex,
+)
 from starlette.concurrency import run_in_threadpool  # pyright: ignore[reportMissingImports]
 from starlette.staticfiles import StaticFiles  # pyright: ignore[reportMissingImports]
 
@@ -102,7 +109,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
                     for error in exc.errors()
                     if len(error["loc"]) > 1
                     and error["loc"][1] in {"start", "end"}
-                    and error["type"] != "missing"
+                    and (error["type"] != "missing" or len(error["loc"]) > 2)
                 }
             )
             if fields:

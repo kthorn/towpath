@@ -38,6 +38,26 @@ def test_route_rejects_malformed_handles_with_400(web_client: TestClient, change
     assert web_client.post("/api/canal-route", json=_request(**changes)).status_code == 400
 
 
+@pytest.mark.parametrize(
+    ("handle_field", "nested_field"),
+    [("start", "edge"), ("start", "fraction"), ("end", "edge"), ("end", "fraction")],
+)
+def test_route_maps_missing_handle_parts_to_400(
+    web_client: TestClient, handle_field: str, nested_field: str
+):
+    payload = _request()
+    del payload[handle_field][nested_field]
+
+    response = web_client.post("/api/canal-route", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "code": "invalid_node_handle",
+        "message": "One or more canal node handles do not exist.",
+        "fields": [handle_field],
+    }
+
+
 @pytest.mark.parametrize("changes", [{"days": 0}, {"hours_per_day": 0}, {"allow_derelict": False}])
 def test_route_leaves_constraint_type_errors_as_422(web_client: TestClient, changes: dict):
     assert web_client.post("/api/canal-route", json=_request(**changes)).status_code == 422

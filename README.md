@@ -136,7 +136,6 @@ FastAPI supports these environment variables:
 - `POUND_CANDIDATE_POOL_SIZE` (default `20`): geometric candidates considered.
 - `POUND_GOOGLE_DESTINATION_LIMIT` (default `10`): candidates returned for the
   browser's Google route matrix request.
-- `POUND_MINIMUM_CANDIDATE_SPACING_M` (default `250`): candidate separation.
 - `POUND_CATALOG_PATH` (optional): independent OSM catalog artifact. If unset,
   routing still starts and `/api/health` reports `places_status: unavailable`.
 - `POUND_CATALOG_MAX_KINDS` (default `16`), `POUND_CATALOG_MAX_RADIUS_M`
@@ -146,13 +145,17 @@ FastAPI supports these environment variables:
   both `/api/places` modes.
 - `POUND_PLACES_MAX_TARGETS` (default `64`) bounds nearby target batches.
 
-Candidate UIDs are valid only for their artifact revision. If the backend
-reports `artifact_revision_mismatch`, ensure the rebuilt artifact is deployed,
-then refresh or reselect both endpoints to load fresh candidates and re-plan.
-The frontend needs rebuilding only when its code or `VITE_*` configuration
-changes, not merely because the backend artifact revision changed. Rebuild an
-artifact whenever its source data or graph-building rules change; do not copy
-UIDs between artifacts.
+Each candidate response carries one top-level `artifact_revision`. Candidates
+have deterministic `candidate_id` values for browser selection and structured
+`handle` values of the form `{"edge":[low_uid,high_uid],"fraction":0.5}`;
+route requests send the selected handles as `start` and `end` rather than node
+UIDs. If the backend reports `artifact_revision_mismatch`, ensure the rebuilt
+artifact is deployed, then refresh or reselect both endpoints to load fresh
+candidates and re-plan. Candidate IDs and handles are valid only for their
+artifact revision; do not copy them between artifacts. The frontend needs
+rebuilding only when its code or `VITE_*` configuration changes, not merely
+because the backend artifact revision changed. Rebuild an artifact whenever
+its source data or graph-building rules change.
 
 If Maps or Places is unavailable, each endpoint also accepts latitude and
 longitude. This non-map coordinate fallback still finds canal candidates and
