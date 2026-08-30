@@ -18,6 +18,16 @@ from pound.web.boat_hire import BOAT_HIRE_ENRICHMENT_FIELDS
 from pound.web.config import WebSettings
 
 
+@pytest.fixture(autouse=True)
+def _clear_network_geometry_cache():
+    """Keep the process-global API geometry cache from leaking between tests."""
+    import pound.web.api as api_module
+
+    api_module._network_geometry_cache.clear()
+    yield
+    api_module._network_geometry_cache.clear()
+
+
 def catalog_place(kind: str, osm_id: int, lat: float, lon: float) -> CatalogPlace:
     return CatalogPlace(
         osm_type=OsmElementType.NODE,
