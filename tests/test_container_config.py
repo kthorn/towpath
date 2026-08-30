@@ -7,7 +7,14 @@ ROOT = Path(__file__).parents[1]
 
 def test_container_configuration_stages_only_the_deployment_artifact():
     dockerfile = (ROOT / "Dockerfile").read_text()
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
     dockerignore = (ROOT / ".dockerignore").read_text().splitlines()
+
+    assert "FROM node:24-alpine AS web-builder" in dockerfile
+    assert "FROM python:3.14-slim AS runtime" in dockerfile
+    assert 'node-version: "24"' in workflow
+    assert 'python-version: "3.14"' in workflow
+    assert 'UV_PYTHON: "3.14"' in workflow
     gitignore = (ROOT / ".gitignore").read_text().splitlines()
     wheel = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["hatch"]["build"][
         "targets"
