@@ -210,17 +210,18 @@ def test_coordinate_uses_named_lat_lon_fields():
     assert coordinate.model_dump() == {"lat": 51.752, "lon": -1.258}
 
 
-def test_canal_candidate_uses_integer_uid():
+def test_canal_candidate_uses_projected_handle_identity():
+    handle = schemas.CanalPointHandle(edge=(41, 42), fraction=0.5)
     candidate = schemas.CanalCandidate(
-        uid=42,
-        artifact_revision="oxford-2026-07-11",
+        candidate_id="41:42:0.500000000000",
+        handle=handle,
         coordinate=schemas.Coordinate(lat=51.752, lon=-1.258),
         straight_line_distance_m=12.5,
         display_name="Oxford Canal",
     )
 
-    assert candidate.uid == 42
-    assert isinstance(candidate.uid, int)
+    assert candidate.candidate_id == "41:42:0.500000000000"
+    assert candidate.handle == handle
 
 
 def test_geojson_linestring_preserves_lon_lat_coordinate_order():

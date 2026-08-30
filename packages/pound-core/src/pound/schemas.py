@@ -118,11 +118,37 @@ class Coordinate(BaseModel):
     lon: float
 
 
-class CanalCandidate(BaseModel):
-    uid: int
-    artifact_revision: str
+class CanalPointHandle(BaseModel):
+    """Stable location handle for a position on a canonical compact edge."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    edge: tuple[int, int]
+    fraction: float
+
+    @model_validator(mode="after")
+    def validate_handle(self):
+        if self.edge[0] >= self.edge[1]:
+            raise ValueError("edge must be in canonical order")
+        if not math.isfinite(self.fraction) or not 0 <= self.fraction <= 1:
+            raise ValueError("fraction must be finite and from 0 through 1")
+        return self
+
+
+class ProjectedCanalPoint(BaseModel):
+    """A canonical handle together with its derived WGS84 coordinate."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    handle: CanalPointHandle
     coordinate: Coordinate
-    straight_line_distance_m: float = Field(ge=0)
+
+
+class CanalCandidate(BaseModel):
+    candidate_id: str
+    handle: CanalPointHandle
+    coordinate: Coordinate
+    straight_line_distance_m: FiniteFloat = Field(ge=0)
     display_name: str
 
 
