@@ -224,10 +224,11 @@ safe mooring, pedestrian entrance, or vehicle drop-off.
 ### Canal network view
 
 The map sends the live `Days` × `Hours per day` schedule and saved boat settings
-to `POST /api/canal-network`. It shows active hire-base markers and one-way
-reach from any base, defaulting to 7 × 6 hours and capping reach at 168 cruising
-hours. This filters only the background display; routing, candidates, POIs, and
-the catalog continue to use the full graph.
+to `POST /api/canal-network`. It shows active hire-base markers and canal routes
+that can return to the same base within the selected schedule, defaulting to
+7 × 6 hours and capping the return trip at 168 cruising hours. This filters only
+the background display; routing, candidates, POIs, and the catalog continue to
+use the full graph.
 
 ### Route overlays and POI layers
 

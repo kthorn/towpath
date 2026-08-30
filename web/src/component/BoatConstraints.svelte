@@ -31,8 +31,8 @@
 <form novalidate onsubmit={(event) => { event.preventDefault(); submit(); }}>
   <h2>Schedule</h2>
   <p>
-    The map shows the one-way cruising reach from any hire base for the selected Days and Hours per
-    day, capped at 168 cruising hours.
+    The map shows canal routes that can return to the same hire base within the selected Days and
+    Hours per day, capped at 168 cruising hours.
   </p>
   <div class="constraint-grid">
     <label>Days<input type="number" required min="1" max="365" bind:value={days} /></label>

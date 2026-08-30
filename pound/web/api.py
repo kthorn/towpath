@@ -87,7 +87,7 @@ def _error(status_code: int, *, code: str, message: str, fields: list[str] | Non
 
 @router.post("/canal-network", response_model=CanalNetworkResponse)
 def canal_network(body: CanalNetworkRequest, request: Request) -> CanalNetworkResponse:
-    """Return the one-way, time-reachable canal network from active hire bases."""
+    """Return the canal network reachable on a return trip from active hire bases."""
 
     if request.app.state.network_unavailable:
         raise _error(
@@ -108,7 +108,7 @@ def canal_network(body: CanalNetworkRequest, request: Request) -> CanalNetworkRe
     overlay_graph = select_boat_hire_reachability(
         request.app.state.graph,
         request.app.state.boat_hire_anchors,
-        cutoff_min=travel_minutes,
+        cutoff_min=travel_minutes / 2,
         boat_length_m=body.boat_length_m,
         boat_beam_m=body.boat_beam_m,
         boat_draft_m=body.boat_draft_m,
