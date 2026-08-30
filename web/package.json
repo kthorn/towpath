@@ -12,7 +12,7 @@
     "test:navigation": "playwright test --config playwright.navigation.config.ts"
   },
   "devDependencies": {
-    "@playwright/test": "1.61.1",
+    "@playwright/test": "1.62.1",
     "@sveltejs/vite-plugin-svelte": "6.1.0",
     "@testing-library/jest-dom": "6.6.4",
     "@testing-library/svelte": "5.2.8",
