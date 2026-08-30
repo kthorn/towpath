@@ -93,8 +93,8 @@ existing rule, delete only its blanket `pound/artifacts` line, then add:
 web/.env*
 .pi-subagents
 scripts/local
-pound/artifacts/*
-!pound/artifacts/england.pkl
+artifacts/*
+!artifacts/england.pkl
 ```
 
 The implementation deletes, rather than supplements, the existing
@@ -111,12 +111,12 @@ packages = ["pound"]
 exclude = ["pound/artifacts/**"]
 ```
 
-The artifact remains at `/app/pound/artifacts/england.pkl` after `COPY pound/ pound/`;
+The artifact remains at `/app/artifacts/england.pkl` after `COPY pound/ pound/`;
 the wheel exclusion only prevents redundant package data. Immediately after that
 `COPY`, before `uv sync`, the Dockerfile must run:
 
 ```dockerfile
-RUN test -f pound/artifacts/england.pkl
+RUN test -f /app/artifacts/england.pkl
 ```
 
 That makes a missing staging step fail the build rather than creating an image that
@@ -135,7 +135,7 @@ fixed runtime configuration is:
 
 ```toml
 [env]
-  POUND_ARTIFACT_PATH = "/app/pound/artifacts/england.pkl"
+  POUND_ARTIFACT_PATH = "/app/artifacts/england.pkl"
 ```
 
 An artifact update is intentionally simple: copy the new local `england.pkl` into
@@ -145,7 +145,7 @@ revision before deploying:
 ```bash
 expected_revision="$(uv run python -c '
 from pound.graph.artifact import load_artifact
-print(load_artifact("pound/artifacts/england.pkl").metadata["artifact_revision"])
+print(load_artifact("artifacts/england.pkl").metadata["artifact_revision"])
 ')"
 printf 'Deploying artifact revision: %s\n' "$expected_revision"
 ```
@@ -173,7 +173,7 @@ strategy = "rolling"
 wait_timeout = "10m"
 
 [env]
-  POUND_ARTIFACT_PATH = "/app/pound/artifacts/england.pkl"
+  POUND_ARTIFACT_PATH = "/app/artifacts/england.pkl"
 
 [http_service]
   internal_port = 8000
@@ -278,7 +278,7 @@ domain or dedicated IPv4 address is needed for the initial deployment.
    `uv sync --extra dev --extra bulk`; the repository's unmarked catalog tests
    require the bulk `osmium` extra. Run Ruff, pytest, frontend type checks, unit
    tests, and the Vite production build.
-2. Stage the intended local graph as `pound/artifacts/england.pkl` in the worktree.
+2. Stage the intended local graph as `artifacts/england.pkl` in the worktree.
    Confirm `git check-ignore` reports it ignored and `git status` does not stage it.
    Load and record `$expected_revision` with the command above, then record it with
    the artifact build/release notes.
@@ -304,8 +304,8 @@ domain or dedicated IPv4 address is needed for the initial deployment.
    ```
 
    Then run `fly ssh console -C 'find /app -path
-   "*/pound/artifacts/england.pkl" -type f -print'`; it must print only
-   `/app/pound/artifacts/england.pkl`, not a second copy in `.venv`. Separately
+   "*/app/artifacts/england.pkl" -type f -print'`; it must print only
+   `/app/artifacts/england.pkl`, not a second copy in `.venv`. Separately
    request `http://<app>.fly.dev/api/health` and confirm a 3xx redirect to HTTPS.
 6. Run the README's Bletchley Park to Black Prince Holidays, Stoke Hammond manual
    browser acceptance check, including map, transfer, and canal overlays. Do not

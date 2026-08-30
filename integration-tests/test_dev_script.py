@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).parents[3]
+ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SCRIPT = ROOT / "scripts" / "dev.sh"
 
 

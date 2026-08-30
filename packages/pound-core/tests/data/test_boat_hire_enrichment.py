@@ -4,7 +4,7 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
-CSV_PATH = Path(__file__).parents[2] / "src/pound/data/boat-hire-enrichment.csv"
+CSV_PATH = Path(__file__).resolve().parents[4] / "data/boat-hire-enrichment.csv"
 EXPECTED_FIELDS = [
     "record_type",
     "source_provider_id",

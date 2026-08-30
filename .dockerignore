@@ -14,8 +14,8 @@ dist
 web/dist
 web/node_modules
 node_modules
-pound/data/*
-!pound/data/boat-hire-enrichment.csv
+data/*
+!data/boat-hire-enrichment.csv
 reviews
 progress.md
 docs
@@ -27,5 +27,5 @@ web/.env*
 .pi-subagents
 .pi/subagents
 scripts/local
-pound/artifacts/*
-!pound/artifacts/england.pkl
+artifacts/*
+!artifacts/england.pkl

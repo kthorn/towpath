@@ -564,14 +564,14 @@ def read_england(
 ) -> WaterwayFeatures:
     """Tags-filter then read, then prune infra nodes on non-navigable ways
     and filter navigable ways. pbf_path defaults to POUND_PBF_PATH env or
-    pound/data/england.osm.pbf. Filtered output lands beside it as
+    data/england.osm.pbf. Filtered output lands beside it as
     england_waterways.osm.pbf (gitignored).
 
     Ordering: prune BEFORE filter. prune needs boat=no ways present to decide
     "all incidents non-navigable"; see the spec's load-bearing ordering note.
     """
     if pbf_path is None:
-        pbf_path = Path(os.environ.get("POUND_PBF_PATH", "pound/data/england.osm.pbf"))
+        pbf_path = Path(os.environ.get("POUND_PBF_PATH", "data/england.osm.pbf"))
     pbf_path = Path(pbf_path)
     profiler = profiler or BuildProfiler()
     base = pbf_path.name.split(".")[0]

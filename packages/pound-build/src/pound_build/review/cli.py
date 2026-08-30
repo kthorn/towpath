@@ -15,8 +15,8 @@ from pound_build.review.ranking import build_document, filter_catalog_to_network
 from pound_build.review.store import ReviewFileError, load_document, write_document
 from pound_build.review.web import create_app
 
-_DEFAULT_CATALOG = Path("pound/artifacts/england-catalog.pkl")
-_DEFAULT_GRAPH = Path("pound/artifacts/england.pkl")
+_DEFAULT_CATALOG = Path("artifacts/england-catalog.pkl")
+_DEFAULT_GRAPH = Path("artifacts/england.pkl")
 
 
 def _generate(args: argparse.Namespace) -> int:

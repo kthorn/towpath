@@ -19,7 +19,7 @@ Use the `fly.dev` hostname, not Fly's shared IPv4 address. There is no custom do
 ```bash
 APP=towpath-4772e4a8
 DOMAIN=https://towpath-4772e4a8.fly.dev
-ARTIFACT=pound/artifacts/england.pkl
+ARTIFACT=artifacts/england.pkl
 ```
 
 Run commands from the repository root in a clean, isolated deployment worktree.
@@ -43,7 +43,7 @@ matching `fly.toml`.
 ## Full source redeploy (code or tracked data)
 
 Use this path after changing application code, frontend code, dependency files, or
-tracked files below `pound/`. Stage the selected `england.pkl` at `$ARTIFACT` first;
+tracked runtime files below `packages/` or `data/`. Stage the selected `england.pkl` at `$ARTIFACT` first;
 if it is absent, use [Graph-artifact redeploy](#graph-artifact-redeploy). Source-only
 checks and inputs are required here, not for configuration-only releases:
 
@@ -56,7 +56,7 @@ test -f "$ARTIFACT"
 git check-ignore -q "$ARTIFACT"
 EXPECTED_REVISION="$(uv run python -c '
 from pound.graph.artifact import load_artifact
-print(load_artifact("pound/artifacts/england.pkl").metadata["artifact_revision"])
+print(load_artifact("artifacts/england.pkl").metadata["artifact_revision"])
 ')"
 printf 'Deploying artifact revision: %s\n' "$EXPECTED_REVISION"
 : "${VITE_GOOGLE_MAPS_API_KEY:?set the restricted browser key}"
@@ -93,7 +93,7 @@ test -f "$ARTIFACT"
 git check-ignore -q "$ARTIFACT"
 EXPECTED_REVISION="$(uv run python -c '
 from pound.graph.artifact import load_artifact
-print(load_artifact("pound/artifacts/england.pkl").metadata["artifact_revision"])
+print(load_artifact("artifacts/england.pkl").metadata["artifact_revision"])
 ')"
 printf 'Deploying artifact revision: %s\n' "$EXPECTED_REVISION"
 ```
@@ -194,6 +194,6 @@ or early health response.
   database, and no autoscaler.
 - Do not use the shared IPv4 as an endpoint. The canonical public address is
   `https://towpath-4772e4a8.fly.dev`.
-- Do not commit `pound/artifacts/england.pkl`, browser configuration values, or
+- Do not commit `artifacts/england.pkl`, browser configuration values, or
   credentials.
 - This runbook does not add CI, a custom domain, a second region, or scale-to-zero.

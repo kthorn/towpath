@@ -2,10 +2,10 @@ import re
 import tomllib
 from pathlib import Path
 
-ROOT = Path(__file__).parents[3]
+ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_container_configuration_stages_only_the_deployment_artifact():
+def test_container_configuration_stages_only_runtime_packages_and_data():
     dockerfile = (ROOT / "Dockerfile").read_text()
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
     dockerignore = (ROOT / ".dockerignore").read_text().splitlines()
@@ -20,26 +20,34 @@ def test_container_configuration_stages_only_the_deployment_artifact():
         "tool"
     ]["hatch"]["build"]["targets"]["wheel"]
 
-    assert (
-        "COPY pound/ pound/\n"
-        "RUN test -f pound/artifacts/england.pkl\n"
-        "RUN uv sync --locked --no-dev --no-editable"
-    ) in dockerfile
+    assert "COPY packages/pound-core/ packages/pound-core/" in dockerfile
+    assert "COPY packages/pound-web/ packages/pound-web/" in dockerfile
+    assert "COPY packages/pound-build" not in dockerfile
+    assert "COPY pound/ pound/" not in dockerfile
+    assert "RUN uv sync --package pound-web --no-dev --frozen" in dockerfile
+    assert "COPY artifacts/ /app/artifacts/" in dockerfile
+    assert "COPY data/ /app/data/" in dockerfile
+    assert "RUN test -f /app/artifacts/england.pkl" in dockerfile
     assert (
         'RUN test -n "$VITE_GOOGLE_MAPS_API_KEY" \\\n'
         '    && test -n "$VITE_GOOGLE_MAP_ID" \\\n'
         "    && npm run build"
     ) in dockerfile
+    assert "artifacts/*" in dockerignore
+    assert "!artifacts/england.pkl" in dockerignore
+    data_rules = [rule for rule in dockerignore if rule.lstrip("!").startswith("data")]
+    assert data_rules == ["data/*", "!data/boat-hire-enrichment.csv"]
     assert "pound/artifacts" not in dockerignore
-    assert "pound/artifacts/*" in dockerignore
-    data_rules = [rule for rule in dockerignore if rule.lstrip("!").startswith("pound/data")]
-    assert data_rules == ["pound/data/*", "!pound/data/boat-hire-enrichment.csv"]
+    assert "pound/data" not in dockerignore
     assert (
         'ENV PATH="/app/.venv/bin:${PATH}" \\\n'
+        "    POUND_ARTIFACT_PATH=/app/artifacts/england.pkl \\\n"
         "    POUND_STATIC_DIR=/app/web/dist \\\n"
-        "    POUND_BOAT_HIRE_ENRICHMENT_PATH=/app/pound/data/boat-hire-enrichment.csv"
+        "    POUND_BOAT_HIRE_ENRICHMENT_PATH=/app/data/boat-hire-enrichment.csv"
     ) in dockerfile
-    assert "!pound/artifacts/england.pkl" in dockerignore
+    assert 'CMD ["uvicorn", "pound_web.app:app"' in dockerfile
+    assert "artifacts/" in gitignore
+    assert "data/*" in gitignore
     assert ".env*" in dockerignore
     assert "web/.env*" in dockerignore
     assert ".pi-subagents" in dockerignore
@@ -57,7 +65,7 @@ def test_fly_configuration_keeps_the_single_machine_warm():
     assert fly["primary_region"] == "sjc"
     assert fly["build"] == {"dockerfile": "Dockerfile"}
     assert fly["deploy"] == {"strategy": "rolling", "wait_timeout": "10m"}
-    assert fly["env"] == {"POUND_ARTIFACT_PATH": "/app/pound/artifacts/england.pkl"}
+    assert fly["env"] == {"POUND_ARTIFACT_PATH": "/app/artifacts/england.pkl"}
     assert fly["http_service"] == {
         "internal_port": 8000,
         "force_https": True,

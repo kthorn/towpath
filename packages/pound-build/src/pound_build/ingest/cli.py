@@ -1,7 +1,7 @@
 """Dev CLI for the ingest pipeline.
 
 Usage:
-    pound-ingest oxford [--out pound/data/oxford_canal_waterways.json]
+    pound-ingest oxford [--out data/oxford_canal_waterways.json]
     pound-ingest build oxford  --out <path>
     pound-ingest build england --out <path> [--pbf PATH]
 """
@@ -351,7 +351,7 @@ def _build_england_multipass(pbf_path: Path, args, profiler: BuildProfiler | Non
 def _resolve_pbf(args) -> Path:
     if args.pbf:
         return Path(args.pbf)
-    return Path(os.environ.get("POUND_PBF_PATH", "pound/data/england.osm.pbf"))
+    return Path(os.environ.get("POUND_PBF_PATH", "data/england.osm.pbf"))
 
 
 def _cmd_build(args) -> int:

@@ -20,11 +20,11 @@ Generate the ranked local review file, then serve it for human decisions:
 ```bash
 uv sync --extra dev
 uv run pound-boat-review generate \
-  --catalog pound/artifacts/england-catalog.pkl \
-  --graph pound/artifacts/england.pkl \
-  --out pound/artifacts/boat-hire-review.json
+  --catalog artifacts/england-catalog.pkl \
+  --graph artifacts/england.pkl \
+  --out artifacts/boat-hire-review.json
 uv run pound-boat-review serve \
-  --review pound/artifacts/boat-hire-review.json
+  --review artifacts/boat-hire-review.json
 ```
 
 Generation keeps only named candidates within 250 m of any routing-eligible
@@ -51,15 +51,15 @@ The artifact must have been built with a version of Pound that writes
 revisionless artifacts. Rebuild a revisionless artifact once rather than
 patching its pickle metadata.
 
-Start FastAPI from the repository root. `pound.web.app:app` reads its settings
+Start FastAPI from the repository root. `pound_web.app:app` reads its settings
 when Uvicorn starts the application, so exporting or prefixing the environment
 variables works without an application factory flag:
 
 ```bash
-POUND_ARTIFACT_PATH=/absolute/path/to/pound/artifacts/england.pkl \
-POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/pound/data/boat-hire-enrichment.csv \
+POUND_ARTIFACT_PATH=/absolute/path/to/artifacts/england.pkl \
+POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/data/boat-hire-enrichment.csv \
 POUND_STATIC_DIR=web/dist \
-uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000 --reload
+uv run uvicorn pound_web.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Confirm that the backend loaded the artifact and reports its routing status:
@@ -205,8 +205,7 @@ keep the routing artifact as a separate read-only mount:
 
 ```bash
 docker run --rm -p 8000:8000 \
-  -e POUND_ARTIFACT_PATH=/data/england.pkl \
-  -v "$PWD/pound/artifacts/england.pkl:/data/england.pkl:ro" \
+  -v "$PWD/artifacts/england.pkl:/app/artifacts/england.pkl:ro" \
   pound-map
 ```
 
@@ -287,13 +286,13 @@ Fetch the Oxford extract and print the summarize() report (network required):
 ```bash
 uv run pound-ingest oxford
 # or, also writing the features IR:
-uv run pound-ingest oxford --out pound/data/oxford_canal_waterways.json
+uv run pound-ingest oxford --out data/oxford_canal_waterways.json
 ```
 
 ### Build the legacy Oxford artifact
 
 ```bash
-uv run pound-ingest build oxford --out pound/artifacts/oxford.pkl
+uv run pound-ingest build oxford --out artifacts/oxford.pkl
 ```
 
 Produces a small pickled NetworkX graph for ingest testing only. It does not
@@ -311,16 +310,16 @@ The full bulk path needs the Geofabrik England extract (manual download; the
 CLI does not download 1.5 GB itself):
 
 ```bash
-curl -L -o pound/data/england.osm.pbf \
+curl -L -o data/england.osm.pbf \
   https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf
 uv sync --extra bulk
-uv run pound-ingest build england --out pound/artifacts/england.pkl
+uv run pound-ingest build england --out artifacts/england.pkl
 ```
 
 If the PBF is missing the build prints the URL and exits non-zero. The build
 hard-fails on `derelict_edges>0`, `self_loops>0`, or
 `tolerance_snaps_unresolved` above `--max-unresolved-snaps` (default `0`,
-forcing manual curation via `pound/data/overrides.json` before a real England
+forcing manual curation via `data/overrides.json` before a real England
 artifact is trusted). Advisory keys (`edges_missing_dims`,
 `ambiguous_place_names`, gazetteer discrepancy, and **component_count /
 component_sizes**) are reported but never fail the build.
@@ -359,7 +358,7 @@ uv run pound-ingest build england --out /tmp/eng.pkl --tolerance-m 1
 ```
 
 The report is the authority, not the threshold — `--tolerance-m` is the
-exploration dial; `pound/data/overrides.json` is where confirmed joins and
+exploration dial; `data/overrides.json` is where confirmed joins and
 suppressed false snaps land.
 
 Bulk tests are skipped by default; run them explicitly:
@@ -378,7 +377,7 @@ artifact. Build it only when catalog marker layers are needed:
 catalog_tmp=$(mktemp -d)
 trap 'rm -rf "$catalog_tmp"' EXIT
 uv run pound-ingest catalog england \
-  --pbf pound/data/england.osm.pbf \
+  --pbf data/england.osm.pbf \
   --out "$catalog_tmp/england-catalog.pkl" \
   --profile
 ```
@@ -395,7 +394,7 @@ peak RSS**. The explicit build gates are: exactly 185,029 records for the same
 source/filter (a source refresh requires a new inventory review), artifact size
 <= **100,000,000 bytes**, build wall time <= **300 s**, and build peak RSS <=
 **3,000,000 KiB**. The real build baseline passes all four build gates. The
-benchmark run rebuilt the catalog from `pound/data/england.osm.pbf`
+benchmark run rebuilt the catalog from `data/england.osm.pbf`
 into a temporary artifact; `/usr/bin/time` measured **211.32 s** wall time and
 **2,527,792 KiB** peak RSS, also passing the build gates.
 
@@ -419,8 +418,8 @@ time_log=$(mktemp)
 trap 'rm -f "$benchmark_json" "$time_log"' EXIT
 /usr/bin/time -v uv run python scripts/catalog_query_benchmark.py \
   --catalog-artifact "$catalog_tmp/england-catalog.pkl" \
-  --routing-artifact pound/artifacts/england.pkl \
-  --boat-hire-enrichment pound/data/boat-hire-enrichment.csv \
+  --routing-artifact artifacts/england.pkl \
+  --boat-hire-enrichment data/boat-hire-enrichment.csv \
   --warmups 2 --iterations 5 >"$benchmark_json" 2>"$time_log"
 ```
 
@@ -461,11 +460,11 @@ Configure the optional catalog alongside the routing artifact when starting
 FastAPI:
 
 ```bash
-POUND_ARTIFACT_PATH=/absolute/path/to/pound/artifacts/england.pkl \
-POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/pound/data/boat-hire-enrichment.csv \
+POUND_ARTIFACT_PATH=/absolute/path/to/artifacts/england.pkl \
+POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/data/boat-hire-enrichment.csv \
 POUND_CATALOG_PATH=/absolute/path/to/england-catalog.pkl \
 POUND_STATIC_DIR=web/dist \
-uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000
+uv run uvicorn pound_web.app:app --host 127.0.0.1 --port 8000
 ```
 
 Catalog records are OSM-derived. Keep the visible linked
@@ -481,7 +480,7 @@ Minimal, eyeballing-only surface over the loaded artifact:
 ```bash
 uv run pound-plan Oxford Banbury --days 3
 # override the artifact:
-uv run pound-plan Oxford Banbury --days 3 --artifact pound/artifacts/england.pkl
+uv run pound-plan Oxford Banbury --days 3 --artifact artifacts/england.pkl
 # boat constraints:
 uv run pound-plan Oxford Banbury --days 3 --boat-beam 2.0 --boat-draft 0.8
 # disable movable-bridge delay for a what-if route comparison:
@@ -542,7 +541,7 @@ Resolve a coordinate to the nearest canal-network node uid + distance:
 ```bash
 uv run pound-locate --lat 51.75 --lon -1.26
 # override the artifact:
-uv run pound-locate --lat 51.75 --lon -1.26 --artifact pound/artifacts/england.pkl
+uv run pound-locate --lat 51.75 --lon -1.26 --artifact artifacts/england.pkl
 # fail if the nearest canal is farther than N metres (for scripting):
 uv run pound-locate --lat 51.75 --lon -1.26 --max-distance-m 200
 ```
