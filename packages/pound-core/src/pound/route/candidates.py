@@ -9,7 +9,7 @@ from pound.geometry import haversine_m as _haversine_m
 from pound.graph.spatial import CandidateSpatialIndex, GraphSpatialIndex
 from pound.schemas import CanalCandidate, ProjectedCanalPoint
 
-_DEFAULT_SPACING_M = 250.0
+_CANDIDATE_INDEX_TYPE = CandidateSpatialIndex
 
 
 def candidate_id(point: ProjectedCanalPoint) -> str:
@@ -58,34 +58,35 @@ def nearest_candidates(
 
     pool: dict[str, tuple[float, ProjectedCanalPoint]] = {}
     exact = index.nearest_projection(lat, lon)
+    radius = index.spacing_m
     if exact is not None:
-        point, _metric_distance = exact
-        pool[candidate_id(point)] = (
-            _haversine_m((lat, lon), (point.coordinate.lat, point.coordinate.lon)),
-            point,
-        )
-    for point, _metric_distance in index.nearest_samples(lat, lon):
-        identity = candidate_id(point)
-        pool.setdefault(
-            identity,
-            (
-                _haversine_m((lat, lon), (point.coordinate.lat, point.coordinate.lon)),
-                point,
-            ),
-        )
+        point, metric_distance = exact
+        radius = max(radius, metric_distance)
+        pool[candidate_id(point)] = (metric_distance, point)
 
-    ranked = sorted(pool.values(), key=lambda item: (item[0], candidate_id(item[1])))
-    records = [
-        CanalCandidate(
-            candidate_id=candidate_id(point),
-            handle=point.handle,
-            coordinate=point.coordinate,
-            straight_line_distance_m=distance,
-            display_name=index.display_name(point.handle, point.coordinate),
+    while True:
+        for point, metric_distance in index.nearest_samples(lat, lon, radius_m=radius):
+            pool.setdefault(candidate_id(point), (metric_distance, point))
+        ranked = sorted(pool.values(), key=lambda item: (item[0], candidate_id(item[1])))
+        records = [
+            CanalCandidate(
+                candidate_id=candidate_id(point),
+                handle=point.handle,
+                coordinate=point.coordinate,
+                straight_line_distance_m=distance,
+                display_name=index.display_name(point.handle, point.coordinate),
+            )
+            for distance, point in ranked
+        ]
+        selected = _spaced(records, limit=limit, spacing_m=index.spacing_m)
+        selected_is_bounded = (
+            selected and max(candidate.straight_line_distance_m for candidate in selected) <= radius
         )
-        for distance, point in ranked
-    ]
-    return _spaced(records, limit=limit, spacing_m=index.spacing_m)
+        if (len(selected) >= limit and selected_is_bounded) or index.sample_envelope_covers_all(
+            lat, lon, radius
+        ):
+            return selected
+        radius *= 2
 
 
 def select_spaced_candidates(
@@ -109,16 +110,18 @@ def select_spaced_candidates(
 def nearest_coord_candidates(
     lat: float,
     lon: float,
-    graph: nx.Graph,
-    spatial_index: GraphSpatialIndex,
+    index: CandidateSpatialIndex | nx.Graph,
+    spatial_index: GraphSpatialIndex | None = None,
     *,
     artifact_revision: str,
     limit: int,
 ) -> list[CanalCandidate]:
-    """Compatibility bridge for the pre-projection web endpoint.
-
-    ``artifact_revision`` is intentionally not copied into each candidate; the
-    response-level field remains owned by that endpoint until its migration.
-    """
-    del spatial_index, artifact_revision
-    return nearest_candidates(lat, lon, CandidateSpatialIndex(graph), limit=limit)
+    """Compatibility bridge that consumes a startup-shared candidate index."""
+    if isinstance(index, _CANDIDATE_INDEX_TYPE):
+        candidate_index = index
+    elif spatial_index is not None:
+        candidate_index = spatial_index.candidate_index
+    else:
+        raise TypeError("a shared CandidateSpatialIndex is required")
+    del artifact_revision
+    return nearest_candidates(lat, lon, candidate_index, limit=limit)

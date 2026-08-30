@@ -2,6 +2,7 @@
 
 import math
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, cast
 
 import networkx as nx
@@ -157,6 +158,7 @@ class GraphSpatialIndex:
     edge_keys: tuple[tuple[int, int], ...]
     edge_lines: tuple[Any, ...]
     edge_tree: STRtree | None
+    candidate_index: Any
 
     def __init__(self, graph: nx.Graph) -> None:
         node_uids = tuple(sorted(graph.nodes))
@@ -189,6 +191,7 @@ class GraphSpatialIndex:
         object.__setattr__(self, "edge_keys", edge_keys)
         object.__setattr__(self, "edge_lines", edge_lines)
         object.__setattr__(self, "edge_tree", STRtree(edge_lines) if edge_lines else None)
+        object.__setattr__(self, "candidate_index", CandidateSpatialIndex(graph))
 
     def query_node_uids(self, envelopes: tuple[Any, ...]) -> tuple[int, ...]:
         """Return stable UIDs whose points intersect any supplied envelope."""
@@ -256,6 +259,7 @@ class CandidateSpatialIndex:
     candidate_geometries: tuple[Point, ...]
     candidate_tree: STRtree | None
     candidate_display_names: tuple[str, ...]
+    candidate_bounds: tuple[float, float, float, float] | None
     edge_positions: Any
     edge_names: tuple[str | None, ...]
     node_names: tuple[tuple[int, str], ...]
@@ -332,6 +336,16 @@ class CandidateSpatialIndex:
             self._display_name(point.handle, point.coordinate, edge_keys, edge_names, node_names)
             for point in candidate_points
         )
+        candidate_bounds = (
+            (
+                min(point.x for point in candidate_geometries),
+                min(point.y for point in candidate_geometries),
+                max(point.x for point in candidate_geometries),
+                max(point.y for point in candidate_geometries),
+            )
+            if candidate_geometries
+            else None
+        )
 
         object.__setattr__(self, "spacing_m", float(spacing_m))
         object.__setattr__(self, "edge_keys", edge_keys)
@@ -359,10 +373,11 @@ class CandidateSpatialIndex:
             STRtree(candidate_geometries) if candidate_geometries else None,
         )
         object.__setattr__(self, "candidate_display_names", candidate_display_names)
+        object.__setattr__(self, "candidate_bounds", candidate_bounds)
         object.__setattr__(
             self,
             "edge_positions",
-            {edge: position for position, edge in enumerate(edge_keys)},
+            MappingProxyType({edge: position for position, edge in enumerate(edge_keys)}),
         )
         object.__setattr__(self, "edge_names", edge_names)
         object.__setattr__(self, "node_names", node_names)
@@ -498,18 +513,14 @@ class CandidateSpatialIndex:
         return projected, distance
 
     def nearest_samples(
-        self, lat: float, lon: float
+        self, lat: float, lon: float, *, radius_m: float
     ) -> tuple[tuple[ProjectedCanalPoint, float], ...]:
         if self.candidate_tree is None:
             return ()
         query = self._query_point(lat, lon)
-        bounds = (
-            min(point.x for point in self.candidate_geometries),
-            min(point.y for point in self.candidate_geometries),
-            max(point.x for point in self.candidate_geometries),
-            max(point.y for point in self.candidate_geometries),
+        positions = self.candidate_tree.query(
+            box(query.x - radius_m, query.y - radius_m, query.x + radius_m, query.y + radius_m)
         )
-        positions = self.candidate_tree.query(box(*bounds))
         ranked = [
             (
                 self.candidate_points[int(position)],
@@ -518,6 +529,18 @@ class CandidateSpatialIndex:
             for position in positions
         ]
         return tuple(sorted(ranked, key=lambda item: (item[1], self._point_sort_key(item[0]))))
+
+    def sample_envelope_covers_all(self, lat: float, lon: float, radius_m: float) -> bool:
+        if self.candidate_bounds is None:
+            return True
+        query = self._query_point(lat, lon)
+        min_x, min_y, max_x, max_y = self.candidate_bounds
+        return (
+            query.x - radius_m <= min_x
+            and query.x + radius_m >= max_x
+            and query.y - radius_m <= min_y
+            and query.y + radius_m >= max_y
+        )
 
 
 def nearest_node_distances(

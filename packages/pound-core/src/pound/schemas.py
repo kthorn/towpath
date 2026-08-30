@@ -114,6 +114,8 @@ class RouteResult(BaseModel):
 
 
 class Coordinate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     lat: float
     lon: float
 
