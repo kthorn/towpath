@@ -40,6 +40,7 @@ export interface MarkerInstance {
 
 export interface PolylineInstance {
   setMap(map: MapInstance | null): void;
+  setPath(path: GoogleLatLngLiteral[]): void;
 }
 
 export interface InfoWindowInstance {
@@ -77,6 +78,7 @@ export interface MapFacade {
   }): PolylineInstance;
   fitBounds(map: MapInstance, points: GoogleLatLngLiteral[]): void;
   getBounds(map: MapInstance): MapBounds | undefined;
+  getZoom(map: MapInstance): number | undefined;
 }
 
 const GROUP_STYLES = {
@@ -330,9 +332,7 @@ export function createGoogleMapView(
   const placeMarkers: Partial<Record<EndpointSlot, MarkerInstance>> = {};
   const candidateMarkers: Record<EndpointSlot, MarkerInstance[]> = { origin: [], destination: [] };
   const landRoutes: Partial<Record<EndpointSlot, PolylineInstance>> = {};
-  const networkLines: PolylineInstance[] = [];
   let networkGeometries: GeoJSONLineString[] = [];
-  const focusedNetworkLines: PolylineInstance[] = [];
   const hireBaseMarkers: MarkerInstance[] = [];
   const hireBaseMarkerListeners: RemovableListener[] = [];
   const hireBaseCoordinates: GoogleLatLngLiteral[] = [];
@@ -364,17 +364,74 @@ export function createGoogleMapView(
   const removePolylines = (lines: PolylineInstance[]) => {
     for (const line of lines.splice(0)) line.setMap(null);
   };
+  interface CasedPair {
+    casing: PolylineInstance;
+    center: PolylineInstance;
+  }
+  const networkLines: CasedPair[] = [];
+  const focusedNetworkLines: CasedPair[] = [];
+  // ponytail: casing polylines are invisible below CASING_MIN_ZOOM but kept alive;
+  // setMap toggling on idle is cheaper than rebuilding thousands of objects.
+  const CASING_MIN_ZOOM = 11;
+  const casingListeners: RemovableListener[] = [];
+  const removeCasedPairs = (pairs: CasedPair[]) => {
+    for (const pair of pairs.splice(0)) {
+      pair.casing.setMap(null);
+      pair.center.setMap(null);
+    }
+  };
+  let casingVisible = (facade.getZoom(map) ?? Infinity) >= CASING_MIN_ZOOM;
+  const applyCasingVisibility = (pairs: CasedPair[]) => {
+    for (const pair of pairs) pair.casing.setMap(casingVisible ? map : null);
+  };
+  casingListeners.push(
+    map.addListener('idle', () => {
+      const zoom = facade.getZoom(map);
+      if (zoom === undefined) return;
+      const visible = zoom >= CASING_MIN_ZOOM;
+      if (visible === casingVisible) return;
+      casingVisible = visible;
+      applyCasingVisibility(networkLines);
+      applyCasingVisibility(focusedNetworkLines);
+    }),
+  );
+  const makeCasedPair = (
+    path: GoogleLatLngLiteral[],
+    color: string,
+    weight: number,
+    zIndex: number,
+  ): CasedPair => {
+    const casing = facade.createPolyline({
+      map, path, strokeColor: '#e0f2fe', strokeWeight: weight + 4, zIndex,
+    });
+    const center = facade.createPolyline({ map, path, strokeColor: color, strokeWeight: weight, zIndex: zIndex + 1 });
+    if (!casingVisible) casing.setMap(null);
+    return { casing, center };
+  };
   const casedLine = (
     path: GoogleLatLngLiteral[],
     color: string,
     weight: number,
     zIndex: number,
-  ) => [
-    facade.createPolyline({
-      map, path, strokeColor: '#e0f2fe', strokeWeight: weight + 4, zIndex,
-    }),
-    facade.createPolyline({ map, path, strokeColor: color, strokeWeight: weight, zIndex: zIndex + 1 }),
-  ];
+  ) => Object.values(makeCasedPair(path, color, weight, zIndex));
+  const paintCasedLines = (
+    pairs: CasedPair[],
+    lines: GeoJSONLineString[],
+    color: string,
+    weight: number,
+    zIndex: number,
+  ) => {
+    const keep = Math.min(pairs.length, lines.length);
+    for (let index = 0; index < keep; index += 1) {
+      const path = geoJsonToGooglePath(lines[index]);
+      pairs[index].casing.setPath(path);
+      pairs[index].center.setPath(path);
+    }
+    removeCasedPairs(pairs.splice(keep));
+    for (let index = keep; index < lines.length; index += 1) {
+      pairs.push(makeCasedPair(geoJsonToGooglePath(lines[index]), color, weight, zIndex));
+    }
+  };
 
   const removeTooltip = (tooltip: HTMLElement) => {
     tooltip.remove();
@@ -525,17 +582,11 @@ export function createGoogleMapView(
       }
     },
     network(lines) {
-      removePolylines(networkLines);
       networkGeometries = lines;
-      for (const line of lines) {
-        networkLines.push(...casedLine(geoJsonToGooglePath(line), '#0284c7', 4, 1));
-      }
+      paintCasedLines(networkLines, lines, '#0284c7', 4, 1);
     },
     focusedNetwork(lines) {
-      removePolylines(focusedNetworkLines);
-      for (const line of lines) {
-        focusedNetworkLines.push(...casedLine(geoJsonToGooglePath(line), '#00324d', 6, 3));
-      }
+      paintCasedLines(focusedNetworkLines, lines, '#00324d', 6, 3);
     },
     hireBases(bases, selectedIdentity) {
       const recordsChanged = hireBaseRecords.length !== bases.length || hireBaseRecords.some((base, index) => {
@@ -709,11 +760,12 @@ export function createGoogleMapView(
       clearDay();
       clearLandSlot('origin');
       clearLandSlot('destination');
-      removePolylines(networkLines);
-      removePolylines(focusedNetworkLines);
+      removeCasedPairs(networkLines);
+      removeCasedPairs(focusedNetworkLines);
       networkGeometries = [];
       removePolylines(canalRoute);
       canalPath = [];
+      for (const listener of casingListeners.splice(0)) listener.remove();
     },
   };
 }

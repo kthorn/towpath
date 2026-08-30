@@ -16,6 +16,7 @@ interface MapsModule {
 interface RuntimeMap {
   fitBounds(bounds: { north: number; south: number; east: number; west: number }): void;
   getBounds(): { toJSON(): MapBounds } | undefined;
+  getZoom?(): number;
 }
 
 interface MarkerModule {
@@ -148,6 +149,10 @@ function createMapFacade(modules: RuntimeModules): MapFacade {
       // SAFETY: MapFacade maps are runtime Google Maps instances exposing getBounds.
       const bounds = (map as unknown as RuntimeMap).getBounds();
       return bounds?.toJSON();
+    },
+    getZoom(map) {
+      // SAFETY: MapFacade maps are runtime Google Maps instances exposing getZoom.
+      return (map as unknown as RuntimeMap).getZoom?.();
     },
   };
 }
