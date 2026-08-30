@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { MapView } from '../lib/google/contracts';
-  let { load, onclick, onready }: { load: (element: HTMLElement) => Promise<MapView>; onclick: (coordinate: { lat: number; lon: number }) => void; onready: (view: MapView | undefined) => void } = $props();
+  let { load, onclick, onhirebaseselect, onready }: { load: (element: HTMLElement) => Promise<MapView>; onclick: (coordinate: { lat: number; lon: number }) => void; onhirebaseselect: (identity: string | null) => void; onready: (view: MapView | undefined) => void } = $props();
   let element: HTMLElement; let error = $state('');
   onMount(() => {
-    let view: MapView | undefined; let removeClick: (() => void) | undefined; let disposed = false;
-    load(element).then((loaded) => { if (disposed) { loaded.destroy(); return; } view = loaded; removeClick = view.onMapClick(onclick); onready(view); }).catch((cause) => { if (disposed) return; error = cause instanceof Error ? cause.message : String(cause); onready(undefined); });
-    return () => { disposed = true; removeClick?.(); view?.destroy(); onready(undefined); };
+    let view: MapView | undefined; let removeClick: (() => void) | undefined; let removeHireBaseSelect: (() => void) | undefined; let disposed = false;
+    load(element).then((loaded) => { if (disposed) { loaded.destroy(); return; } view = loaded; removeClick = view.onMapClick(onclick); removeHireBaseSelect = view.onHireBaseSelect(onhirebaseselect); onready(view); }).catch((cause) => { if (disposed) return; error = cause instanceof Error ? cause.message : String(cause); onready(undefined); });
+    return () => { disposed = true; removeClick?.(); removeHireBaseSelect?.(); view?.destroy(); onready(undefined); };
   });
 </script>
 

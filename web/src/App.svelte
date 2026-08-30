@@ -105,7 +105,7 @@
     <BoatConstraints formId="route-actions" bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
     <div class="map-column">
       <fieldset class="map-target"><legend>Map click sets</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set destination from map</label></fieldset>
-		<MapCanvas load={dependencies.loadMapView} onclick={(coordinate) => dependencies.store.setEndpointCoordinate(active, coordinate)} onready={(view) => dependencies.store.setMapView(view)} />
+		<MapCanvas load={dependencies.loadMapView} onclick={(coordinate) => dependencies.store.setEndpointCoordinate(active, coordinate)} onhirebaseselect={dependencies.store.selectHireBase} onready={(view) => dependencies.store.setMapView(view)} />
     {#if $store.networkError}
       <p class="network-status" role="status">
         {$store.hasNetworkOverlay
