@@ -15,7 +15,7 @@ RUN test -n "$VITE_GOOGLE_MAPS_API_KEY" \
     && test -n "$VITE_GOOGLE_MAP_ID" \
     && npm run build
 
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 COPY --from=ghcr.io/astral-sh/uv:0.8.22 /uv /usr/local/bin/uv
 WORKDIR /app
