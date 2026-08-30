@@ -1,5 +1,7 @@
 # Turnaround-aware hire-base reachability
 
+**Status:** Refined
+
 ## Context
 
 The initial website map calls `POST /api/canal-network` to show the canal network reachable from
