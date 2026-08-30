@@ -207,7 +207,7 @@ def test_dev_script_starts_and_stops_both_servers(tmp_path: Path) -> None:
         _wait_for_commands(
             log,
             {
-                "uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000 --reload",
+                "uv run uvicorn pound_web.app:app --host 127.0.0.1 --port 8000 --reload",
                 "npm run dev -- --host 127.0.0.1 --port 5173",
             },
             process,

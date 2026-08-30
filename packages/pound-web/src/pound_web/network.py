@@ -3,10 +3,9 @@
 import math
 
 import networkx as nx
+from pound.schemas import GeoJSONLineString
 from shapely.geometry import LineString, MultiLineString
 from shapely.ops import linemerge, unary_union
-
-from pound.schemas import GeoJSONLineString
 
 MAX_NETWORK_VERTICES = 100_000
 _DISPLAY_SIMPLIFY_TOLERANCE = 1e-5

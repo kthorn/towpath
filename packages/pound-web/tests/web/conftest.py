@@ -9,20 +9,20 @@ from pound.artifact import ROUTING_ARTIFACT_SCHEMA_VERSION
 from pound.catalog.metadata import CatalogMetadata
 from pound.catalog.models import CatalogPlace
 from pound.models import OsmElementType, PoiCategory, RuntimePoi, WayDimensions
-from pound.web.app import create_app
-from pound.web.boat_hire import BOAT_HIRE_ENRICHMENT_FIELDS
-from pound.web.config import WebSettings
+from pound_web.app import create_app
+from pound_web.boat_hire import BOAT_HIRE_ENRICHMENT_FIELDS
+from pound_web.config import WebSettings
 from shapely import wkb
 from shapely.geometry import Point
 
-from tests.fixtures import write_catalog_payload
-from tests.fixtures import write_runtime_artifact as save_artifact
+from .fixtures import write_catalog_payload
+from .fixtures import write_runtime_artifact as save_artifact
 
 
 @pytest.fixture(autouse=True)
 def _clear_network_geometry_cache():
     """Keep the process-global API geometry caches from leaking between tests."""
-    import pound.web.api as api_module
+    import pound_web.api as api_module
 
     api_module._network_union_cache.clear()
     api_module._network_highlight_cache.clear()

@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
-from pound.web.api import CanalRouteRequest
+from pound_web.api import CanalRouteRequest
 
 
 def _request(**changes):
@@ -131,7 +131,7 @@ def test_route_same_existing_handle_is_valid(web_client: TestClient):
 
 def test_route_calls_planner_once_with_resolved_constraints(web_client: TestClient):
     with patch(
-        "pound.web.api.plan_canal_route",
+        "pound_web.api.plan_canal_route",
         wraps=__import__("pound.route.plan", fromlist=["plan_canal_route"]).plan_canal_route,
     ) as planner:
         response = web_client.post(
@@ -175,12 +175,12 @@ def test_known_unavailable_routes_are_structured_422(
 
 
 def test_route_does_not_swallow_programming_errors(web_client: TestClient):
-    with patch("pound.web.api.plan_canal_route", side_effect=RuntimeError("bug")):
+    with patch("pound_web.api.plan_canal_route", side_effect=RuntimeError("bug")):
         with pytest.raises(RuntimeError, match="bug"):
             web_client.post("/api/canal-route", json=_request())
 
 
 def test_route_does_not_treat_generic_value_error_as_unavailable(web_client: TestClient):
-    with patch("pound.web.api.plan_canal_route", side_effect=ValueError("bad artifact data")):
+    with patch("pound_web.api.plan_canal_route", side_effect=ValueError("bad artifact data")):
         with pytest.raises(ValueError, match="bad artifact data"):
             web_client.post("/api/canal-route", json=_request())

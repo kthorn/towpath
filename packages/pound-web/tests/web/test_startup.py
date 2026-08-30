@@ -10,17 +10,17 @@ from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImport
 from pound.artifact import InvalidArtifactError, load_artifact
 from pound.catalog.spatial import CatalogSpatialIndex
 from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
-from pound.web.app import _load_web_artifact, create_app
-from pound.web.config import WebSettings
-from pound.web.places import (
+from pound_web.app import _load_web_artifact, create_app
+from pound_web.config import WebSettings
+from pound_web.places import (
     MAX_PLACES_QUERY_WORK,
     MAX_PLACES_VIEWPORT_SPAN_DEGREES,
     PlacesIndex,
 )
 
-from tests.fixtures import write_catalog_payload
-from tests.fixtures import write_runtime_artifact as save_artifact
-from tests.web.conftest import artifact_metadata, catalog_place, write_boat_hire_enrichment
+from .conftest import artifact_metadata, catalog_place, write_boat_hire_enrichment
+from .fixtures import write_catalog_payload
+from .fixtures import write_runtime_artifact as save_artifact
 
 
 def _settings(artifact_path: Path, static_dir: Path) -> WebSettings:
@@ -193,9 +193,9 @@ def test_startup_attaches_artifact_state_and_loads_once(tmp_path: Path):
     app = create_app(settings)
 
     with (
-        patch("pound.web.app.load_artifact", wraps=load_artifact) as load,
-        patch("pound.web.app.GraphSpatialIndex", wraps=GraphSpatialIndex) as build_index,
-        patch("pound.web.app.PoiSpatialIndex", wraps=PoiSpatialIndex) as build_poi_index,
+        patch("pound_web.app.load_artifact", wraps=load_artifact) as load,
+        patch("pound_web.app.GraphSpatialIndex", wraps=GraphSpatialIndex) as build_index,
+        patch("pound_web.app.PoiSpatialIndex", wraps=PoiSpatialIndex) as build_poi_index,
     ):
         with TestClient(app) as client:
             assert app.state.graph.nodes == graph.nodes
@@ -407,7 +407,7 @@ def test_startup_does_not_mutate_loaded_artifact_fields(tmp_path: Path):
     save_artifact(graph, [], artifact_path, metadata)
     loaded = load_artifact(artifact_path)
 
-    with patch("pound.web.app.load_artifact", return_value=loaded):
+    with patch("pound_web.app.load_artifact", return_value=loaded):
         with TestClient(create_app(_settings(artifact_path, tmp_path / "static"))):
             pass
 

@@ -7,7 +7,8 @@ from pathlib import Path
 
 from pound.catalog.manifest import MAX_CATALOG_KINDS, MAX_CATALOG_RADIUS_M
 from pound.schemas import MAX_CATALOG_ROUTE_COORDINATES
-from pound.web.places import (
+
+from pound_web.places import (
     MAX_PLACES_QUERY_WORK,
     MAX_PLACES_TARGETS,
     MAX_PLACES_VIEWPORT_SPAN_DEGREES,

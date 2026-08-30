@@ -4,10 +4,10 @@ from pathlib import Path
 from typing import TypedDict, Unpack
 
 import networkx as nx
-import pound.web.boat_hire as boat_hire
-import pytest  # pyright: ignore[reportMissingImports]
+import pound_web.boat_hire as boat_hire
+import pytest
 from pound.models import WayDimensions
-from pound.web.boat_hire import (
+from pound_web.boat_hire import (
     BOAT_HIRE_ENRICHMENT_FIELDS,
     BoatHireAnchor,
     BoatHireSeed,

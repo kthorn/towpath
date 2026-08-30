@@ -5,9 +5,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from shapely.geometry import LineString, Point
-from shapely.geometry.base import BaseGeometry
-
 from pound.catalog.manifest import CATALOG_KINDS, MAX_CATALOG_KINDS, MAX_CATALOG_RADIUS_M
 from pound.catalog.spatial import (
     CatalogQueryLimitError,
@@ -29,7 +26,10 @@ from pound.schemas import (
     PlacesResponse,
     ViewportPlacesRequest,
 )
-from pound.web.boat_hire import BoatHireSeed
+from shapely.geometry import LineString, Point
+from shapely.geometry.base import BaseGeometry
+
+from pound_web.boat_hire import BoatHireSeed
 
 PLACE_KINDS = CATALOG_KINDS | frozenset({"boat_hire"})
 MAX_PLACES_RESULTS = 1_000

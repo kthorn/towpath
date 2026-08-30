@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 members = [
     "pound-build",
     "pound-core",
+    "pound-web",
 ]
 
 [manifest.dependency-groups]
@@ -574,21 +575,34 @@ name = "pound-core"
 version = "0.1.0"
 source = { editable = "packages/pound-core" }
 dependencies = [
-    { name = "fastapi" },
     { name = "networkx" },
     { name = "pydantic" },
     { name = "pyproj" },
     { name = "shapely" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "networkx", specifier = ">=3.3" },
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "pyproj", specifier = ">=3.7,<4" },
+    { name = "shapely", specifier = ">=2.1,<3" },
+]
+
+[[package]]
+name = "pound-web"
+version = "0.1.0"
+source = { editable = "packages/pound-web" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "pound-core" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.116,<0.117" },
-    { name = "networkx", specifier = ">=3.3" },
-    { name = "pydantic", specifier = ">=2.11" },
-    { name = "pyproj", specifier = ">=3.7,<4" },
-    { name = "shapely", specifier = ">=2.1,<3" },
+    { name = "pound-core", editable = "packages/pound-core" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35" },
 ]
 

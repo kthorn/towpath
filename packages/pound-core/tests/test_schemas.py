@@ -21,7 +21,6 @@ from pound.schemas import (
     RouteLock,
     RouteResult,
 )
-from pound.web.api import CanalNetworkRequest, CanalRouteRequest
 from pydantic import TypeAdapter, ValidationError  # pyright: ignore[reportMissingImports]
 
 
@@ -41,13 +40,6 @@ def test_movable_bridge_delay_is_finite_and_nonnegative():
     assert CanalConstraints(start="A", movable_bridge_delay_min=0).movable_bridge_delay_min == 0
     with pytest.raises(ValidationError):
         ResolvedConstraints(start_uid=1, end_uid=2, movable_bridge_delay_min=float("inf"))
-    with pytest.raises(ValidationError):
-        CanalRouteRequest(
-            start_uid=1,
-            end_uid=2,
-            artifact_revision="r",
-            movable_bridge_delay_min=float("nan"),
-        )
 
 
 def test_route_result_round_trip():
@@ -144,10 +136,6 @@ def test_resolved_constraints_rejects_hours_per_day_zero():
     [
         (CanalConstraints, {"start": "Oxford"}),
         (ResolvedConstraints, {"start_uid": 1, "end_uid": 2}),
-        (
-            CanalRouteRequest,
-            {"start_uid": 1, "end_uid": 2, "artifact_revision": "revision-test"},
-        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -162,35 +150,6 @@ def test_route_trust_boundaries_reject_nonfinite_hours_and_dimensions(model, pay
 
     valid = model.model_validate(payload)
     assert valid.days is None
-
-
-def test_network_request_requires_bounded_schedule():
-    assert CanalNetworkRequest(days=365, hours_per_day=1).days == 365
-    assert CanalNetworkRequest(days=1, hours_per_day=24).hours_per_day == 24
-    with pytest.raises(ValidationError):
-        CanalNetworkRequest(days=366, hours_per_day=1)
-    with pytest.raises(ValidationError):
-        CanalNetworkRequest(days=1, hours_per_day=25)
-    with pytest.raises(ValidationError):
-        CanalNetworkRequest.model_validate({"days": 1})
-
-
-def test_network_request_validates_selected_base_identity():
-    request = CanalNetworkRequest(days=1, hours_per_day=6, selected_base_identity=None)
-    assert request.selected_base_identity is None
-    with pytest.raises(ValidationError):
-        CanalNetworkRequest(days=1, hours_per_day=6, selected_base_identity="")
-
-
-@pytest.mark.parametrize(
-    "field",
-    ["hours_per_day", "boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"],
-)
-def test_network_request_rejects_nonfinite_hours_and_dimensions(field):
-    payload = {"days": 1, "hours_per_day": 6, field: float("inf")}
-
-    with pytest.raises(ValidationError):
-        CanalNetworkRequest.model_validate(payload)
 
 
 def test_canal_constraints_rejects_days_zero():

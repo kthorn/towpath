@@ -27,8 +27,8 @@ from pound.schemas import (
     NearbyPlacesRequest,
     ViewportPlacesRequest,
 )
-from pound.web.boat_hire import load_boat_hire_seeds
-from pound.web.places import (
+from pound_web.boat_hire import load_boat_hire_seeds
+from pound_web.places import (
     MAX_PLACES_QUERY_WORK,
     PlacesIndex,
     PlacesQueryStats,

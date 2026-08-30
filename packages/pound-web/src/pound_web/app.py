@@ -12,17 +12,17 @@ from fastapi.exception_handlers import (  # pyright: ignore[reportMissingImports
 )
 from fastapi.exceptions import RequestValidationError  # pyright: ignore[reportMissingImports]
 from fastapi.responses import FileResponse, JSONResponse  # pyright: ignore[reportMissingImports]
-from starlette.concurrency import run_in_threadpool  # pyright: ignore[reportMissingImports]
-from starlette.staticfiles import StaticFiles  # pyright: ignore[reportMissingImports]
-
 from pound.artifact import InvalidArtifactError, RuntimeArtifact, load_artifact
 from pound.catalog.artifact import load_catalog
 from pound.catalog.spatial import CatalogSpatialIndex
 from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
-from pound.web.api import router as api_router
-from pound.web.boat_hire import load_boat_hire_seeds, snap_boat_hire_bases
-from pound.web.config import WebSettings
-from pound.web.places import MAX_PLACES_RESULTS, PlacesIndex
+from starlette.concurrency import run_in_threadpool  # pyright: ignore[reportMissingImports]
+from starlette.staticfiles import StaticFiles  # pyright: ignore[reportMissingImports]
+
+from pound_web.api import router as api_router
+from pound_web.boat_hire import load_boat_hire_seeds, snap_boat_hire_bases
+from pound_web.config import WebSettings
+from pound_web.places import MAX_PLACES_RESULTS, PlacesIndex
 
 
 def _load_web_artifact(settings: WebSettings) -> RuntimeArtifact:

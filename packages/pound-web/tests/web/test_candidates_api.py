@@ -5,12 +5,12 @@ from unittest.mock import patch
 import networkx as nx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pound.web.api import CanalCandidatesRequest
-from pound.web.app import create_app
-from pound.web.config import WebSettings
+from pound_web.api import CanalCandidatesRequest
+from pound_web.app import create_app
+from pound_web.config import WebSettings
 
-from tests.fixtures import write_runtime_artifact as save_artifact
-from tests.web.conftest import artifact_metadata, write_boat_hire_enrichment
+from .conftest import artifact_metadata, write_boat_hire_enrichment
+from .fixtures import write_runtime_artifact as save_artifact
 
 
 def test_candidate_http_model_has_contract_name():
@@ -32,8 +32,8 @@ def test_candidates_returns_named_sorted_points_with_revision(web_client: TestCl
 def test_candidates_uses_runtime_tuning(web_client: TestClient):
     app = cast(FastAPI, web_client.app)
     with (
-        patch("pound.web.api.nearest_coord_candidates", return_value=[]) as nearest,
-        patch("pound.web.api.select_spaced_candidates", return_value=[]) as spaced,
+        patch("pound_web.api.nearest_coord_candidates", return_value=[]) as nearest,
+        patch("pound_web.api.select_spaced_candidates", return_value=[]) as spaced,
     ):
         response = web_client.post("/api/canal-candidates", json={"lat": 51, "lon": -1})
 

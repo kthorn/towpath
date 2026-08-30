@@ -4,13 +4,6 @@ import threading
 from collections import OrderedDict
 
 from fastapi import APIRouter, HTTPException, Request  # pyright: ignore[reportMissingImports]
-from pydantic import (  # pyright: ignore[reportMissingImports]
-    BaseModel,
-    ConfigDict,
-    Field,
-    FiniteFloat,
-)
-
 from pound.models import RETAINED_POI_KINDS
 from pound.route.candidates import nearest_coord_candidates, select_spaced_candidates
 from pound.route.cost import resolve_movable_bridge_delay
@@ -27,10 +20,17 @@ from pound.schemas import (
     RoutePoisRequest,
     RoutePoisResponse,
 )
-from pound.web.boat_hire import select_boat_hire_reachability
-from pound.web.config import MAX_NETWORK_TRAVEL_MINUTES
-from pound.web.network import prepare_network_geometry
-from pound.web.places import PlacesQueryBudgetError, PlacesResultLimitError
+from pydantic import (  # pyright: ignore[reportMissingImports]
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+)
+
+from pound_web.boat_hire import select_boat_hire_reachability
+from pound_web.config import MAX_NETWORK_TRAVEL_MINUTES
+from pound_web.network import prepare_network_geometry
+from pound_web.places import PlacesQueryBudgetError, PlacesResultLimitError
 
 # ponytail: process-global LRUs of computed reachability geometry (~2 MB per union
 # entry); per-app caches if multi-artifact apps ever share this process.

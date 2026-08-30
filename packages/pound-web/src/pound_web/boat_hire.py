@@ -9,7 +9,6 @@ from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 import networkx as nx
-
 from pound.route.cost import is_eligible, traversal_time_min
 
 BOAT_HIRE_ENRICHMENT_FIELDS: tuple[str, ...] = (

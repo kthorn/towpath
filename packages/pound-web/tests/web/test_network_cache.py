@@ -4,10 +4,10 @@ from collections.abc import Generator
 from pathlib import Path
 
 import networkx as nx
-import pound.web.api as api_module
+import pound_web.api as api_module
 import pytest
 from fastapi.testclient import TestClient
-from pound.web.boat_hire import BOAT_HIRE_ENRICHMENT_FIELDS
+from pound_web.boat_hire import BOAT_HIRE_ENRICHMENT_FIELDS
 
 from .conftest import build_web_client
 

@@ -7,12 +7,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pound.graph.spatial import GraphSpatialIndex
-from pound.web.app import create_app
-from pound.web.boat_hire import snap_boat_hire_bases
-from pound.web.config import WebSettings
+from pound_web.app import create_app
+from pound_web.boat_hire import snap_boat_hire_bases
+from pound_web.config import WebSettings
 
-from tests.fixtures import write_runtime_artifact as save_artifact
-from tests.web.conftest import artifact_metadata, write_boat_hire_enrichment
+from .conftest import artifact_metadata, write_boat_hire_enrichment
+from .fixtures import write_runtime_artifact as save_artifact
 
 
 def _two_component_graph(route_graph: nx.Graph) -> nx.Graph:
@@ -88,9 +88,9 @@ def test_network_filters_display_without_filtering_routing_graph(
     expected_edges = set(graph.edges)
 
     with (
-        patch("pound.web.app.GraphSpatialIndex", wraps=GraphSpatialIndex) as build_index,
+        patch("pound_web.app.GraphSpatialIndex", wraps=GraphSpatialIndex) as build_index,
         patch(
-            "pound.web.app.snap_boat_hire_bases",
+            "pound_web.app.snap_boat_hire_bases",
             wraps=snap_boat_hire_bases,
         ) as snap_bases,
         TestClient(create_app(settings)) as client,

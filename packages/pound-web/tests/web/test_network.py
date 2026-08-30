@@ -1,6 +1,6 @@
 import networkx as nx
 import pytest
-from pound.web.network import prepare_network_geometry
+from pound_web.network import prepare_network_geometry
 
 
 @pytest.fixture

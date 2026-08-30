@@ -1,9 +1,9 @@
 from typing import cast
 
-import pytest  # pyright: ignore[reportMissingImports]
-from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
-from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
-from pound.web.app import create_app
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from pound_web.app import create_app
 
 
 def _network_request(**changes: object) -> dict[str, object]:
@@ -125,7 +125,7 @@ def test_network_uses_half_the_schedule_as_outward_return_trip_reach(
         captured.update(kwargs)
         return graph.edge_subgraph(())
 
-    monkeypatch.setattr("pound.web.api.select_boat_hire_reachability", select)
+    monkeypatch.setattr("pound_web.api.select_boat_hire_reachability", select)
 
     response = web_client.post("/api/canal-network", json=_network_request())
 
@@ -190,7 +190,7 @@ def test_network_geometry_failure_is_nonfatal_to_routing(
     def fail(_graph):
         raise ValueError("network geometry failed")
 
-    monkeypatch.setattr("pound.web.api.prepare_network_geometry", fail)
+    monkeypatch.setattr("pound_web.api.prepare_network_geometry", fail)
     with TestClient(create_app(settings)) as client:
         response = client.post("/api/canal-network", json=_network_request())
         route_response = client.post(

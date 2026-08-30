@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Literal, cast
 
 import networkx as nx
-import pound.web.places as places
+import pound_web.places as places
 import pytest  # pyright: ignore[reportMissingImports]
 from pound.catalog.metadata import CatalogMetadata
 from pound.catalog.models import CatalogPlace
@@ -18,7 +18,7 @@ from pound.schemas import (
     PlacesQueryPolicy,
     ViewportPlacesRequest,
 )
-from pound.web.boat_hire import BoatHireSeed
+from pound_web.boat_hire import BoatHireSeed
 from shapely import wkb
 from shapely.geometry import LineString, Point
 

@@ -5,15 +5,16 @@ import networkx as nx
 import pytest
 from pound.catalog.spatial import CatalogSpatialIndex
 from pound.graph.spatial import GraphSpatialIndex
-from pound.web.boat_hire import load_boat_hire_seeds
-from pound.web.places import PlacesIndex
-from tests.web.conftest import catalog_place, write_boat_hire_enrichment
+from pound_web.boat_hire import load_boat_hire_seeds
+from pound_web.places import PlacesIndex
 
 from scripts.catalog_query_benchmark import (
     MAX_QUERY_WORK,
     build_benchmark_cases,
     result_payload,
 )
+
+from .conftest import catalog_place, write_boat_hire_enrichment
 
 
 class _CandidateCounter:
