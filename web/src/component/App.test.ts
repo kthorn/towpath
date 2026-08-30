@@ -128,11 +128,9 @@ function setup(
 		enabledPoiKinds: [],
 		routePois: null,
 		poiError: null,
-		catalog: { enabledKinds: [], places: [], loading: false, error: null },
-		catalogRevision: null,
-		catalogStatus: "unknown",
-		catalogMatchingCount: 0,
-		catalogOverCap: false,
+		places: { enabledKinds: [], places: [], loading: false, error: null },
+		placesStatus: "unknown",
+		placesResultLimitExceeded: false,
 	};
 	const inner = writable(state);
 	const calls: Array<{
@@ -150,9 +148,9 @@ function setup(
 		togglePoiKind: vi.fn(),
 		selectDay: vi.fn(),
 		refreshRoutePois: vi.fn(async () => {}),
-		toggleCatalogKind: vi.fn(),
-		toggleCatalogKinds: vi.fn(),
-		refreshCatalogPlaces: vi.fn(async () => {}),
+		togglePlaceKind: vi.fn(),
+		togglePlaceKinds: vi.fn(),
+		refreshPlaces: vi.fn(async () => {}),
 		reset: vi.fn(),
 		setNetworkRequest: vi.fn(),
 		setMapView: vi.fn(),
@@ -169,7 +167,7 @@ function setup(
 		network: vi.fn(),
 		hireBases: vi.fn(),
 		fitNetwork: vi.fn(),
-		catalogPlaces: vi.fn(),
+		places: vi.fn(),
 		pois: vi.fn(),
 		locks: vi.fn(),
 		day: vi.fn(),
@@ -605,7 +603,7 @@ describe("trip planning interface", () => {
 		await fireEvent.click(dayButton);
 		await fireEvent.click(dayButton);
 
-		expect(store.toggleCatalogKinds).toHaveBeenCalledWith(
+		expect(store.togglePlaceKinds).toHaveBeenCalledWith(
 			["pub", "cafe", "restaurant"],
 			{ basis: "route", radius_m: 2_000 },
 		);
@@ -716,7 +714,7 @@ describe("trip planning interface", () => {
 			network: vi.fn(),
 			hireBases: vi.fn(),
 			fitNetwork: vi.fn(),
-			catalogPlaces: vi.fn(),
+			places: vi.fn(),
 			pois: vi.fn(),
 			locks: vi.fn(),
 			day: vi.fn(),
@@ -734,7 +732,7 @@ describe("trip planning interface", () => {
 			network: vi.fn(),
 			hireBases: vi.fn(),
 			fitNetwork: vi.fn(),
-			catalogPlaces: vi.fn(),
+			places: vi.fn(),
 			pois: vi.fn(),
 			locks: vi.fn(),
 			day: vi.fn(),

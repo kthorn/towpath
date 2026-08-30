@@ -9,6 +9,7 @@ import type {
   TransferResult,
   TransferRouter,
 } from '../google/contracts';
+import { PoundApiError } from '../api';
 import { rankCandidates, type RankedCandidate } from '../planner';
 import type {
   BoatHireBase,
@@ -18,10 +19,10 @@ import type {
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
-  CatalogPlace,
-  CatalogPlacesRequest,
-  CatalogPlacesResponse,
-  CatalogQueryPolicy,
+  PlaceResponse,
+  PlacesRequest,
+  PlacesResponse,
+  PlacesQueryPolicy,
   GeoJSONLineString,
   HealthResponse,
   LatLon,
@@ -36,7 +37,7 @@ interface PoundApi {
   canalRoute(request: CanalRouteRequest): Promise<CanalRouteResponse>;
   routePois(request: RoutePoisRequest): Promise<RoutePoisResponse>;
   health?: () => Promise<HealthResponse>;
-  catalogPlaces?: (request: CatalogPlacesRequest) => Promise<CatalogPlacesResponse>;
+  places?: (request: PlacesRequest) => Promise<PlacesResponse>;
 }
 
 export interface EndpointState {
@@ -52,9 +53,9 @@ export interface EndpointState {
   error: string | null;
 }
 
-export interface CatalogLayerState {
+export interface PlacesLayerState {
   enabledKinds: string[];
-  places: CatalogPlace[];
+  places: PlaceResponse[];
   loading: boolean;
   error: string | null;
 }
@@ -71,11 +72,9 @@ export interface TripState {
   enabledPoiKinds: string[];
   routePois: RoutePoisResponse | null;
   poiError: string | null;
-  catalog: CatalogLayerState;
-  catalogRevision: string | null;
-  catalogStatus: HealthResponse['catalog_status'] | 'unknown';
-  catalogMatchingCount: number;
-  catalogOverCap: boolean;
+  places: PlacesLayerState;
+  placesStatus: HealthResponse['places_status'] | 'unknown';
+  placesResultLimitExceeded: boolean;
 }
 
 export type CanalConstraints = Omit<CanalRouteRequest, 'start_uid' | 'end_uid' | 'artifact_revision'>;
@@ -94,9 +93,9 @@ export interface TripStore extends Readable<TripState> {
   togglePoiKind(kind: string): void;
   selectDay(day: number | null): void;
   refreshRoutePois(bounds: MapBounds): Promise<void>;
-  toggleCatalogKind(kind: string, policy?: CatalogQueryPolicy): void;
-  toggleCatalogKinds(kinds: string[], policy: CatalogQueryPolicy): void;
-  refreshCatalogPlaces(bounds: MapBounds): Promise<void>;
+  togglePlaceKind(kind: string, policy?: PlacesQueryPolicy): void;
+  togglePlaceKinds(kinds: string[], policy: PlacesQueryPolicy): void;
+  refreshPlaces(bounds: MapBounds): Promise<void>;
   reset(): void;
   setNetworkRequest(request: CanalNetworkRequest): void;
   setMapView(mapView: MapView | undefined): void;
@@ -109,6 +108,14 @@ const emptyEndpoint = (): EndpointState => ({
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const isPlace = (value: SelectedPlace | LatLon): value is SelectedPlace => 'coordinate' in value;
+const isPoundApiError = (value: unknown, status: number, code?: string): value is PoundApiError =>
+  value instanceof PoundApiError && value.status === status && (code === undefined || value.code === code);
+const placeKey = (place: PlaceResponse): string => {
+  const provenance = place.provenance;
+  return provenance.source === 'osm'
+    ? JSON.stringify(['osm', provenance.osm_type, provenance.osm_id])
+    : JSON.stringify(['boat_hire', provenance.provider_id, provenance.location_id]);
+};
 
 export function createTripStore(dependencies: {
   poundApi: PoundApi;
@@ -121,8 +128,8 @@ export function createTripStore(dependencies: {
   const initial: TripState = {
     origin: emptyEndpoint(), destination: emptyEndpoint(), canalRoute: null, routeError: null, routing: false,
     selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null, networkError: null, hasNetworkOverlay: false,
-    catalog: { enabledKinds: [], places: [], loading: false, error: null },
-    catalogRevision: null, catalogStatus: 'unknown', catalogMatchingCount: 0, catalogOverCap: false,
+    places: { enabledKinds: [], places: [], loading: false, error: null },
+    placesStatus: 'unknown', placesResultLimitExceeded: false,
   };
   const inner = writable(initial);
   let state = initial;
@@ -131,7 +138,7 @@ export function createTripStore(dependencies: {
   let routeGeneration = 0;
   let routeRequest = 0;
   let poiRequest = 0;
-  let catalogRequest = 0;
+  let placesRequest = 0;
   let desiredNetworkRequest: CanalNetworkRequest | undefined;
   let desiredNetworkGeneration = 0;
   let mapAttachmentGeneration = mapView ? 1 : 0;
@@ -142,9 +149,10 @@ export function createTripStore(dependencies: {
   let viewportUnsubscribe: (() => void) | undefined;
   let lastViewportBounds: MapBounds | undefined;
   let poiRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-  let catalogRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-  let catalogHealthPromise: Promise<HealthResponse> | undefined;
-  const catalogPolicies = new Map<string, CatalogQueryPolicy>();
+  let placesRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let placesHealthPromise: Promise<HealthResponse> | undefined;
+  let placesAvailabilityGeneration = 0;
+  const placesPolicies = new Map<string, PlacesQueryPolicy>();
 
   const cancelScheduledPoiRefresh = () => {
     if (poiRefreshTimer === undefined) return;
@@ -160,18 +168,18 @@ export function createTripStore(dependencies: {
       void refreshRoutePois(bounds);
     }, 100);
   };
-  const cancelScheduledCatalogRefresh = () => {
-    if (catalogRefreshTimer === undefined) return;
-    clearTimeout(catalogRefreshTimer);
-    catalogRefreshTimer = undefined;
+  const cancelScheduledPlacesRefresh = () => {
+    if (placesRefreshTimer === undefined) return;
+    clearTimeout(placesRefreshTimer);
+    placesRefreshTimer = undefined;
   };
-  const scheduleCatalogRefresh = (bounds: MapBounds) => {
+  const schedulePlacesRefresh = (bounds: MapBounds) => {
     lastViewportBounds = bounds;
-    cancelScheduledCatalogRefresh();
-    if (!state.catalog.enabledKinds.length) return;
-    catalogRefreshTimer = setTimeout(() => {
-      catalogRefreshTimer = undefined;
-      void refreshCatalogPlaces(bounds);
+    cancelScheduledPlacesRefresh();
+    if (!state.places.enabledKinds.length) return;
+    placesRefreshTimer = setTimeout(() => {
+      placesRefreshTimer = undefined;
+      void refreshPlaces(bounds);
     }, 100);
   };
 
@@ -246,21 +254,20 @@ export function createTripStore(dependencies: {
     desiredNetworkGeneration += 1;
     scheduleNetworkRefresh();
   };
-  const clearCatalogPlaces = () => {
-    cancelScheduledCatalogRefresh();
-    catalogRequest += 1;
+  const clearPlaces = () => {
+    cancelScheduledPlacesRefresh();
+    placesRequest += 1;
     inner.update((current) => ({
       ...current,
-      catalog: { ...current.catalog, places: [], loading: false, error: null },
-      catalogMatchingCount: 0,
-      catalogOverCap: false,
+      places: { ...current.places, places: [], loading: false, error: null },
+      placesResultLimitExceeded: false,
     }));
-    mapCall('origin', () => mapView?.catalogPlaces([]));
+    mapCall('origin', () => mapView?.places([]));
   };
   const clearRouteOverlays = () => {
     cancelScheduledPoiRefresh();
     poiRequest += 1;
-    clearCatalogPlaces();
+    clearPlaces();
     inner.update((current) => ({
       ...current,
       selectedDay: null,
@@ -399,7 +406,7 @@ export function createTripStore(dependencies: {
         inner.update((current) => ({ ...current, routing: false, canalRoute: result }));
         mapCall('origin', () => mapView?.canal(result.geometry));
         mapCall('origin', () => mapView?.locks?.(result.locks ?? []));
-        if (state.catalog.enabledKinds.length && lastViewportBounds) scheduleCatalogRefresh(lastViewportBounds);
+        if (state.places.enabledKinds.length && lastViewportBounds) schedulePlacesRefresh(lastViewportBounds);
       }
       return result;
     } catch (error) {
@@ -414,138 +421,94 @@ export function createTripStore(dependencies: {
     return state.canalRoute?.day_geometries?.find((geometry) => geometry.day === day) ?? null;
   }
 
-  async function catalogHealth(): Promise<HealthResponse> {
-    if (!catalogHealthPromise) {
-      catalogHealthPromise = poundApi.health
+  async function placesHealth(): Promise<HealthResponse> {
+    if (!placesHealthPromise) {
+      placesHealthPromise = poundApi.health
         ? poundApi.health()
-        : Promise.reject(new Error('Catalog health unavailable'));
+        : Promise.reject(new Error('Places health unavailable'));
     }
+    const healthGeneration = placesAvailabilityGeneration;
     try {
-      const health = await catalogHealthPromise;
+      const health = await placesHealthPromise;
+      if (healthGeneration !== placesAvailabilityGeneration) return health;
       inner.update((current) => ({
         ...current,
-        catalogRevision: health.catalog_revision,
-        catalogStatus: health.catalog_status,
+        placesStatus: health.places_status,
       }));
       return health;
     } catch (error) {
-      catalogHealthPromise = undefined;
+      placesHealthPromise = undefined;
+      if (healthGeneration !== placesAvailabilityGeneration) throw error;
       inner.update((current) => ({
         ...current,
-        catalogStatus: 'unavailable',
-        catalog: { ...current.catalog, loading: false, error: message(error) },
+        placesStatus: 'unavailable',
+        places: { ...current.places, loading: false, error: current.places.error ?? message(error) },
       }));
       throw error;
     }
   }
 
-  async function refreshCatalogPlaces(bounds: MapBounds): Promise<void> {
-    cancelScheduledCatalogRefresh();
+  async function refreshPlaces(bounds: MapBounds): Promise<void> {
+    cancelScheduledPlacesRefresh();
     lastViewportBounds = bounds;
     const route = state.canalRoute;
-    const kinds = [...state.catalog.enabledKinds];
-    if (!route || !kinds.length || !poundApi.catalogPlaces) return;
+    const kinds = [...state.places.enabledKinds];
+    if (!route || !kinds.length || !poundApi.places || state.placesStatus === 'unavailable') return;
 
-    const requestSequence = ++catalogRequest;
+    const requestSequence = ++placesRequest;
     const routeGeometry = route.geometry;
     inner.update((current) => ({
       ...current,
-      catalog: { ...current.catalog, places: [], loading: true, error: null },
-      catalogMatchingCount: 0,
-      catalogOverCap: false,
+      places: { ...current.places, places: [], loading: true, error: null },
+      placesResultLimitExceeded: false,
     }));
-    mapCall('origin', () => mapView?.catalogPlaces([]));
-
-    let health: HealthResponse;
-    try {
-      health = await catalogHealth();
-    } catch {
-      if (requestSequence === catalogRequest && route === state.canalRoute) {
-        inner.update((current) => ({ ...current, catalog: { ...current.catalog, loading: false } }));
-      }
-      return;
-    }
-    if (requestSequence !== catalogRequest || route !== state.canalRoute) return;
-    if (health.catalog_status !== 'available' || !health.catalog_revision) {
-      inner.update((current) => ({
-        ...current,
-        catalog: { ...current.catalog, loading: false, error: 'Catalog unavailable' },
-      }));
-      return;
-    }
+    mapCall('origin', () => mapView?.places([]));
 
     const day = state.selectedDay;
     const dayGeometry = selectedDayGeometry(day);
-    const groups = new Map<string, { kinds: string[]; policy: CatalogQueryPolicy }>();
+    const groups = new Map<string, { kinds: string[]; policy: PlacesQueryPolicy }>();
     for (const kind of kinds) {
-      const policy = catalogPolicies.get(kind) ?? { basis: 'route', radius_m: 2_000 };
+      const policy = placesPolicies.get(kind) ?? { basis: 'route', radius_m: 2_000 };
       const key = JSON.stringify(policy);
       const group = groups.get(key);
       if (group) group.kinds.push(kind);
       else groups.set(key, { kinds: [kind], policy });
     }
 
-    async function queryCatalog(health: HealthResponse, canRetry: boolean): Promise<void> {
-      if (requestSequence !== catalogRequest || route !== state.canalRoute) return;
-      if (health.catalog_status !== 'available' || !health.catalog_revision) {
-        inner.update((current) => ({
-          ...current,
-          catalog: { ...current.catalog, loading: false, error: 'Catalog unavailable' },
-        }));
-        return;
-      }
-      const requests = [...groups.values()].map(({ kinds: groupKinds, policy }) => ({
-        catalog_revision: health.catalog_revision!,
-        kinds: groupKinds,
-        bounds,
-        route_geometry: routeGeometry,
-        ...(dayGeometry ? { day_geometry: dayGeometry.geometry } : {}),
-        day,
-        policy,
-      } satisfies CatalogPlacesRequest));
-      const responses = await Promise.allSettled(requests.map((request) => poundApi.catalogPlaces!(request)));
-      if (requestSequence !== catalogRequest || route !== state.canalRoute) return;
+    const requests = [...groups.values()].map(({ kinds: groupKinds, policy }) => ({
+      mode: 'viewport' as const,
+      kinds: groupKinds,
+      bounds,
+      route_geometry: routeGeometry,
+      ...(dayGeometry ? { day_geometry: dayGeometry.geometry } : {}),
+      policy,
+    } satisfies PlacesRequest));
+    const responses = await Promise.allSettled(requests.map((request) => poundApi.places!(request)));
+    if (requestSequence !== placesRequest || route !== state.canalRoute) return;
 
-      const failures = responses.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-      const revisionMismatch = canRetry && failures.some(({ reason }) => {
-        if (typeof reason !== 'object' || reason === null) return false;
-        const error = reason as { status?: unknown; code?: unknown };
-        return error.status === 409 && error.code === 'catalog_revision_mismatch';
-      });
-      if (revisionMismatch) {
-        catalogHealthPromise = undefined;
-        inner.update((current) => ({ ...current, catalogRevision: null, catalogStatus: 'unknown' }));
-        try {
-          await queryCatalog(await catalogHealth(), false);
-        } catch {
-          if (requestSequence === catalogRequest && route === state.canalRoute) {
-            inner.update((current) => ({ ...current, catalog: { ...current.catalog, loading: false } }));
-          }
-        }
-        return;
+    const placesByKey = new Map<string, PlaceResponse>();
+    let resultLimited = false;
+    let firstError: unknown = null;
+    let runtimeUnavailable = false;
+    for (const result of responses) {
+      if (result.status === 'fulfilled') {
+        for (const place of result.value.places) placesByKey.set(placeKey(place), place);
+      } else if (isPoundApiError(result.reason, 413, 'places_result_limit_exceeded')) {
+        resultLimited = true;
+      } else {
+        if (isPoundApiError(result.reason, 503)) runtimeUnavailable = true;
+        if (firstError === null) firstError = result.reason;
       }
-
-      const placesByIdentity = new Map<string, CatalogPlace>();
-      let matchingCount = 0;
-      let overCap = false;
-      for (const result of responses) {
-        if (result.status !== 'fulfilled') continue;
-        matchingCount += result.value.matching_count;
-        overCap ||= result.value.over_cap;
-        for (const place of result.value.places) placesByIdentity.set(place.identity, place);
-      }
-      const error = failures.length ? message(failures[0].reason) : null;
-      const places = [...placesByIdentity.values()];
-      inner.update((current) => ({
-        ...current,
-        catalog: { ...current.catalog, places, loading: false, error },
-        catalogMatchingCount: matchingCount,
-        catalogOverCap: overCap,
-      }));
-      mapCall('origin', () => mapView?.catalogPlaces(places));
     }
-
-    await queryCatalog(health, true);
+    const places = [...placesByKey.values()];
+    if (runtimeUnavailable) placesAvailabilityGeneration += 1;
+    inner.update((current) => ({
+      ...current,
+      placesStatus: runtimeUnavailable ? 'unavailable' : current.placesStatus,
+      places: { ...current.places, places, loading: false, error: firstError === null ? null : message(firstError) },
+      placesResultLimitExceeded: resultLimited,
+    }));
+    mapCall('origin', () => mapView?.places(places));
   }
 
   async function refreshRoutePois(bounds: MapBounds): Promise<void> {
@@ -589,41 +552,40 @@ export function createTripStore(dependencies: {
     if (kinds.length && lastViewportBounds) schedulePoiRefresh(lastViewportBounds);
   }
 
-  function toggleCatalogKinds(kinds: string[], policy: CatalogQueryPolicy): void {
-    cancelScheduledCatalogRefresh();
-    const allEnabled = kinds.every((kind) => state.catalog.enabledKinds.includes(kind));
+  function togglePlaceKinds(kinds: string[], policy: PlacesQueryPolicy): void {
+    cancelScheduledPlacesRefresh();
+    const allEnabled = kinds.every((kind) => state.places.enabledKinds.includes(kind));
     const enabledKinds = allEnabled
-      ? state.catalog.enabledKinds.filter((kind) => !kinds.includes(kind))
-      : [...state.catalog.enabledKinds, ...kinds.filter((kind) => !state.catalog.enabledKinds.includes(kind))];
+      ? state.places.enabledKinds.filter((kind) => !kinds.includes(kind))
+      : [...state.places.enabledKinds, ...kinds.filter((kind) => !state.places.enabledKinds.includes(kind))];
     for (const kind of kinds) {
-      if (allEnabled) catalogPolicies.delete(kind);
-      else catalogPolicies.set(kind, policy);
+      if (allEnabled) placesPolicies.delete(kind);
+      else placesPolicies.set(kind, policy);
     }
-    catalogRequest += 1;
+    placesRequest += 1;
     inner.update((current) => ({
       ...current,
-      catalog: { ...current.catalog, enabledKinds },
-      catalogMatchingCount: 0,
-      catalogOverCap: false,
+      places: { ...current.places, enabledKinds },
+      placesResultLimitExceeded: false,
     }));
-    clearCatalogPlaces();
-    if (enabledKinds.length && lastViewportBounds) scheduleCatalogRefresh(lastViewportBounds);
+    clearPlaces();
+    if (enabledKinds.length && lastViewportBounds) schedulePlacesRefresh(lastViewportBounds);
   }
 
-  function toggleCatalogKind(kind: string, policy: CatalogQueryPolicy = { basis: 'route', radius_m: 2_000 }): void {
-    toggleCatalogKinds([kind], policy);
+  function togglePlaceKind(kind: string, policy: PlacesQueryPolicy = { basis: 'route', radius_m: 2_000 }): void {
+    togglePlaceKinds([kind], policy);
   }
 
   function selectDay(day: number | null): void {
     cancelScheduledPoiRefresh();
-    cancelScheduledCatalogRefresh();
+    cancelScheduledPlacesRefresh();
     poiRequest += 1;
     inner.update((current) => ({ ...current, selectedDay: day, routePois: null, poiError: null }));
-    clearCatalogPlaces();
+    clearPlaces();
     mapCall('origin', () => mapView?.pois?.([]));
     mapCall('origin', () => mapView?.day?.(selectedDayGeometry(day)));
     if (state.enabledPoiKinds.length && lastViewportBounds) schedulePoiRefresh(lastViewportBounds);
-    if (state.catalog.enabledKinds.length && lastViewportBounds) scheduleCatalogRefresh(lastViewportBounds);
+    if (state.places.enabledKinds.length && lastViewportBounds) schedulePlacesRefresh(lastViewportBounds);
   }
 
   function reset(): void {
@@ -632,17 +594,17 @@ export function createTripStore(dependencies: {
     routeGeneration += 1;
     routeRequest += 1;
     poiRequest += 1;
-    catalogRequest += 1;
+    placesRequest += 1;
     cancelScheduledPoiRefresh();
-    cancelScheduledCatalogRefresh();
-    catalogPolicies.clear();
+    cancelScheduledPlacesRefresh();
+    placesPolicies.clear();
     const networkError = state.networkError;
     const hasNetworkOverlay = state.hasNetworkOverlay;
     inner.set({
       ...initial,
       origin: emptyEndpoint(),
       destination: emptyEndpoint(),
-      catalog: { ...initial.catalog },
+      places: { ...initial.places },
       networkError,
       hasNetworkOverlay,
     });
@@ -655,7 +617,7 @@ export function createTripStore(dependencies: {
     mapCall('origin', () => mapView?.day?.(null), false);
     mapCall('origin', () => mapView?.locks?.([]), false);
     mapCall('origin', () => mapView?.pois?.([]), false);
-    mapCall('origin', () => mapView?.catalogPlaces([]), false);
+    mapCall('origin', () => mapView?.places([]), false);
     const view = mapView;
     const attachmentGeneration = mapAttachmentGeneration;
     if (successfulNetwork && view && isCurrentMapAttachment(view, attachmentGeneration)) {
@@ -663,11 +625,11 @@ export function createTripStore(dependencies: {
     }
   }
 
-  if (poundApi.health) void catalogHealth().catch(() => {});
+  if (poundApi.health) void placesHealth().catch(() => {});
 
   return {
     subscribe: inner.subscribe, setEndpointCoordinate, selectCandidate, confirmGeometricFallback,
-    planCanalRoute, togglePoiKind, toggleCatalogKind, toggleCatalogKinds, selectDay, refreshRoutePois, refreshCatalogPlaces,
+    planCanalRoute, togglePoiKind, togglePlaceKind, togglePlaceKinds, selectDay, refreshRoutePois, refreshPlaces,
     reset, setNetworkRequest,
     setMapView(value) {
       cancelScheduledPoiRefresh();
@@ -697,12 +659,12 @@ export function createTripStore(dependencies: {
       mapCall('origin', () => mapView?.locks?.(state.canalRoute?.locks ?? []));
       mapCall('origin', () => mapView?.day?.(selectedDayGeometry(state.selectedDay)));
       mapCall('origin', () => mapView?.pois?.(state.routePois?.pois ?? []));
-      mapCall('origin', () => mapView?.catalogPlaces(state.catalog.places));
+      mapCall('origin', () => mapView?.places(state.places.places));
       try {
         viewportUnsubscribe = mapView.onViewportIdle?.((bounds) => {
           if (state.enabledPoiKinds.length) schedulePoiRefresh(bounds);
-          if (state.catalog.enabledKinds.length) scheduleCatalogRefresh(bounds);
-          if (!state.enabledPoiKinds.length && !state.catalog.enabledKinds.length) lastViewportBounds = bounds;
+          if (state.places.enabledKinds.length) schedulePlacesRefresh(bounds);
+          if (!state.enabledPoiKinds.length && !state.places.enabledKinds.length) lastViewportBounds = bounds;
         });
       } catch (error) {
         warn('origin', `Map display failed: ${message(error)}`);

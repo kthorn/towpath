@@ -6,7 +6,6 @@ from pound.catalog.manifest import (
     CATALOG_METADATA_KEYS,
     MAX_CATALOG_KINDS,
     MAX_CATALOG_RADIUS_M,
-    MAX_CATALOG_RESULTS,
 )
 
 __all__ = [
@@ -14,7 +13,6 @@ __all__ = [
     "CATALOG_METADATA_KEYS",
     "MAX_CATALOG_KINDS",
     "MAX_CATALOG_RADIUS_M",
-    "MAX_CATALOG_RESULTS",
     "CatalogInventory",
     "inventory_pbf",
 ]

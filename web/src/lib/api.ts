@@ -5,9 +5,9 @@ import type {
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
-  CatalogPlacesRequest,
-  CatalogPlacesResponse,
   HealthResponse,
+  PlacesRequest,
+  PlacesResponse,
   PoundApiErrorDetail,
   RoutePoisRequest,
   RoutePoisResponse,
@@ -89,8 +89,8 @@ export function createPoundApi(fetchFn: typeof fetch = fetch) {
     routePois(request: RoutePoisRequest): Promise<RoutePoisResponse> {
       return postJson(fetchFn, '/api/route-pois', request);
     },
-    catalogPlaces(request: CatalogPlacesRequest): Promise<CatalogPlacesResponse> {
-      return postJson(fetchFn, '/api/catalog-places', request);
+    places(request: PlacesRequest): Promise<PlacesResponse> {
+      return postJson(fetchFn, '/api/places', request);
     },
   };
 }

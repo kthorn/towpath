@@ -1,9 +1,9 @@
 <script lang="ts">
-  import type { CatalogQueryPolicy } from '../lib/types';
+  import type { PlacesQueryPolicy } from '../lib/types';
   import type { TripStore } from '../lib/stores/trip';
 
   let { store }: { store: TripStore } = $props();
-  const layers: Array<{ label: string; kinds: string[]; policy: CatalogQueryPolicy }> = [
+  const layers: Array<{ label: string; kinds: string[]; policy: PlacesQueryPolicy }> = [
     {
       label: 'Attractions',
       kinds: ['museum', 'gallery', 'historic_site', 'garden', 'wildlife_attraction', 'landmark'],
@@ -23,7 +23,7 @@
   ];
 
   function toggleLayer(layer: typeof layers[number]) {
-    store.toggleCatalogKinds(layer.kinds, layer.policy);
+    store.togglePlaceKinds(layer.kinds, layer.policy);
   }
 </script>
 
@@ -34,24 +34,24 @@
       <label>
         <input
           type="checkbox"
-          disabled={$store.catalogStatus === 'unavailable'}
-          checked={layer.kinds.every((kind) => $store.catalog.enabledKinds.includes(kind))}
+          disabled={$store.placesStatus === 'unavailable'}
+          checked={layer.kinds.every((kind) => $store.places.enabledKinds.includes(kind))}
           onchange={() => toggleLayer(layer)}
         />
         {layer.label}
       </label>
     {/each}
   </div>
-  {#if $store.catalogStatus === 'unavailable'}
-    <p class="layer-status" role="status">Catalog unavailable. Route planning remains available.</p>
-  {:else if $store.catalog.loading}
-    <p class="layer-status" role="status">Loading catalog places…</p>
-  {:else if $store.catalogOverCap}
-    <p class="layer-status" role="status">Zoom in to see more catalog places.</p>
-  {:else if $store.catalog.enabledKinds.length && !$store.catalog.places.length && !$store.catalog.error}
-    <p class="layer-status" role="status">No catalog places found in this view.</p>
+  {#if $store.placesStatus === 'unavailable'}
+    <p class="layer-status" role="status">Places unavailable. Route planning remains available.</p>
+  {:else if $store.places.loading}
+    <p class="layer-status" role="status">Loading places…</p>
+  {:else if $store.placesResultLimitExceeded}
+    <p class="layer-status" role="status">Zoom in to see more places.</p>
+  {:else if $store.places.enabledKinds.length && !$store.places.places.length && !$store.places.error}
+    <p class="layer-status" role="status">No places found in this view.</p>
   {/if}
-  {#if $store.catalog.error}<p class="layer-error" role="alert">Catalog layer unavailable: {$store.catalog.error}</p>{/if}
+  {#if $store.places.error}<p class="layer-error" role="alert">Places layer unavailable: {$store.places.error}</p>{/if}
   {#if $store.routePois?.zoom_in_required}<p class="layer-status" role="status">Zoom in to see route points.</p>{/if}
   {#if $store.poiError}<p class="layer-error" role="alert">Route layer unavailable: {$store.poiError}</p>{/if}
 </section>

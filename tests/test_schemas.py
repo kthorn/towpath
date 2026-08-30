@@ -1,17 +1,21 @@
-import pytest
-from pydantic import ValidationError
+import pytest  # pyright: ignore[reportMissingImports]
+from pydantic import TypeAdapter, ValidationError  # pyright: ignore[reportMissingImports]
 
 from pound import schemas
 from pound.catalog.metadata import CatalogMetadata
 from pound.schemas import (
     Amenity,
+    BoatHireProvenance,
     CanalConstraints,
     CanalRouteResponse,
-    CatalogPlaceResponse,
-    CatalogPlacesRequest,
     Coordinate,
     DayPlan,
     GeoJSONLineString,
+    GeoJSONPoint,
+    OsmProvenance,
+    PlaceResponse,
+    PlacesRequest,
+    PlacesResponse,
     ResolvedConstraints,
     RouteAccessSegment,
     RouteDayGeometry,
@@ -331,103 +335,229 @@ def test_canal_route_response_accepts_route_with_empty_legs_and_days():
     assert response.route.days == []
 
 
-def test_catalog_request_accepts_text_and_segment_geometry():
-    request = CatalogPlacesRequest.model_validate(
-        {
-            "catalog_revision": "catalog-2",
-            "kinds": ["museum"],
-            "bounds": {
-                "south": 51.0,
-                "west": -1.5,
-                "north": 52.0,
-                "east": -0.5,
-            },
-            "text": "  STRASSE  ",
-            "segment_geometry": {
-                "type": "LineString",
-                "coordinates": [[-1.2, 51.4], [-1.1, 51.5]],
-            },
-            "policy": {"basis": "segment", "radius_m": 2_000},
-        }
-    )
-
-    assert request.text == "  STRASSE  "
-    assert request.policy.basis == "segment"
-    assert request.segment_geometry is not None
-    assert request.segment_geometry.coordinates[0] == (-1.2, 51.4)
-
-
-def _catalog_request_payload(**changes):
+def _viewport_places_payload(**changes):
     payload = {
-        "catalog_revision": "catalog-2",
-        "kinds": ["museum"],
-        "bounds": {
-            "south": 51.0,
-            "west": -1.5,
-            "north": 52.0,
-            "east": -0.5,
-        },
-        "policy": {"basis": "none", "radius_m": None},
+        "mode": "viewport",
+        "kinds": ["pub"],
+        "bounds": {"south": 51.0, "west": -1.5, "north": 52.0, "east": -0.5},
+        "policy": {"basis": "none"},
     }
     payload.update(changes)
     return payload
 
 
-def test_catalog_request_rejects_overlong_text():
-    with pytest.raises(ValidationError):
-        CatalogPlacesRequest.model_validate(_catalog_request_payload(text="x" * 257))
+def _nearby_places_payload(**changes):
+    payload = {
+        "mode": "nearby",
+        "kinds": ["pub"],
+        "radius_m": 1_000.0,
+        "targets": [{"id": "stop", "geometry": {"type": "Point", "coordinates": [-1.0, 52.0]}}],
+    }
+    payload.update(changes)
+    return payload
 
 
-def test_catalog_request_rejects_segment_policy_without_geometry():
-    with pytest.raises(ValidationError, match="segment policy requires segment_geometry"):
-        CatalogPlacesRequest.model_validate(
-            _catalog_request_payload(
-                policy={"basis": "segment", "radius_m": 2_000},
-            )
-        )
-
-
-@pytest.mark.parametrize("basis", ["route", "waterway", "none"])
-def test_catalog_request_rejects_segment_geometry_for_other_policies(basis):
-    radius_m = None if basis == "none" else 2_000
-    with pytest.raises(ValidationError, match="segment_geometry requires a segment policy"):
-        CatalogPlacesRequest.model_validate(
-            _catalog_request_payload(
-                route_geometry=(
-                    {
+def test_nearby_places_request_accepts_point_and_line_targets():
+    request = TypeAdapter(PlacesRequest).validate_python(
+        {
+            "mode": "nearby",
+            "kinds": ["pub", "boat_hire"],
+            "radius_m": 1_000.0,
+            "targets": [
+                {"id": "stop", "geometry": {"type": "Point", "coordinates": [-1.0, 52.0]}},
+                {
+                    "id": "day",
+                    "geometry": {
                         "type": "LineString",
-                        "coordinates": [[-1.2, 51.4], [-1.1, 51.5]],
-                    }
-                    if basis == "route"
-                    else None
-                ),
-                segment_geometry={
-                    "type": "LineString",
-                    "coordinates": [[-1.2, 51.4], [-1.1, 51.5]],
+                        "coordinates": [[-1.0, 52.0], [-1.1, 52.1]],
+                    },
                 },
-                policy={"basis": basis, "radius_m": radius_m},
+            ],
+        }
+    )
+
+    assert request.mode == "nearby"
+    assert len(request.targets) == 2
+    assert request.targets[0].geometry.coordinates == (-1.0, 52.0)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"targets": []},
+        {"kinds": []},
+        {
+            "targets": [
+                {"id": "same", "geometry": {"type": "Point", "coordinates": [-1.0, 52.0]}},
+                {"id": "same", "geometry": {"type": "Point", "coordinates": [-1.1, 52.1]}},
+            ]
+        },
+    ],
+)
+def test_nearby_places_request_rejects_empty_or_duplicate_selection(changes):
+    payload = _nearby_places_payload()
+    payload.update(changes)
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(PlacesRequest).validate_python(payload)
+
+
+def test_viewport_places_request_requires_route_for_day_geometry():
+    payload = _viewport_places_payload(
+        day_geometry={
+            "type": "LineString",
+            "coordinates": [[-1.0, 51.0], [-1.1, 51.1]],
+        }
+    )
+
+    with pytest.raises(ValidationError, match="day_geometry"):
+        TypeAdapter(PlacesRequest).validate_python(payload)
+
+
+def test_viewport_places_request_accepts_route_without_day_geometry():
+    request = TypeAdapter(PlacesRequest).validate_python(
+        _viewport_places_payload(
+            route_geometry={
+                "type": "LineString",
+                "coordinates": [[-1.0, 51.0], [-1.1, 51.1]],
+            }
+        )
+    )
+
+    assert request.route_geometry is not None
+    assert request.day_geometry is None
+
+
+@pytest.mark.parametrize("field", ["segment_geometry", "day", "catalog_revision"])
+def test_viewport_places_request_forbids_legacy_fields(field):
+    payload = _viewport_places_payload(**{field: None})
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(PlacesRequest).validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    ("policy", "route_geometry"),
+    [
+        ({"basis": "route", "radius_m": 1_000.0}, None),
+        ({"basis": "waterway"}, None),
+        ({"basis": "none", "radius_m": 1_000.0}, None),
+    ],
+)
+def test_viewport_places_request_rejects_invalid_policy_matrix(policy, route_geometry):
+    payload = _viewport_places_payload(policy=policy, route_geometry=route_geometry)
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(PlacesRequest).validate_python(payload)
+
+
+def test_viewport_places_request_rejects_reversed_bounds():
+    with pytest.raises(ValidationError):
+        TypeAdapter(PlacesRequest).validate_python(
+            _viewport_places_payload(
+                bounds={"south": 52.0, "west": -1.5, "north": 51.0, "east": -0.5}
             )
         )
 
 
-def test_catalog_place_response_accepts_segment_distance():
-    response = CatalogPlaceResponse(
-        identity="way/42/museum",
-        kind="museum",
-        name="Canal Museum",
-        coordinate=Coordinate(lat=51.5, lon=-1.2),
-        distance_to_segment_m=25.0,
-        metadata=CatalogMetadata(name="Canal Museum"),
+def test_viewport_places_request_accepts_over_budget_span_for_runtime_validation():
+    request = TypeAdapter(PlacesRequest).validate_python(
+        _viewport_places_payload(bounds={"south": 51.0, "west": -1.5, "north": 62.0, "east": -0.5})
     )
 
-    assert response.distance_to_segment_m == 25.0
-    assert (
-        CatalogPlaceResponse(
-            identity="way/42/museum",
-            kind="museum",
-            name="Canal Museum",
-            coordinate=Coordinate(lat=51.5, lon=-1.2),
-            metadata=CatalogMetadata(name="Canal Museum"),
-        ).distance_to_segment_m
-        is None
+    assert request.mode == "viewport"
+    assert request.bounds.north - request.bounds.south == 11.0
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [[float("nan"), 52.0], [float("inf"), 52.0], [-181.0, 52.0], [-1.0, 91.0]],
+)
+def test_geojson_point_rejects_nonfinite_or_out_of_range_coordinates(coordinates):
+    with pytest.raises(ValidationError):
+        GeoJSONPoint.model_validate({"type": "Point", "coordinates": coordinates})
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [
+        [[-1.0, 52.0], [float("nan"), 52.1]],
+        [[-1.0, 52.0], [181.0, 52.1]],
+        [[-1.0, 52.0], [-1.1, 91.0]],
+    ],
+)
+def test_geojson_linestring_rejects_nonfinite_or_out_of_range_coordinates(coordinates):
+    with pytest.raises(ValidationError):
+        schemas.GeoJSONLineString.model_validate({"type": "LineString", "coordinates": coordinates})
+
+
+def test_places_request_accepts_over_budget_viewport_geometry_for_runtime_validation():
+    route_coordinates = [[-1.0, 52.0]] * 10_001
+    request = TypeAdapter(PlacesRequest).validate_python(
+        _viewport_places_payload(
+            route_geometry={"type": "LineString", "coordinates": route_coordinates},
+        )
     )
+
+    assert request.mode == "viewport"
+    assert len(request.route_geometry.coordinates) == 10_001
+
+
+def test_places_request_accepts_over_budget_nearby_geometry_for_runtime_validation():
+    line_coordinates = [[-1.0, 52.0]] * 10_001
+    request = TypeAdapter(PlacesRequest).validate_python(
+        _nearby_places_payload(
+            targets=[
+                {
+                    "id": "long-line",
+                    "geometry": {"type": "LineString", "coordinates": line_coordinates},
+                }
+            ]
+        )
+    )
+
+    assert request.mode == "nearby"
+    assert len(request.targets[0].geometry.coordinates) == 10_001
+
+
+def test_places_response_uses_structured_provenance_and_only_places():
+    osm = PlaceResponse(
+        kind="pub",
+        name="The Towpath",
+        coordinate=Coordinate(lat=52.0, lon=-1.0),
+        provenance=OsmProvenance(
+            source="osm",
+            osm_type="way",
+            osm_id=42,
+            metadata=CatalogMetadata(name="The Towpath"),
+        ),
+    )
+    hire = PlaceResponse(
+        kind="boat_hire",
+        name="Canal Basin",
+        coordinate=Coordinate(lat=52.0, lon=-1.0),
+        provenance=BoatHireProvenance(
+            source="boat_hire",
+            provider_id="provider",
+            provider_name="Provider Ltd",
+            location_id="base",
+            location_name="Canal Basin",
+        ),
+    )
+    response = PlacesResponse(places=[osm, hire])
+
+    assert response.model_dump().keys() == {"places"}
+    assert response.places[0].provenance.source == "osm"
+    assert response.places[1].provenance.source == "boat_hire"
+
+
+def test_places_response_rejects_unknown_provenance_source():
+    with pytest.raises(ValidationError):
+        PlaceResponse.model_validate(
+            {
+                "kind": "pub",
+                "name": "The Towpath",
+                "coordinate": {"lat": 52.0, "lon": -1.0},
+                "provenance": {"source": "unknown"},
+            }
+        )

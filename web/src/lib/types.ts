@@ -138,50 +138,84 @@ export interface CatalogMetadata {
   kind_details: Record<string, string>;
 }
 
-export type CatalogPolicyBasis = 'route' | 'waterway' | 'segment' | 'none';
+export type PlacesPolicyBasis = 'route' | 'waterway' | 'none';
 
-export interface CatalogQueryPolicy {
-  basis: CatalogPolicyBasis;
-  radius_m?: number;
+export interface PlacesQueryPolicy {
+  basis: PlacesPolicyBasis;
+  radius_m?: number | null;
 }
 
-export interface CatalogPlace {
-  identity: string;
-  kind: string;
-  name: string | null;
-  coordinate: LatLon;
-  waterway_distance_m: number | null;
-  distance_to_full_route_m: number | null;
-  distance_to_selected_geometry_m: number | null;
-  distance_to_segment_m: number | null;
-  metadata: CatalogMetadata;
+export interface GeoJSONPoint {
+  type: 'Point';
+  coordinates: [number, number];
 }
 
-export interface CatalogPlacesRequest {
-  catalog_revision: string;
+export interface NearbyTarget {
+  id: string;
+  geometry: GeoJSONPoint | GeoJSONLineString;
+}
+
+export interface ViewportPlacesRequest {
+  mode: 'viewport';
   kinds: string[];
   bounds: MapBounds;
   text?: string | null;
-  route_geometry?: GeoJSONLineString;
-  day_geometry?: GeoJSONLineString;
-  segment_geometry?: GeoJSONLineString;
-  day?: number | null;
-  policy: CatalogQueryPolicy;
+  route_geometry?: GeoJSONLineString | null;
+  day_geometry?: GeoJSONLineString | null;
+  policy: PlacesQueryPolicy;
 }
 
-export interface CatalogPlacesResponse {
-  catalog_revision: string;
-  places: CatalogPlace[];
-  matching_count: number;
-  over_cap: boolean;
-  day: number | null;
+export interface NearbyPlacesRequest {
+  mode: 'nearby';
+  kinds: string[];
+  text?: string | null;
+  radius_m: number;
+  targets: NearbyTarget[];
+}
+
+export type PlacesRequest = ViewportPlacesRequest | NearbyPlacesRequest;
+
+export interface OsmProvenance {
+  source: 'osm';
+  osm_type: 'node' | 'way' | 'relation';
+  osm_id: number;
+  metadata: CatalogMetadata;
+}
+
+export interface BoatHireProvenance {
+  source: 'boat_hire';
+  provider_id: string;
+  provider_name: string;
+  location_id: string;
+  location_name: string;
+  provider_url: string | null;
+  osm_url: string | null;
+  evidence_url: string | null;
+  booking_url: string | null;
+}
+
+export interface PlaceResponse {
+  kind: string;
+  name: string | null;
+  coordinate: LatLon;
+  target_id: string | null;
+  distance_to_target_m: number | null;
+  distance_to_full_route_m: number | null;
+  distance_to_selected_geometry_m: number | null;
+  waterway_distance_m: number | null;
+  provenance: OsmProvenance | BoatHireProvenance;
+}
+
+export type Place = PlaceResponse;
+
+export interface PlacesResponse {
+  places: PlaceResponse[];
 }
 
 export interface HealthResponse {
   status: string;
   artifact_revision: string;
-  catalog_revision: string | null;
-  catalog_status: 'available' | 'unavailable';
+  places_status: 'available' | 'unavailable';
 }
 
 export interface RoutePoisRequest {
