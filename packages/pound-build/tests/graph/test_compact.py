@@ -3,7 +3,10 @@ from typing import Any, cast
 import networkx as nx
 import pytest  # pyright: ignore[reportMissingImports]
 from pound.models import WaterwayKind, WayDimensions  # pyright: ignore[reportMissingImports]
-from pound_build.graph.compact import compact_graph  # pyright: ignore[reportMissingModuleSource]
+from pound_build.graph.compact import (  # pyright: ignore[reportMissingModuleSource]
+    _emit_chain,
+    compact_graph,
+)
 from pyproj import Transformer  # pyright: ignore[reportMissingImports]
 from shapely import transform
 from shapely.geometry import LineString
@@ -177,6 +180,33 @@ def test_parallel_alternative_keeps_one_deterministic_anchor():
     assert compact.edges[1, 2]["osm_way_id"] == 11
     assert compact.edges[0, 3]["osm_way_id"] == 12
     assert compact.edges[2, 3]["osm_way_id"] == 12
+
+
+def test_reversed_chain_path_keeps_canonical_edge_geometry():
+    source = nx.Graph()
+    _node(source, 2, 51.7500, -1.2600)
+    _node(source, 3, 51.7510, -1.2600)
+    _edge(source, 2, 3, geometry=[(51.7500, -1.2600), (51.7510, -1.2600)])
+    _without_coords(source)
+    compact = nx.Graph()
+
+    _emit_chain(compact, source, (3, 2), 1.0)
+
+    assert compact.edges[2, 3]["geometry"][0] == (51.7500, -1.2600)
+    assert compact.edges[2, 3]["geometry"][-1] == (51.7510, -1.2600)
+
+
+def test_malformed_chain_join_is_rejected():
+    source = nx.Graph()
+    _node(source, 0, 51.7500, -1.2600)
+    _node(source, 1, 51.7510, -1.2600)
+    _node(source, 2, 51.7520, -1.2600)
+    _edge(source, 0, 1, geometry=[(51.7500, -1.2600), (51.7600, -1.2600)])
+    _edge(source, 1, 2)
+    _without_coords(source)
+
+    with pytest.raises(ValueError, match="does not meet node 1"):
+        compact_graph(source)
 
 
 def test_node_bridge_id_is_preserved_as_edge_endpoint_state():

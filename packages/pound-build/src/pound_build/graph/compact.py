@@ -184,16 +184,29 @@ def _assembled_geometry(graph: nx.Graph, path: tuple[int, ...]) -> list[tuple[fl
         if any(len(point) != 2 for point in segment):
             raise ValueError(f"edge {(u, v)!r} has invalid geometry")
         start = (graph.nodes[u]["lat"], graph.nodes[u]["lon"])
+        end = (graph.nodes[v]["lat"], graph.nodes[v]["lon"])
         if _same_coordinate(segment[0], start):
             pass
         elif _same_coordinate(segment[-1], start):
             segment.reverse()
         else:
             raise ValueError(f"edge {(u, v)!r} geometry does not meet node {u!r}")
-        if assembled and _same_coordinate(assembled[-1], segment[0]):
+        if not _same_coordinate(segment[-1], end):
+            raise ValueError(f"edge {(u, v)!r} geometry does not meet node {v!r}")
+        if assembled and not _same_coordinate(assembled[-1], segment[0]):
+            raise ValueError(f"chain {path!r} has a discontinuous join at node {u!r}")
+        if assembled:
             assembled.extend(segment[1:])
         else:
             assembled.extend(segment)
+    if not assembled:
+        raise ValueError(f"chain {path!r} has no geometry")
+    first_node = (graph.nodes[path[0]]["lat"], graph.nodes[path[0]]["lon"])
+    last_node = (graph.nodes[path[-1]]["lat"], graph.nodes[path[-1]]["lon"])
+    if not _same_coordinate(assembled[0], first_node):
+        raise ValueError(f"chain {path!r} geometry does not meet node {path[0]!r}")
+    if not _same_coordinate(assembled[-1], last_node):
+        raise ValueError(f"chain {path!r} geometry does not meet node {path[-1]!r}")
     return assembled
 
 
@@ -253,6 +266,7 @@ def _emit_chain(
     path: tuple[int, ...],
     tolerance_m: float,
 ) -> None:
+    path = _canonical_path(path)
     if len(path) < 2 or path[0] == path[-1]:
         raise ValueError(f"cannot contract chain {path!r}")
     source_geometry = _assembled_geometry(source, path)
