@@ -1,10 +1,10 @@
 import copy
 
 import networkx as nx
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 from pound.artifact import RuntimeArtifact
 from pound.models import WayDimensions
-from pound.route.cost import CRUISE_KMH, DEFAULT_MOVABLE_BRIDGE_DELAY_MIN
+from pound.route.cost import CRUISE_KMH, DEFAULT_MOVABLE_BRIDGE_DELAY_MIN, LOCK_MINUTES
 from pound.route.plan import plan_projected_route
 from pound.route.project import project_handle
 from pound.schemas import CanalPointHandle, ProjectedRouteConstraints
@@ -177,6 +177,67 @@ def test_node_bridge_delay_is_full_on_arrival_and_absent_on_departure():
     assert (
         arrives.route.total_minutes - departs.route.total_minutes
         == DEFAULT_MOVABLE_BRIDGE_DELAY_MIN
+    )
+
+
+def test_equal_cost_endpoint_path_is_independent_of_graph_edge_insertion_order():
+    first = _graph()
+    second = _graph()
+    for graph, edges in (
+        (first, [(1, 3, 13), (3, 4, 34), (1, 2, 12), (2, 4, 24), (4, 5, 45)]),
+        (second, [(1, 2, 12), (2, 4, 24), (1, 3, 13), (3, 4, 34), (4, 5, 45)]),
+    ):
+        graph.add_node(5, lat=51.0, lon=-0.940, name="Node 5", movable_bridge_ids=())
+        for u, v, way_id in edges:
+            _edge(graph, u, v, length_m=100, way_id=way_id)
+    constraints = _constraints((1, 2), 0, (4, 5), 0)
+
+    first_route = plan_projected_route(constraints, artifact=_artifact(first))
+    second_route = plan_projected_route(constraints, artifact=_artifact(second))
+
+    expected = [(-1.0, 51.0), (-0.985, 51.0), (-0.955, 51.0)]
+    assert first_route.geometry.coordinates == expected
+    assert second_route.geometry.coordinates == expected
+
+
+def test_shared_node_handles_on_distinct_edges_emit_a_zero_length_linestring():
+    graph = _graph()
+    _edge(graph, 1, 2, length_m=100, way_id=12)
+    _edge(graph, 2, 3, length_m=100, way_id=23)
+
+    response = plan_projected_route(_constraints((1, 2), 1, (2, 3), 0), artifact=_artifact(graph))
+
+    assert response.route.total_km == 0
+    assert response.route.total_minutes == 0
+    assert response.route.legs == []
+    assert response.route.days == []
+    assert response.geometry.coordinates == [(-0.985, 51.0), (-0.985, 51.0)]
+
+
+def test_lock_is_reported_on_the_same_day_and_leg_as_its_metric_position():
+    graph = _graph()
+    _edge(graph, 1, 2, length_m=1_000, way_id=12, candidate_eligible=False, locks=1)
+    graph.edges[1, 2]["lock_points"] = [(51.0, -0.9925)]
+
+    response = plan_projected_route(
+        ProjectedRouteConstraints(
+            start=CanalPointHandle(edge=(1, 2), fraction=0),
+            end=CanalPointHandle(edge=(1, 2), fraction=1),
+            hours_per_day=0.1,
+        ),
+        artifact=_artifact(graph),
+    )
+
+    lock = response.locks[0]
+    lock_day = next(day for day in response.route.days if sum(leg.locks for leg in day.legs))
+    lock_leg = next(leg for leg in lock_day.legs if leg.locks)
+    assert lock.day == lock_day.day
+    assert lock_leg.locks == 1
+    assert lock_leg.est_minutes >= LOCK_MINUTES
+    day_geometry = next(item for item in response.day_geometries if item.day == lock_day.day)
+    assert any(
+        coordinate == pytest.approx((lock.coordinate.lon, lock.coordinate.lat), abs=3e-7)
+        for coordinate in day_geometry.geometry.coordinates
     )
 
 

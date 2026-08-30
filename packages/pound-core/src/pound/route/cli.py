@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-from pydantic import ValidationError
+from pydantic import ValidationError  # pyright: ignore[reportMissingImports]
 
 from pound.artifact import load_artifact
 from pound.route.plan import plan_route, plan_route_from_constraints

@@ -4,11 +4,11 @@ import json
 import math
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any
+from heapq import heappop, heappush
+from typing import Any, cast
 
 import networkx as nx
-from networkx.exception import NetworkXNoPath
-from pyproj import Transformer
+from pyproj import Transformer  # pyright: ignore[reportMissingImports]
 from shapely import transform
 from shapely.geometry import Point
 from shapely.ops import substring
@@ -18,12 +18,13 @@ from pound.geometry import LOCK_SOURCE_TOLERANCE_M
 from pound.geometry import haversine_m as _haversine_m
 from pound.geometry import project_point_to_line as project_point_to_edge
 from pound.models import WayDimensions
-from pound.route.cost import is_eligible as _is_eligible
 from pound.route.cost import (
+    LOCK_MINUTES,
     partial_traversal_time_min,
     resolve_movable_bridge_delay,
     traversal_time_min,
 )
+from pound.route.cost import is_eligible as _is_eligible
 from pound.route.project import canonical_edge_line_wgs84, metric_edge_line, project_handle
 from pound.route.resolve import resolve_place
 from pound.schemas import (
@@ -123,6 +124,9 @@ def plan_projected_route(
 
     computed = _compute_route(constraints, graph)
     all_geometry = _joined_geometry(computed.traversal.edges, graph)
+    if not all_geometry:
+        end_point = project_handle(constraints.end, graph).coordinate
+        all_geometry = [(start_point.lat, start_point.lon), (end_point.lat, end_point.lon)]
     day_geometries = []
     for day, (start, end) in enumerate(computed.day_ranges, start=1):
         points = _joined_geometry((segment.edge for segment in computed.segments[start:end]), graph)
@@ -245,10 +249,24 @@ def _network_path(
             movable_bridge_delay_min=bridge_delay_min,
         )
 
-    try:
-        return tuple(nx.shortest_path(graph, start, end, weight=weight))
-    except NetworkXNoPath:
-        return None
+    paths: dict[int, tuple[float, tuple[int, ...]]] = {start: (0.0, (start,))}
+    queue: list[tuple[float, tuple[int, ...], int]] = [(0.0, (start,), start)]
+    while queue:
+        cost, path, node = heappop(queue)
+        if paths.get(node) != (cost, path):
+            continue
+        if node == end:
+            return path
+        for neighbor in sorted(graph.neighbors(node)):
+            edge_cost = weight(node, neighbor, graph.edges[node, neighbor])
+            if edge_cost is None:
+                continue
+            candidate = (cost + edge_cost, path + (neighbor,))
+            if candidate < paths.get(neighbor, (math.inf, ())):
+                paths[neighbor] = candidate
+                entry: tuple[float, tuple[int, ...], int] = (*candidate, neighbor)
+                heappush(queue, entry)
+    return None
 
 
 def _candidate_for_endpoints(
@@ -335,7 +353,11 @@ def _compute_traversal(
     ).traversal
 
 
-def _split_edge(edge: TraversedEdge, graph: nx.Graph) -> tuple[TraversedEdge, ...]:
+def _split_edge(
+    edge: TraversedEdge,
+    graph: nx.Graph,
+    event_fractions: tuple[float, ...] = (),
+) -> tuple[TraversedEdge, ...]:
     if not _edge_data(edge, graph).get("geometry"):
         return (edge,)
     line = metric_edge_line(graph, (edge.u, edge.v))
@@ -347,6 +369,8 @@ def _split_edge(edge: TraversedEdge, graph: nx.Graph) -> tuple[TraversedEdge, ..
     while boundary < high * line.length - 1e-9:
         fractions.append(boundary / line.length)
         boundary += _DAY_SEGMENT_M
+    fractions.extend(fraction for fraction in event_fractions if low < fraction < high)
+    fractions = sorted(set(fractions))
     fractions.append(high)
     if edge.start_fraction > edge.end_fraction:
         fractions.reverse()
@@ -356,13 +380,49 @@ def _split_edge(edge: TraversedEdge, graph: nx.Graph) -> tuple[TraversedEdge, ..
     )
 
 
+def _contains_fraction(edge: TraversedEdge, fraction: float) -> bool:
+    return (
+        min(edge.start_fraction, edge.end_fraction) - 1e-9
+        <= fraction
+        <= max(edge.start_fraction, edge.end_fraction) + 1e-9
+    )
+
+
+def _lock_event_fractions(edge: TraversedEdge, graph: nx.Graph) -> tuple[float, ...]:
+    lock_count = int(_edge_data(edge, graph).get("locks", 0))
+    if not lock_count:
+        return ()
+    fractions = sorted(
+        min(1.0, max(0.0, _coordinate_fraction((edge.u, edge.v), coordinate, graph)))
+        for coordinate, _ in _lock_points(edge, graph)
+    )
+    if not fractions:
+        fractions = [0.5]
+    fractions.extend([fractions[-1]] * (lock_count - len(fractions)))
+    return tuple(fractions[:lock_count])
+
+
+def _lock_counts(
+    pieces: tuple[TraversedEdge, ...], event_fractions: tuple[float, ...]
+) -> list[int]:
+    counts = [0] * len(pieces)
+    for fraction in event_fractions:
+        for index, piece in enumerate(pieces):
+            if _contains_fraction(piece, fraction):
+                counts[index] += 1
+                break
+    return counts
+
+
 def _report_segments(
     traversal: ComputedTraversal, constraints: ProjectedRouteConstraints, graph: nx.Graph
 ) -> tuple[_ReportSegment, ...]:
     bridge_delay_min = resolve_movable_bridge_delay(constraints.movable_bridge_delay_min)
     segments: list[_ReportSegment] = []
     for traversal_index, edge in enumerate(traversal.edges):
-        pieces = _split_edge(edge, graph)
+        lock_events = _lock_event_fractions(edge, graph) if edge.full else ()
+        pieces = _split_edge(edge, graph, lock_events)
+        lock_counts = _lock_counts(pieces, lock_events)
         cruise_costs = [
             partial_traversal_time_min(
                 _edge_data(piece, graph),
@@ -372,7 +432,11 @@ def _report_segments(
             )
             for piece in pieces
         ]
-        final_cost = _traversal_cost(edge, graph, bridge_delay_min) - sum(cruise_costs)
+        final_cost = (
+            _traversal_cost(edge, graph, bridge_delay_min)
+            - sum(cruise_costs)
+            - sum(lock_counts) * LOCK_MINUTES
+        )
         _, unknown = _edge_eligibility(edge, constraints, graph)
         for index, (piece, cost) in enumerate(zip(pieces, cruise_costs, strict=True)):
             is_last = index == len(pieces) - 1
@@ -380,10 +444,10 @@ def _report_segments(
                 _ReportSegment(
                     traversal_index=traversal_index,
                     edge=piece,
-                    cost_min=cost + (final_cost if is_last else 0),
-                    locks=int(_edge_data(edge, graph).get("locks", 0))
-                    if edge.full and is_last
-                    else 0,
+                    cost_min=cost
+                    + lock_counts[index] * LOCK_MINUTES
+                    + (final_cost if is_last else 0),
+                    locks=lock_counts[index],
                     unknown_dimensions=unknown,
                 )
             )
@@ -490,7 +554,7 @@ def _edge_geometry(edge: TraversedEdge, graph: nx.Graph) -> list[tuple[float, fl
         line = metric_edge_line(graph, (edge.u, edge.v))
         low, high = sorted((edge.start_fraction, edge.end_fraction))
         sliced = substring(line, low * line.length, high * line.length)
-        projected = transform(sliced, _TO_WGS84.transform, interleaved=False)
+        projected = transform(sliced, cast(Any, _TO_WGS84.transform), interleaved=False)
         coordinates = [(float(y), float(x)) for x, y in projected.coords]
     if edge.start_fraction > edge.end_fraction:
         coordinates.reverse()
