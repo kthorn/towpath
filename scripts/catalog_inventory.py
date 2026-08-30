@@ -31,7 +31,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def _ensure_external_output(output: Path) -> None:
     root = Path(__file__).resolve().parents[1]
-    forbidden = (root / "pound" / "data", root / "pound" / "artifacts")
+    package_root = root / "packages" / "pound-core" / "src" / "pound"
+    forbidden = (package_root / "data", package_root / "artifacts")
     if any(_is_relative_to(output, directory) for directory in forbidden):
         raise ValueError(
             "generated inventory output cannot be inside repository data or artifact directory"

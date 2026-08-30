@@ -218,7 +218,7 @@ def test_inventory_cli_writes_sorted_json_and_rejects_repo_data_output(tmp_path)
                 "--pbf",
                 "packages/pound-core/tests/fixtures/tiny_bulk.osm",
                 "--out",
-                "pound/data/inventory.json",
+                "packages/pound-core/src/pound/data/inventory.json",
             ]
         )
 
