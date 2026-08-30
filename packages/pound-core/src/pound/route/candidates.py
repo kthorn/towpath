@@ -60,13 +60,14 @@ def nearest_candidates(
     exact = index.nearest_projection(lat, lon)
     radius = index.spacing_m
     if exact is not None:
-        point, metric_distance = exact
-        radius = max(radius, metric_distance)
-        pool[candidate_id(point)] = (metric_distance, point)
+        point, _metric_distance = exact
+        distance = _haversine_m((lat, lon), (point.coordinate.lat, point.coordinate.lon))
+        radius = max(radius, distance)
+        pool[candidate_id(point)] = (distance, point)
 
     while True:
-        for point, metric_distance in index.nearest_samples(lat, lon, radius_m=radius):
-            pool.setdefault(candidate_id(point), (metric_distance, point))
+        for point, distance in index.nearest_samples(lat, lon, radius_m=radius):
+            pool.setdefault(candidate_id(point), (distance, point))
         ranked = sorted(pool.values(), key=lambda item: (item[0], candidate_id(item[1])))
         records = [
             CanalCandidate(

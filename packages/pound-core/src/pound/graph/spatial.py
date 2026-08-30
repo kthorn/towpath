@@ -258,6 +258,8 @@ class CandidateSpatialIndex:
     candidate_points: tuple[ProjectedCanalPoint, ...]
     candidate_geometries: tuple[Point, ...]
     candidate_tree: STRtree | None
+    candidate_wgs84_points: tuple[Point, ...]
+    candidate_wgs84_tree: STRtree | None
     candidate_display_names: tuple[str, ...]
     candidate_bounds: tuple[float, float, float, float] | None
     edge_positions: Any
@@ -332,6 +334,9 @@ class CandidateSpatialIndex:
         candidate_geometries = tuple(
             self._metric_point(point.coordinate) for point in candidate_points
         )
+        candidate_wgs84_points = tuple(
+            Point(point.coordinate.lon, point.coordinate.lat) for point in candidate_points
+        )
         candidate_display_names = tuple(
             self._display_name(point.handle, point.coordinate, edge_keys, edge_names, node_names)
             for point in candidate_points
@@ -371,6 +376,12 @@ class CandidateSpatialIndex:
             self,
             "candidate_tree",
             STRtree(candidate_geometries) if candidate_geometries else None,
+        )
+        object.__setattr__(self, "candidate_wgs84_points", candidate_wgs84_points)
+        object.__setattr__(
+            self,
+            "candidate_wgs84_tree",
+            STRtree(candidate_wgs84_points) if candidate_wgs84_points else None,
         )
         object.__setattr__(self, "candidate_display_names", candidate_display_names)
         object.__setattr__(self, "candidate_bounds", candidate_bounds)
@@ -517,30 +528,31 @@ class CandidateSpatialIndex:
     ) -> tuple[tuple[ProjectedCanalPoint, float], ...]:
         if self.candidate_tree is None:
             return ()
-        query = self._query_point(lat, lon)
-        positions = self.candidate_tree.query(
-            box(query.x - radius_m, query.y - radius_m, query.x + radius_m, query.y + radius_m)
-        )
+        if self.candidate_wgs84_tree is None:
+            return ()
+        envelopes = spherical_envelopes(lon=lon, lat=lat, radius_m=radius_m)
+        positions = {
+            int(position)
+            for envelope in envelopes
+            for position in self.candidate_wgs84_tree.query(envelope)
+        }
         ranked = [
             (
-                self.candidate_points[int(position)],
-                float(query.distance(self.candidate_geometries[int(position)])),
+                self.candidate_points[position],
+                _haversine_m(
+                    (lat, lon),
+                    (
+                        self.candidate_points[position].coordinate.lat,
+                        self.candidate_points[position].coordinate.lon,
+                    ),
+                ),
             )
             for position in positions
         ]
         return tuple(sorted(ranked, key=lambda item: (item[1], self._point_sort_key(item[0]))))
 
     def sample_envelope_covers_all(self, lat: float, lon: float, radius_m: float) -> bool:
-        if self.candidate_bounds is None:
-            return True
-        query = self._query_point(lat, lon)
-        min_x, min_y, max_x, max_y = self.candidate_bounds
-        return (
-            query.x - radius_m <= min_x
-            and query.x + radius_m >= max_x
-            and query.y - radius_m <= min_y
-            and query.y + radius_m >= max_y
-        )
+        return radius_m >= _MAX_RADIUS_M
 
 
 def nearest_node_distances(
