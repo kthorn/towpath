@@ -1,4 +1,4 @@
-from pound.ingest.ir import WayDimensions
+from pound.models import WayDimensions
 from pound.route.cost import (
     CRUISE_KMH,
     DEFAULT_MOVABLE_BRIDGE_DELAY_MIN,

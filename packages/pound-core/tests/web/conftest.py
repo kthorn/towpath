@@ -5,16 +5,18 @@ from pathlib import Path
 import networkx as nx
 import pytest  # pyright: ignore[reportMissingImports]
 from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
-from pound.catalog.artifact import prepare_catalog, write_catalog
+from pound.artifact import ROUTING_ARTIFACT_SCHEMA_VERSION
 from pound.catalog.metadata import CatalogMetadata
 from pound.catalog.models import CatalogPlace
-from pound.graph.artifact import save_artifact
-from pound.ingest.ir import OsmElementType, PoiCategory, PointOfInterest, WayDimensions
+from pound.models import OsmElementType, PoiCategory, RuntimePoi, WayDimensions
 from pound.web.app import create_app
 from pound.web.boat_hire import BOAT_HIRE_ENRICHMENT_FIELDS
 from pound.web.config import WebSettings
 from shapely import wkb
 from shapely.geometry import Point
+
+from tests.fixtures import write_catalog_payload
+from tests.fixtures import write_runtime_artifact as save_artifact
 
 
 @pytest.fixture(autouse=True)
@@ -45,6 +47,7 @@ def catalog_place(kind: str, osm_id: int, lat: float, lon: float) -> CatalogPlac
 
 def artifact_metadata(revision: str, *, source: str = "test") -> dict:
     return {
+        "artifact_schema_version": ROUTING_ARTIFACT_SCHEMA_VERSION,
         "artifact_revision": revision,
         "source": source,
         "fetched_at": "2026-07-11T00:00:00Z",
@@ -176,39 +179,25 @@ def route_graph() -> nx.Graph:
     return graph
 
 
-def fixture_pois() -> tuple[PointOfInterest, ...]:
+def fixture_pois() -> tuple[RuntimePoi, ...]:
     return (
-        PointOfInterest(
-            osm_type=OsmElementType.NODE,
-            osm_id=101,
-            category=PoiCategory.PROVISIONS,
-            kind="pub",
-            name="The Test Pub",
-            lat=51.0,
-            lon=-1.0,
-            source_tags={"amenity": "pub"},
-            geometry_source="point",
-            nearest_waterway_distance_m=0,
-            nearest_edge=(1, 2),
-            nearest_node_uid=1,
-            projected_lat=51.0,
-            projected_lon=-1.0,
+        RuntimePoi(
+            OsmElementType.NODE,
+            101,
+            PoiCategory.PROVISIONS,
+            "pub",
+            "The Test Pub",
+            51.0,
+            -1.0,
         ),
-        PointOfInterest(
-            osm_type=OsmElementType.NODE,
-            osm_id=102,
-            category=PoiCategory.PROVISIONS,
-            kind="shop",
-            name="The Test Shop",
-            lat=51.001,
-            lon=-1.001,
-            source_tags={"shop": "general"},
-            geometry_source="point",
-            nearest_waterway_distance_m=0,
-            nearest_edge=(1, 2),
-            nearest_node_uid=2,
-            projected_lat=51.001,
-            projected_lon=-1.001,
+        RuntimePoi(
+            OsmElementType.NODE,
+            102,
+            PoiCategory.PROVISIONS,
+            "shop",
+            "The Test Shop",
+            51.001,
+            -1.001,
         ),
     )
 
@@ -227,12 +216,13 @@ def build_web_client(
     artifact_path = tmp_path / "graph.pkl"
     save_artifact(route_graph, fixture_pois(), artifact_path, artifact_metadata("revision-test"))
     catalog_path = tmp_path / "catalog.pkl"
-    catalog = prepare_catalog(
+    write_catalog_payload(
         (
             catalog_place("pub", 201, 51.0, -1.0),
             catalog_place("museum", 202, 51.002, -1.002),
             catalog_place("marina", 203, 51.001, -1.001),
         ),
+        catalog_path,
         {
             "source": "catalog-test",
             "fetched_at": "2026-07-11T00:00:00Z",
@@ -241,7 +231,6 @@ def build_web_client(
             "build_summary": {},
         },
     )
-    write_catalog(catalog, catalog_path)
     settings = WebSettings(
         artifact_path=artifact_path,
         static_dir=tmp_path / "static",

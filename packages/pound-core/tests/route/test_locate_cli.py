@@ -1,37 +1,28 @@
-import json
 from pathlib import Path
 
 import pytest
-from pound.graph.artifact import load_artifact, save_artifact
-from pound.graph.build import build_graph
-from pound.graph.gazetteer import attach_node_names, build_gazetteer
-from pound.graph.locks import attach_locks
-from pound.ingest.overpass import parse
+from pound.artifact import load_artifact
 from pound.route import locate_cli
 
-from tests.fixtures import oxford_fixture_path
+from tests.fixtures import routing_test_graph, write_runtime_artifact
 
 
 def _build_oxford_artifact(out: Path) -> Path:
-    raw = json.loads(Path(oxford_fixture_path()).read_text())
-    feats = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
-    g, _ = attach_locks(build_graph(feats), feats)
-    attach_node_names(g, feats)
-    g.graph["gazetteer"] = build_gazetteer(feats)
-    g.graph["fetched_at"] = feats.fetched_at
-    save_artifact(
-        g,
+    graph, gazetteer = routing_test_graph()
+    return write_runtime_artifact(
+        graph,
         (),
         out,
         {
-            "source": feats.source,
-            "fetched_at": feats.fetched_at,
+            "artifact_revision": "locate-cli-test",
+            "source": "fixture",
+            "fetched_at": "2026-06-21T12:00:00Z",
             "built_at": "t",
             "validation": {},
             "poi_summary": {},
         },
+        gazetteer=gazetteer,
     )
-    return out
 
 
 def test_pound_locate_prints_nearest_uid_and_distance(tmp_path, capsys):

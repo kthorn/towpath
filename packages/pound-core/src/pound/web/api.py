@@ -11,7 +11,7 @@ from pydantic import (  # pyright: ignore[reportMissingImports]
     FiniteFloat,
 )
 
-from pound.ingest.pois import RETAINED_POI_KINDS
+from pound.models import RETAINED_POI_KINDS
 from pound.route.candidates import nearest_coord_candidates, select_spaced_candidates
 from pound.route.cost import resolve_movable_bridge_delay
 from pound.route.plan import RouteUnavailableError, plan_canal_route

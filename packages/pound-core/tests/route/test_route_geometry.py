@@ -1,7 +1,7 @@
 import copy
 
 import networkx as nx
-from pound.ingest.ir import WayDimensions
+from pound.models import WayDimensions
 from pound.route.plan import _to_geojson, plan_canal_route
 from pound.schemas import ResolvedConstraints
 

@@ -3,10 +3,11 @@
 import argparse
 import sys
 from collections.abc import Mapping
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from pound.graph.artifact import GraphArtifact, load_artifact
+from pound.artifact import RuntimeArtifact, load_artifact
 
 _IGNORED_METADATA_FIELDS = {"artifact_revision", "built_at"}
 
@@ -21,24 +22,24 @@ def _normalized(value: Any) -> Any:
     return value
 
 
-def _nodes(artifact: GraphArtifact) -> dict:
+def _nodes(artifact: RuntimeArtifact) -> dict:
     return {
         node_id: _normalized(attributes) for node_id, attributes in artifact.graph.nodes(data=True)
     }
 
 
-def _edges(artifact: GraphArtifact) -> dict:
+def _edges(artifact: RuntimeArtifact) -> dict:
     return {
         (min(u, v), max(u, v)): _normalized(attributes)
         for u, v, attributes in artifact.graph.edges(data=True)
     }
 
 
-def _pois(artifact: GraphArtifact) -> tuple:
-    return tuple(_normalized(poi.model_dump(mode="json")) for poi in artifact.pois)
+def _pois(artifact: RuntimeArtifact) -> tuple:
+    return tuple(_normalized(asdict(poi)) for poi in artifact.pois)
 
 
-def _metadata(artifact: GraphArtifact) -> Any:
+def _metadata(artifact: RuntimeArtifact) -> Any:
     retained = {
         key: value
         for key, value in artifact.metadata.items()
@@ -47,7 +48,7 @@ def _metadata(artifact: GraphArtifact) -> Any:
     return _normalized(retained)
 
 
-def compare_artifacts(before: GraphArtifact, after: GraphArtifact) -> list[str]:
+def compare_artifacts(before: RuntimeArtifact, after: RuntimeArtifact) -> list[str]:
     """Return the artifact sections that differ, in stable reporting order."""
     sections = (
         ("graph nodes", _nodes(before), _nodes(after)),

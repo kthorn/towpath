@@ -8,7 +8,7 @@ Pure: no graph, no network.
 from collections.abc import Collection, Mapping
 from typing import cast
 
-from pound.ingest.ir import WayDimensions
+from pound.models import WayDimensions
 
 CRUISE_KMH = 4.8  # ~3 mph, standard canal cruising assumption
 LOCK_MINUTES = 12  # typical single-lock, single-boat time

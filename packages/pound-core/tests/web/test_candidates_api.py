@@ -5,11 +5,11 @@ from unittest.mock import patch
 import networkx as nx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pound.graph.artifact import save_artifact
 from pound.web.api import CanalCandidatesRequest
 from pound.web.app import create_app
 from pound.web.config import WebSettings
 
+from tests.fixtures import write_runtime_artifact as save_artifact
 from tests.web.conftest import artifact_metadata, write_boat_hire_enrichment
 
 

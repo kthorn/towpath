@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 import networkx as nx
 
-from pound.graph.build import _haversine_m
+from pound.geometry import haversine_m as _haversine_m
 from pound.graph.spatial import GraphSpatialIndex, nearest_node_distances
 from pound.schemas import CanalCandidate, Coordinate
 

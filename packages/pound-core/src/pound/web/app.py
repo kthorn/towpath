@@ -15,9 +15,9 @@ from fastapi.responses import FileResponse, JSONResponse  # pyright: ignore[repo
 from starlette.concurrency import run_in_threadpool  # pyright: ignore[reportMissingImports]
 from starlette.staticfiles import StaticFiles  # pyright: ignore[reportMissingImports]
 
+from pound.artifact import InvalidArtifactError, RuntimeArtifact, load_artifact
 from pound.catalog.artifact import load_catalog
 from pound.catalog.spatial import CatalogSpatialIndex
-from pound.graph.artifact import GraphArtifact, InvalidArtifactError, load_artifact
 from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.api import router as api_router
 from pound.web.boat_hire import load_boat_hire_seeds, snap_boat_hire_bases
@@ -25,7 +25,7 @@ from pound.web.config import WebSettings
 from pound.web.places import MAX_PLACES_RESULTS, PlacesIndex
 
 
-def _load_web_artifact(settings: WebSettings) -> GraphArtifact:
+def _load_web_artifact(settings: WebSettings) -> RuntimeArtifact:
     """Load and validate the artifact fields required by the web application."""
 
     path = settings.artifact_path
@@ -48,6 +48,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         app.state.graph = artifact.graph
         app.state.pois = artifact.pois
         app.state.metadata = artifact.metadata
+        app.state.gazetteer = artifact.gazetteer
         app.state.artifact_revision = artifact.metadata["artifact_revision"]
         app.state.settings = runtime_settings
         app.state.spatial_index = GraphSpatialIndex(artifact.graph)

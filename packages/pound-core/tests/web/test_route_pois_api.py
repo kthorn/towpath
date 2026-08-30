@@ -3,7 +3,7 @@ from typing import cast
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pound.graph.spatial import PoiSpatialIndex
-from pound.ingest.ir import OsmElementType, PoiCategory, PointOfInterest
+from pound.models import OsmElementType, PoiCategory, RuntimePoi
 
 
 def _request(**changes):
@@ -20,22 +20,15 @@ def _request(**changes):
     return payload
 
 
-def _poi(kind: str, lat: float, lon: float, osm_id: int) -> PointOfInterest:
-    return PointOfInterest(
-        osm_type=OsmElementType.NODE,
-        osm_id=osm_id,
-        category=PoiCategory.PROVISIONS,
-        kind=kind,
-        name=f"{kind} {osm_id}",
-        lat=lat,
-        lon=lon,
-        source_tags={},
-        geometry_source="point",
-        nearest_waterway_distance_m=0,
-        nearest_edge=(1, 2),
-        nearest_node_uid=1,
-        projected_lat=lat,
-        projected_lon=lon,
+def _poi(kind: str, lat: float, lon: float, osm_id: int) -> RuntimePoi:
+    return RuntimePoi(
+        OsmElementType.NODE,
+        osm_id,
+        PoiCategory.PROVISIONS,
+        kind,
+        f"{kind} {osm_id}",
+        lat,
+        lon,
     )
 
 

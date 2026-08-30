@@ -7,9 +7,8 @@ import networkx as nx
 import pytest  # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
 from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
-from pound.catalog.artifact import prepare_catalog, write_catalog
+from pound.artifact import InvalidArtifactError, load_artifact
 from pound.catalog.spatial import CatalogSpatialIndex
-from pound.graph.artifact import InvalidArtifactError, load_artifact, save_artifact
 from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
 from pound.web.app import _load_web_artifact, create_app
 from pound.web.config import WebSettings
@@ -19,6 +18,8 @@ from pound.web.places import (
     PlacesIndex,
 )
 
+from tests.fixtures import write_catalog_payload
+from tests.fixtures import write_runtime_artifact as save_artifact
 from tests.web.conftest import artifact_metadata, catalog_place, write_boat_hire_enrichment
 
 
@@ -129,8 +130,7 @@ def test_startup_reports_missing_artifact_path(tmp_path: Path):
     with pytest.raises(RuntimeError, match=str(artifact)) as exc_info:
         _load_web_artifact(_settings(artifact, tmp_path / "missing-static"))
 
-    assert isinstance(exc_info.value.__cause__, InvalidArtifactError)
-    assert isinstance(exc_info.value.__cause__.__cause__, FileNotFoundError)
+    assert isinstance(exc_info.value.__cause__, FileNotFoundError)
 
 
 def test_startup_reports_invalid_pickle(tmp_path: Path):
@@ -152,7 +152,7 @@ def test_startup_reports_malformed_artifact_wrapper(tmp_path: Path):
 
     assert str(artifact) in str(exc_info.value)
     assert "load" in str(exc_info.value).lower()
-    assert "rebuild" in str(exc_info.value).lower()
+    assert "top-level" in str(exc_info.value).lower()
     assert isinstance(exc_info.value.__cause__, InvalidArtifactError)
 
 
@@ -167,7 +167,7 @@ def test_startup_rejects_incomplete_artifact(tmp_path: Path, blob: dict[str, obj
     artifact = tmp_path / "incomplete.pkl"
     _write_blob(artifact, blob)
 
-    with pytest.raises(RuntimeError, match=rf"{artifact}.*{missing}.*[Rr]ebuild"):
+    with pytest.raises(RuntimeError, match=rf"{artifact}.*top-level"):
         _load_web_artifact(_settings(artifact, tmp_path / "missing-static"))
 
 
@@ -176,9 +176,12 @@ def test_startup_rejects_missing_or_falsey_revision(tmp_path: Path, revision: st
     artifact = tmp_path / "revisionless.pkl"
     metadata = artifact_metadata("temporary")
     metadata["artifact_revision"] = revision
-    _write_blob(artifact, {"graph": nx.Graph(), "pois": [], "metadata": metadata})
+    _write_blob(
+        artifact,
+        {"graph": nx.Graph(), "pois": [], "gazetteer": {}, "metadata": metadata},
+    )
 
-    with pytest.raises(RuntimeError, match=rf"{artifact}.*artifact_revision.*[Rr]ebuild"):
+    with pytest.raises(RuntimeError, match=rf"{artifact}.*artifact revision"):
         _load_web_artifact(_settings(artifact, tmp_path / "missing-static"))
 
 
@@ -228,8 +231,9 @@ def test_startup_loads_catalog_after_routing_artifact(tmp_path: Path):
     artifact_path = tmp_path / "graph.pkl"
     catalog_path = tmp_path / "catalog.pkl"
     save_artifact(nx.Graph(), [], artifact_path, artifact_metadata("route-revision"))
-    catalog = prepare_catalog(
+    write_catalog_payload(
         (catalog_place("pub", 1, 51.0, -1.0),),
+        catalog_path,
         {
             "source": "catalog-test",
             "fetched_at": "2026-07-11T00:00:00Z",
@@ -238,7 +242,6 @@ def test_startup_loads_catalog_after_routing_artifact(tmp_path: Path):
             "build_summary": {},
         },
     )
-    write_catalog(catalog, catalog_path)
     settings = WebSettings(
         artifact_path=artifact_path,
         static_dir=tmp_path / "static",
@@ -292,23 +295,19 @@ def test_incompatible_catalog_schema_degrades_without_breaking_startup(
         artifact_path,
         artifact_metadata("route-revision"),
     )
-    catalog = prepare_catalog(
-        (catalog_place("pub", 1, 51.0, -1.0),),
-        {
-            "source": "catalog-test",
-            "fetched_at": "2026-07-11T00:00:00Z",
-            "built_at": "2026-07-12T00:00:00Z",
-            "inventory_summary": {},
-            "build_summary": {},
-        },
-    )
     _write_blob(
         catalog_path,
         {
-            "places": list(catalog.places),
+            "places": [catalog_place("pub", 1, 51.0, -1.0)],
             "metadata": {
-                **catalog.metadata,
                 "catalog_schema_version": 1,
+                "catalog_revision": "test-catalog",
+                "attribution": "© OpenStreetMap contributors",
+                "source": "catalog-test",
+                "fetched_at": "2026-07-11T00:00:00Z",
+                "built_at": "2026-07-12T00:00:00Z",
+                "inventory_summary": {},
+                "build_summary": {},
             },
         },
     )

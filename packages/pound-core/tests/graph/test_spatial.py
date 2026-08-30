@@ -10,7 +10,7 @@ from pound.graph.spatial import (
     lat_lon_to_xy,
     spherical_envelopes,
 )
-from pound.ingest.ir import OsmElementType, PoiCategory, PointOfInterest
+from pound.models import OsmElementType, PoiCategory, RuntimePoi
 from pound.schemas import GeoJSONLineString, MapBounds
 from shapely.geometry import Point
 
@@ -114,8 +114,8 @@ def _poi(
     lon: float,
     osm_id: int = 1,
     category: PoiCategory = PoiCategory.PROVISIONS,
-) -> PointOfInterest:
-    return PointOfInterest(
+) -> RuntimePoi:
+    return RuntimePoi(
         osm_type=OsmElementType.NODE,
         osm_id=osm_id,
         category=category,
@@ -123,13 +123,6 @@ def _poi(
         name=f"{kind} name",
         lat=lat,
         lon=lon,
-        source_tags={},
-        geometry_source="point",
-        nearest_waterway_distance_m=0,
-        nearest_edge=(2, 9),
-        nearest_node_uid=2,
-        projected_lat=lat,
-        projected_lon=lon,
     )
 
 

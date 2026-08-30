@@ -4,11 +4,9 @@ from pathlib import Path
 from typing import TypedDict, Unpack
 
 import networkx as nx
-import pytest  # pyright: ignore[reportMissingImports]
-from shapely.geometry import Point
-
 import pound.web.boat_hire as boat_hire
-from pound.ingest.ir import WayDimensions
+import pytest  # pyright: ignore[reportMissingImports]
+from pound.models import WayDimensions
 from pound.web.boat_hire import (
     BOAT_HIRE_ENRICHMENT_FIELDS,
     BoatHireAnchor,
@@ -18,6 +16,7 @@ from pound.web.boat_hire import (
     select_boat_hire_reachability,
     snap_boat_hire_bases,
 )
+from shapely.geometry import Point
 
 
 def _row(**changes: str) -> dict[str, str]:

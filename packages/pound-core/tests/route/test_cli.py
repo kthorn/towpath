@@ -1,23 +1,18 @@
-import json
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from pound.graph.artifact import save_artifact
-from pound.graph.build import build_graph
-from pound.graph.gazetteer import attach_node_names, build_gazetteer
-from pound.graph.locks import attach_locks
-from pound.ingest.overpass import parse
+from pound.artifact import load_artifact
 from pound.route import cli
 
-from tests.fixtures import oxford_fixture_path
+from tests.fixtures import routing_test_graph, write_runtime_artifact
 
 
-def _metadata(feats) -> dict:
+def _metadata() -> dict:
     return {
         "artifact_revision": "route-cli-test",
-        "source": feats.source,
-        "fetched_at": feats.fetched_at,
+        "source": "fixture",
+        "fetched_at": "2026-06-21T12:00:00Z",
         "built_at": "t",
         "validation": {},
         "poi_summary": {},
@@ -25,19 +20,8 @@ def _metadata(feats) -> dict:
 
 
 def _build_oxford_artifact(out: Path) -> Path:
-    raw = json.loads(Path(oxford_fixture_path()).read_text())
-    feats = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
-    g, _ = attach_locks(build_graph(feats), feats)
-    attach_node_names(g, feats)
-    g.graph["gazetteer"] = build_gazetteer(feats)
-    g.graph["fetched_at"] = feats.fetched_at
-    save_artifact(
-        g,
-        [],
-        out,
-        _metadata(feats),
-    )
-    return out
+    graph, gazetteer = routing_test_graph()
+    return write_runtime_artifact(graph, (), out, _metadata(), gazetteer=gazetteer)
 
 
 def test_pound_plan_prints_human_readable_route(tmp_path, capsys):
@@ -92,7 +76,6 @@ def test_pound_plan_no_path_clear_error(tmp_path, capsys):
 
 def test_pound_plan_accepts_uid_start_and_end(tmp_path, capsys):
     art = _build_oxford_artifact(tmp_path / "oxford.pkl")
-    from pound.graph.artifact import load_artifact
     from pound.route.resolve import resolve_place
 
     graph = load_artifact(Path(art)).graph
@@ -107,7 +90,6 @@ def test_pound_plan_accepts_uid_start_and_end(tmp_path, capsys):
 
 def test_pound_plan_forwards_zero_movable_bridge_delay_for_uid_route(tmp_path):
     artifact = _build_oxford_artifact(tmp_path / "oxford.pkl")
-    from pound.graph.artifact import load_artifact
     from pound.route.resolve import resolve_place
 
     graph = load_artifact(artifact).graph
@@ -142,7 +124,6 @@ def test_pound_plan_rejects_nonfinite_movable_bridge_delay_before_loading_artifa
 
 def test_pound_plan_mixes_uid_start_and_name_end(tmp_path, capsys):
     art = _build_oxford_artifact(tmp_path / "oxford.pkl")
-    from pound.graph.artifact import load_artifact
     from pound.route.resolve import resolve_place
 
     graph = load_artifact(Path(art)).graph

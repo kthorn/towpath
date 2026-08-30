@@ -2,7 +2,7 @@
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import networkx as nx
 from pyproj import Transformer
@@ -12,9 +12,10 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points
 from shapely.strtree import STRtree
 
-from pound.graph.build import _haversine_m
-from pound.graph.pois import _CORRIDOR_M, _edge_line_wgs84, _routing_eligible
-from pound.ingest.ir import PointOfInterest
+from pound.geometry import edge_line_wgs84 as _edge_line_wgs84
+from pound.geometry import haversine_m as _haversine_m
+from pound.models import POI_CORRIDOR_M as _CORRIDOR_M
+from pound.models import RuntimePoi
 from pound.schemas import Coordinate, GeoJSONLineString, MapBounds, RoutePoi
 
 _EARTH_RADIUS_M = 6_371_000.0
@@ -22,6 +23,10 @@ _MAX_RADIUS_M = math.pi * _EARTH_RADIUS_M
 _INITIAL_RADIUS_M = 100.0
 _TO_BNG = Transformer.from_crs("EPSG:4326", "EPSG:27700", always_xy=True)
 _TO_WGS84 = Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
+
+
+def _routing_eligible(data: dict[str, Any]) -> bool:
+    return data.get("navigable") is not False and data.get("routing_eligible") is not False
 
 
 def lat_lon_to_xy(*, lat: float, lon: float) -> tuple[float, float]:
@@ -70,11 +75,11 @@ class PoiQueryResult:
 class PoiSpatialIndex:
     """Stable WGS84 POI points and a metric route-corridor query tree."""
 
-    pois: tuple[PointOfInterest, ...]
+    pois: tuple[RuntimePoi, ...]
     poi_points: tuple[Point, ...]
     poi_tree: STRtree | None
 
-    def __init__(self, pois: tuple[PointOfInterest, ...]) -> None:
+    def __init__(self, pois: tuple[RuntimePoi, ...]) -> None:
         ordered_pois = tuple(
             sorted(pois, key=lambda poi: (poi.osm_type.value, poi.osm_id, poi.kind))
         )
@@ -97,7 +102,7 @@ class PoiSpatialIndex:
         positions = sorted(int(position) for position in self.poi_tree.query(viewport))
         route = transform(
             LineString(route_geometry.coordinates),
-            _TO_BNG.transform,
+            cast(Any, _TO_BNG.transform),
             interleaved=False,
         )
         selected_kinds = set(kinds)
@@ -107,7 +112,9 @@ class PoiSpatialIndex:
             poi = self.pois[position]
             if poi.kind not in selected_kinds:
                 continue
-            point_bng = transform(self.poi_points[position], _TO_BNG.transform, interleaved=False)
+            point_bng = transform(
+                self.poi_points[position], cast(Any, _TO_BNG.transform), interleaved=False
+            )
             distance_m = float(point_bng.distance(route))
             if distance_m > _CORRIDOR_M[poi.category]:
                 continue
@@ -155,7 +162,7 @@ class GraphSpatialIndex:
                 (min(u, v), max(u, v)),
                 transform(
                     _edge_line_wgs84(graph, u, v, data),
-                    _TO_BNG.transform,
+                    cast(Any, _TO_BNG.transform),
                     interleaved=False,
                 ),
             )
@@ -190,7 +197,7 @@ class GraphSpatialIndex:
             raise TypeError("geometry must be a Shapely geometry or WKB bytes")
         if geometry.is_empty:
             return None
-        geometry_bng = transform(geometry, _TO_BNG.transform, interleaved=False)
+        geometry_bng = transform(geometry, cast(Any, _TO_BNG.transform), interleaved=False)
         _positions, distances = self.edge_tree.query_nearest(
             geometry_bng, all_matches=True, return_distance=True
         )
@@ -215,7 +222,7 @@ class GraphSpatialIndex:
         )
         distance, edge_key, position = ranked[0]
         _, projected_bng = nearest_points(query_bng, self.edge_lines[position])
-        projected = transform(projected_bng, _TO_WGS84.transform, interleaved=False)
+        projected = transform(projected_bng, cast(Any, _TO_WGS84.transform), interleaved=False)
         return edge_key, projected, distance
 
 

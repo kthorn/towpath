@@ -1,7 +1,7 @@
 import pytest
 from pound.catalog.metadata import NormalizedLink
 from pound.catalog.models import CatalogAddress, CatalogMetadata, CatalogPlace
-from pound.ingest.ir import OsmElementType
+from pound.models import OsmElementType
 from pydantic import ValidationError
 
 

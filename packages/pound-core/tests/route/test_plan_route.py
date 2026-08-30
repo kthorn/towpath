@@ -1,20 +1,8 @@
 import copy
-import json
 
 import networkx as nx
 import pytest
-from pound.graph.build import build_graph
-from pound.graph.gazetteer import attach_node_names, build_gazetteer
-from pound.graph.locks import attach_locks
-from pound.ingest.filters import filter_navigable_ways
-from pound.ingest.ir import (
-    AccessCaveat,
-    WaterwayFeatures,
-    WaterwayKind,
-    WaterwayWay,
-    WayDimensions,
-)
-from pound.ingest.overpass import parse
+from pound.models import AccessCaveat, WayDimensions
 from pound.route.cost import (
     CRUISE_KMH,
     DEFAULT_MOVABLE_BRIDGE_DELAY_MIN,
@@ -25,7 +13,7 @@ from pound.route.cost import (
 from pound.route.plan import plan_canal_route, plan_route, plan_route_from_constraints
 from pound.schemas import CanalConstraints, Coordinate, ResolvedConstraints
 
-from tests.fixtures import oxford_fixture_path
+from tests.fixtures import routing_test_graph
 
 
 def _access_caveat_graph():
@@ -61,17 +49,7 @@ def _access_caveat_graph():
 
 
 def _graph_and_gaz():
-    try:
-        with open(oxford_fixture_path()) as f:
-            raw = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
-        raise RuntimeError(f"Failed to load Oxford fixture: {e}") from e
-    feats = parse(raw["elements"], None, osm_timestamp=raw["osm3s"]["timestamp_osm_base"])
-    g, _ = attach_locks(build_graph(feats), feats)
-    attach_node_names(g, feats)
-    g.graph["gazetteer"] = build_gazetteer(feats)
-    g.graph["fetched_at"] = feats.fetched_at  # plan_route reads graph_source_date here
-    return g, feats
+    return routing_test_graph()
 
 
 def resolve_first(name, g):
@@ -267,9 +245,7 @@ def test_access_caveats_suppress_duplicate_tunnel_warnings():
     ]
 
 
-def test_empty_oneway_value_survives_artifact_validation_and_warns():
-    from pound.graph.artifact import prepare_artifact
-
+def test_empty_oneway_value_warns():
     graph = nx.Graph()
     graph.add_node(
         1,
@@ -307,15 +283,7 @@ def test_empty_oneway_value_survives_artifact_validation_and_warns():
         tunnel_restrictions=((77, "oneway", ""),),
         access_caveats=(),
     )
-    metadata = {
-        "source": "overpass",
-        "fetched_at": "2026-07-12T00:00:00Z",
-        "built_at": "2026-07-12T01:00:00Z",
-        "validation": {"self_loops": 0},
-        "poi_summary": {"retained": 0},
-    }
-    artifact = prepare_artifact(graph, [], metadata)
-    route = plan_route(ResolvedConstraints(start_uid=1, end_uid=2), graph=artifact.graph)
+    route = plan_route(ResolvedConstraints(start_uid=1, end_uid=2), graph=graph)
     assert 'tunnel way 77: unmodeled restriction oneway=""' in route.warnings
 
 
@@ -404,41 +372,24 @@ def test_route_omits_caveats_from_unselected_edges():
     assert route.warnings == []
 
 
-def test_public_filter_removes_private_shortcut_before_route_planning():
-    def way(osm_id, tags, node_ids, geometry):
-        return WaterwayWay(
-            osm_id=osm_id,
-            kind=WaterwayKind.CANAL,
-            name=None,
-            tags=tags,
-            node_ids=node_ids,
-            geometry=geometry,
+def test_route_uses_available_indirect_path():
+    graph = _infrastructure_graph(3)
+    for u, v, osm_way_id in ((1, 2, 10), (2, 3, 20)):
+        graph.add_edge(
+            u,
+            v,
+            length_m=1_000.0,
+            locks=0,
             dimensions=WayDimensions(),
+            osm_way_id=osm_way_id,
+            movable_bridge_ids=(),
+            tunnel_restrictions=(),
+            access_caveats=(),
         )
 
-    features = WaterwayFeatures(
-        ways=[
-            way(
-                30,
-                {"waterway": "canal", "access": "private"},
-                [1, 3],
-                [(51.0, -1.0), (51.0, -0.98)],
-            ),
-            way(10, {"waterway": "canal"}, [1, 2], [(51.0, -1.0), (51.0, -0.99)]),
-            way(20, {"waterway": "canal"}, [2, 3], [(51.0, -0.99), (51.0, -0.98)]),
-        ],
-        nodes=[],
-        source="test",
-        fetched_at="2026-08-23T00:00:00Z",
-        bbox=None,
-    )
-    graph = build_graph(filter_navigable_ways(features))
-    start = next(uid for uid, data in graph.nodes(data=True) if "1" in data["osm_node_ids"])
-    end = next(uid for uid, data in graph.nodes(data=True) if "3" in data["osm_node_ids"])
-    route = plan_route(ResolvedConstraints(start_uid=start, end_uid=end), graph=graph)
+    route = plan_route(ResolvedConstraints(start_uid=1, end_uid=3), graph=graph)
 
-    assert 30 not in {data["osm_way_id"] for _, _, data in graph.edges(data=True)}
-    assert route.total_km > 0
+    assert [(leg.from_place, leg.to_place) for leg in route.legs] == [("1", "2"), ("2", "3")]
     assert route.access_segments == []
 
 

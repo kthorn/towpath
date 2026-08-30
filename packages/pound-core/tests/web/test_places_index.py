@@ -9,7 +9,7 @@ from pound.catalog.metadata import CatalogMetadata
 from pound.catalog.models import CatalogPlace
 from pound.catalog.spatial import CatalogSpatialIndex
 from pound.graph.spatial import GraphSpatialIndex
-from pound.ingest.ir import OsmElementType, WayDimensions
+from pound.models import OsmElementType, WayDimensions
 from pound.schemas import (
     BoatHireProvenance,
     MapBounds,

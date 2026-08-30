@@ -18,8 +18,18 @@ from dataclasses import dataclass
 import networkx as nx
 from networkx.exception import NetworkXNoPath
 
-from pound.graph.build import _haversine_m, _node_key
-from pound.graph.locks import LOCK_SOURCE_TOLERANCE_M, project_point_to_edge
+from pound.geometry import (
+    LOCK_SOURCE_TOLERANCE_M,
+)
+from pound.geometry import (
+    haversine_m as _haversine_m,
+)
+from pound.geometry import (
+    node_key as _node_key,
+)
+from pound.geometry import (
+    project_point_to_line as project_point_to_edge,
+)
 from pound.route.cost import (
     is_eligible,
     resolve_movable_bridge_delay,
@@ -361,14 +371,17 @@ def plan_route_from_constraints(
     c: CanalConstraints,
     *,
     graph: nx.Graph,
+    gazetteer: dict | None = None,
     snap_tolerance_m: float = 50.0,
 ) -> RouteResult:
     """CanalConstraints -> resolve -> plan_route. The CLI/Agent Core path."""
     if c.end is None:
         raise NotImplementedError("rings not yet supported (design §5.3)")
     resolved = ResolvedConstraints(
-        start_uid=resolve_place(c.start, graph, snap_tolerance_m=snap_tolerance_m),
-        end_uid=resolve_place(c.end, graph, snap_tolerance_m=snap_tolerance_m),
+        start_uid=resolve_place(
+            c.start, graph, gazetteer=gazetteer, snap_tolerance_m=snap_tolerance_m
+        ),
+        end_uid=resolve_place(c.end, graph, gazetteer=gazetteer, snap_tolerance_m=snap_tolerance_m),
         days=c.days,
         hours_per_day=c.hours_per_day,
         movable_bridge_delay_min=c.movable_bridge_delay_min,

@@ -1,6 +1,5 @@
-"""Independent OSM place-catalog inventory and manifest."""
+"""Runtime OSM place-catalog constants."""
 
-from pound.catalog.inventory import CatalogInventory, inventory_pbf
 from pound.catalog.manifest import (
     CATALOG_KINDS,
     CATALOG_METADATA_KEYS,
@@ -13,6 +12,4 @@ __all__ = [
     "CATALOG_METADATA_KEYS",
     "MAX_CATALOG_KINDS",
     "MAX_CATALOG_RADIUS_M",
-    "CatalogInventory",
-    "inventory_pbf",
 ]

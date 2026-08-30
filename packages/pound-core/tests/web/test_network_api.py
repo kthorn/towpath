@@ -3,7 +3,6 @@ from typing import cast
 import pytest  # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
 from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
-
 from pound.web.app import create_app
 
 

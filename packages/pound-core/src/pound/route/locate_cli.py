@@ -13,7 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from pound.graph.artifact import load_artifact
+from pound.artifact import load_artifact
 from pound.graph.spatial import GraphSpatialIndex
 from pound.route.resolve import resolve_coord
 

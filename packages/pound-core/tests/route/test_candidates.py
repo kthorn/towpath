@@ -5,7 +5,7 @@ from typing import get_origin, get_type_hints
 
 import networkx as nx
 import pytest
-from pound.graph.build import _haversine_m
+from pound.geometry import haversine_m as _haversine_m
 from pound.graph.spatial import GraphSpatialIndex
 from pound.route.candidates import nearest_coord_candidates, select_spaced_candidates
 from pound.schemas import CanalCandidate, Coordinate

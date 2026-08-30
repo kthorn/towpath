@@ -10,7 +10,7 @@ from pound.catalog.spatial import (
     CatalogSpatialIndex,
 )
 from pound.graph.spatial import GraphSpatialIndex
-from pound.ingest.ir import OsmElementType
+from pound.models import OsmElementType
 from pound.schemas import MapBounds
 from pyproj import Transformer  # pyright: ignore[reportMissingImports]
 from shapely import transform, wkb

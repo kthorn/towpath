@@ -19,7 +19,8 @@ import math
 
 import networkx as nx
 
-from pound.graph.build import _haversine_m, _node_key
+from pound.geometry import haversine_m as _haversine_m
+from pound.geometry import node_key as _node_key
 from pound.graph.spatial import GraphSpatialIndex, nearest_node_distances
 
 _DEFAULT_SNAP_TOLERANCE_M = 50.0
@@ -29,6 +30,7 @@ def resolve_place(
     name: str,
     graph: nx.Graph,
     *,
+    gazetteer: dict | None = None,
     snap_tolerance_m: float = _DEFAULT_SNAP_TOLERANCE_M,
 ) -> int:
     """Resolve a place name to the uid of a graph node (offline only).
@@ -46,7 +48,7 @@ def resolve_place(
 
     Raises ValueError for unknown / ambiguous names (never KeyError).
     """
-    gaz = graph.graph.get("gazetteer", {})
+    gaz = graph.graph.get("gazetteer", {}) if gazetteer is None else gazetteer
     if name not in gaz:
         raise ValueError(
             f"{name!r} not found in gazetteer; this build covers {len(gaz)} places; "

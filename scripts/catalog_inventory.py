@@ -5,7 +5,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from pound.catalog.inventory import inventory_pbf
+from pound_build.catalog.inventory import inventory_pbf  # pyright: ignore[reportMissingImports]
 
 
 def main(argv: list[str] | None = None) -> int:

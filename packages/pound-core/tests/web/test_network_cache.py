@@ -4,19 +4,16 @@ from collections.abc import Generator
 from pathlib import Path
 
 import networkx as nx
+import pound.web.api as api_module
 import pytest
 from fastapi.testclient import TestClient
-
-import pound.web.api as api_module
 from pound.web.boat_hire import BOAT_HIRE_ENRICHMENT_FIELDS
 
 from .conftest import build_web_client
 
 
 @pytest.fixture
-def dual_base_client(
-    tmp_path: Path, route_graph: nx.Graph
-) -> Generator[TestClient, None, None]:
+def dual_base_client(tmp_path: Path, route_graph: nx.Graph) -> Generator[TestClient, None, None]:
     def row(location_id: str, latitude: str, longitude: str, osm_node_id: int) -> dict[str, str]:
         record = dict.fromkeys(BOAT_HIRE_ENRICHMENT_FIELDS, "")
         record.update(

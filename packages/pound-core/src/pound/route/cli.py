@@ -25,10 +25,11 @@ import argparse
 import math
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 from pydantic import ValidationError
 
-from pound.graph.artifact import load_artifact
+from pound.artifact import load_artifact
 from pound.route.plan import plan_route, plan_route_from_constraints
 from pound.route.resolve import resolve_place
 from pound.schemas import CanalConstraints, ResolvedConstraints
@@ -56,6 +57,7 @@ def _resolve_start_end(
     end_tok: str,
     graph,
     *,
+    gazetteer: dict | None = None,
     days: int | None,
     hours_per_day: float,
     boat_length_m: float | None,
@@ -80,7 +82,7 @@ def _resolve_start_end(
             if uid not in graph:
                 raise ValueError(f"uid {uid} is not a node in the graph")
             return uid
-        return resolve_place(tok, graph)
+        return resolve_place(tok, graph, gazetteer=gazetteer)
 
     start_uid = _resolve(start_tok, start_is_uid)
     end_uid = _resolve(end_tok, end_is_uid)
@@ -99,14 +101,14 @@ def _resolve_start_end(
             end_uid=end_uid,
             days=days,
             hours_per_day=hours_per_day,
-            **boat,
+            **cast(Any, boat),
         )
     return CanalConstraints(
         start=start_tok,
         end=end_tok,
         days=days,
         hours_per_day=hours_per_day,
-        **boat,
+        **cast(Any, boat),
     )
 
 
@@ -177,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
             args.start,
             args.end,
             graph,
+            gazetteer=loaded.gazetteer,
             days=args.days,
             hours_per_day=args.hours_per_day,
             boat_length_m=args.boat_length,
@@ -196,7 +199,9 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(constraints, ResolvedConstraints):
             result = plan_route(constraints, graph=graph)
         else:
-            result = plan_route_from_constraints(constraints, graph=graph)
+            result = plan_route_from_constraints(
+                constraints, graph=graph, gazetteer=loaded.gazetteer
+            )
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 1

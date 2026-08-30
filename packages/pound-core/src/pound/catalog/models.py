@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from pound.catalog.manifest import CATALOG_KINDS
 from pound.catalog.metadata import CatalogAddress, CatalogMetadata, NormalizedLink
-from pound.ingest.ir import OsmElementType
+from pound.models import OsmElementType
 
 __all__ = ["CatalogAddress", "CatalogMetadata", "CatalogPlace", "NormalizedLink"]
 
