@@ -53,7 +53,9 @@ export interface MapView {
   land(slot: EndpointSlot, route: LandRoute | null): void;
   canal(geometry: GeoJSONLineString | null): void;
   network(lines: GeoJSONLineString[]): void;
-  hireBases(bases: BoatHireBase[]): void;
+  focusedNetwork(lines: GeoJSONLineString[]): void;
+  hireBases(bases: BoatHireBase[], selectedIdentity: string | null): void;
+  onHireBaseSelect(callback: (identity: string | null) => void): () => void;
   fitNetwork(): void;
   places(places: PlaceResponse[]): void;
   pois(pois: RoutePoi[]): void;

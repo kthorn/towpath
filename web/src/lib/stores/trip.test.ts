@@ -9,6 +9,7 @@ import type {
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
+  GeoJSONLineString,
   HealthResponse,
   PlaceResponse,
   PlacesResponse,
@@ -37,9 +38,13 @@ const networkRequest = (days = 7): CanalNetworkRequest => ({
 const hireBase = (identity = 'base-one'): BoatHireBase => ({
   identity, operator: 'Canal Holidays', name: identity, coordinate: { lat: 51, lon: -1 },
 });
-const networkResponse = (identity = 'base-one', lines = [{
-  type: 'LineString' as const, coordinates: [[-1, 51], [-2, 52]] as [number, number][],
-}]): CanalNetworkResponse => ({ artifact_revision: 'r1', lines, bases: [hireBase(identity)] });
+const networkResponse = (
+  identity = 'base-one',
+  lines: GeoJSONLineString[] = [{
+    type: 'LineString', coordinates: [[-1, 51], [-2, 52]],
+  }],
+  highlight_lines: GeoJSONLineString[] = [],
+): CanalNetworkResponse => ({ artifact_revision: 'r1', lines, highlight_lines, bases: [hireBase(identity)] });
 const placeResponse = (osmType: 'node' | 'way' | 'relation', osmId: number, kind: string): PlaceResponse => ({
   kind, name: kind, coordinate: { lat: 51.2, lon: -1.2 },
   target_id: null, distance_to_target_m: null,
@@ -64,8 +69,8 @@ const boatHirePlace = (providerId: string, locationId: string): PlaceResponse =>
 
 function viewportMap(setCallback: (callback: (bounds: MapBounds) => void) => void): MapView {
   return {
-    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), places: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
-    clearLand: vi.fn(), closeInfoWindow: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()),
+    marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), places: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
+    clearLand: vi.fn(), closeInfoWindow: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onHireBaseSelect: vi.fn(() => vi.fn()),
     onViewportIdle: vi.fn((callback) => { setCallback(callback); return vi.fn(); }),
   };
 }
@@ -112,10 +117,57 @@ describe('trip store', () => {
 
     await vi.waitFor(() => expect(map.network).toHaveBeenCalledWith(network.lines));
     expect(canalNetwork).toHaveBeenCalledOnce();
-    expect(canalNetwork).toHaveBeenCalledWith(request);
-    expect(map.hireBases).toHaveBeenCalledWith(network.bases);
+    expect(canalNetwork).toHaveBeenCalledWith({ ...request, selected_base_identity: null });
+    expect(map.hireBases).toHaveBeenCalledWith(network.bases, null);
     expect(map.fitNetwork).toHaveBeenCalledOnce();
-    expect(get(store)).toMatchObject({ hasNetworkOverlay: true, networkError: null });
+    expect(get(store)).toMatchObject({ hasNetworkOverlay: true, networkError: null, networkLoading: false });
+  });
+
+  it('flags the network as loading until the request settles', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveNetwork!: (value: CanalNetworkResponse) => void;
+      const canalNetwork = vi.fn(
+        (_request: CanalNetworkRequest) =>
+          new Promise<CanalNetworkResponse>((resolve) => { resolveNetwork = resolve; }),
+      );
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork });
+      store.setNetworkRequest(networkRequest());
+      store.setMapView(map);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(get(store).networkLoading).toBe(true);
+
+      resolveNetwork(networkResponse());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(get(store).networkLoading).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the loading flag when the request fails', async () => {
+    vi.useFakeTimers();
+    try {
+      let rejectNetwork!: (error: Error) => void;
+      const canalNetwork = vi.fn(
+        (_request: CanalNetworkRequest) =>
+          new Promise<CanalNetworkResponse>((_resolve, reject) => { rejectNetwork = reject; }),
+      );
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork });
+      store.setNetworkRequest(networkRequest());
+      store.setMapView(map);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(get(store).networkLoading).toBe(true);
+
+      rejectNetwork(new Error('network unavailable'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(get(store).networkLoading).toBe(false);
+      expect(get(store).networkError).toBe('network unavailable');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('posts once per current generation and ignores older network responses', async () => {
@@ -143,8 +195,8 @@ describe('trip store', () => {
       store.setNetworkRequest(second);
       await vi.advanceTimersByTimeAsync(100);
       expect(canalNetwork).toHaveBeenCalledTimes(2);
-      expect(canalNetwork).toHaveBeenNthCalledWith(1, first);
-      expect(canalNetwork).toHaveBeenNthCalledWith(2, second);
+      expect(canalNetwork).toHaveBeenNthCalledWith(1, { ...first, selected_base_identity: null });
+      expect(canalNetwork).toHaveBeenNthCalledWith(2, { ...second, selected_base_identity: null });
 
       resolveNewer(newer);
       await vi.waitFor(() => expect(map.network).toHaveBeenLastCalledWith(newer.lines));
@@ -152,7 +204,7 @@ describe('trip store', () => {
       await Promise.resolve();
 
       expect(map.network).toHaveBeenCalledTimes(1);
-      expect(map.hireBases).toHaveBeenLastCalledWith(newer.bases);
+      expect(map.hireBases).toHaveBeenLastCalledWith(newer.bases, null);
     } finally {
       vi.useRealTimers();
     }
@@ -182,7 +234,7 @@ describe('trip store', () => {
       store.setMapView(secondMap);
       await vi.waitFor(() => expect(secondMap.network).toHaveBeenCalledWith(network.lines));
       expect(canalNetwork).toHaveBeenCalledOnce();
-      expect(secondMap.hireBases).toHaveBeenCalledWith(network.bases);
+      expect(secondMap.hireBases).toHaveBeenCalledWith(network.bases, null);
       expect(secondMap.fitNetwork).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
@@ -208,7 +260,7 @@ describe('trip store', () => {
     store.setMapView(secondMap);
 
     await vi.waitFor(() => expect(secondMap.network).toHaveBeenCalledWith(second.lines));
-    expect(canalNetwork).toHaveBeenNthCalledWith(2, networkRequest(8));
+    expect(canalNetwork).toHaveBeenNthCalledWith(2, { ...networkRequest(8), selected_base_identity: null });
   });
 
   it('keeps the previous lines and bases when a refresh fails', async () => {
@@ -234,7 +286,534 @@ describe('trip store', () => {
       expect(map.network).toHaveBeenCalledTimes(networkDraws);
       expect(map.hireBases).toHaveBeenCalledTimes(baseDraws);
       expect(map.network).toHaveBeenLastCalledWith(network.lines);
-      expect(map.hireBases).toHaveBeenLastCalledWith(network.bases);
+      expect(map.hireBases).toHaveBeenLastCalledWith(network.bases, null);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('selects a hire base, refreshes with the normalized identity, and no-ops repeats', async () => {
+    vi.useFakeTimers();
+    try {
+      const network = networkResponse();
+      const map = viewportMap(() => {});
+      const canalNetwork = vi.fn(async () => network);
+      const { store } = setup({ canalNetwork, map });
+      const request = networkRequest();
+
+      store.setNetworkRequest(request);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(map.network).toHaveBeenCalledWith(network.lines);
+
+      vi.mocked(map.hireBases).mockClear();
+      vi.mocked(map.focusedNetwork).mockClear();
+      vi.mocked(canalNetwork).mockClear();
+      store.selectHireBase('base-one');
+      expect(get(store).selectedHireBaseIdentity).toBe('base-one');
+      expect(map.hireBases).toHaveBeenLastCalledWith(network.bases, 'base-one');
+      expect(map.focusedNetwork).toHaveBeenLastCalledWith([]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenLastCalledWith({ ...request, selected_base_identity: 'base-one' });
+      expect(canalNetwork).toHaveBeenCalledOnce();
+
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let a stale response replace retained replay while newer request is pending', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveOlder!: (value: CanalNetworkResponse) => void;
+      let resolveNewer!: (value: CanalNetworkResponse) => void;
+      const union = networkResponse('base-one');
+      const focusedOlder = networkResponse('base-one', [{
+        type: 'LineString', coordinates: [[-3, 53], [-4, 54]],
+      }], [{
+        type: 'LineString', coordinates: [[-5, 55], [-6, 56]],
+      }]);
+      const focusedNewer = networkResponse('base-two', [{
+        type: 'LineString', coordinates: [[-7, 57], [-8, 58]],
+      }], [{
+        type: 'LineString', coordinates: [[-9, 59], [-10, 60]],
+      }]);
+      const canalNetwork = vi.fn()
+        .mockResolvedValueOnce(union)
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveOlder = resolve; }))
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveNewer = resolve; }));
+      const firstMap = viewportMap(() => {});
+      const secondMap = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map: firstMap });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-two');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledTimes(3);
+
+      resolveOlder(focusedOlder);
+      await vi.advanceTimersByTimeAsync(0);
+      store.setMapView(undefined);
+      store.setMapView(secondMap);
+
+      expect(secondMap.network).toHaveBeenCalledWith(union.lines);
+      expect(secondMap.hireBases).toHaveBeenCalledWith(union.bases, 'base-two');
+      expect(secondMap.focusedNetwork).toHaveBeenCalledWith([]);
+      expect(secondMap.network).not.toHaveBeenCalledWith(focusedOlder.lines);
+      expect(secondMap.focusedNetwork).not.toHaveBeenCalledWith(focusedOlder.highlight_lines);
+      expect(get(store).selectedHireBaseIdentity).toBe('base-two');
+
+      resolveNewer(focusedNewer);
+      await vi.waitFor(() => expect(secondMap.focusedNetwork).toHaveBeenLastCalledWith(focusedNewer.highlight_lines));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not schedule work for an equal normalized request', async () => {
+    vi.useFakeTimers();
+    try {
+      const map = viewportMap(() => {});
+      const canalNetwork = vi.fn(async () => networkResponse());
+      const { store } = setup({ canalNetwork, map });
+      const request = networkRequest();
+
+      store.setNetworkRequest({ ...request, selected_base_identity: 'ignored-by-store' });
+      store.setNetworkRequest(request);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(canalNetwork).toHaveBeenCalledOnce();
+      expect(canalNetwork).toHaveBeenCalledWith({ ...request, selected_base_identity: null });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('advances retained generation when clearing a matching selection without a request', async () => {
+    vi.useFakeTimers();
+    try {
+      const focused = { type: 'LineString' as const, coordinates: [[-5, 55], [-6, 56]] as [number, number][] };
+      const union = networkResponse();
+      const selected = networkResponse('base-one', union.lines, [focused]);
+      const canalNetwork = vi.fn().mockResolvedValueOnce(union).mockResolvedValueOnce(selected);
+      const firstMap = viewportMap(() => {});
+      const secondMap = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map: firstMap });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(firstMap.focusedNetwork).toHaveBeenLastCalledWith([focused]);
+
+      vi.mocked(firstMap.hireBases).mockClear();
+      vi.mocked(firstMap.focusedNetwork).mockClear();
+      store.selectHireBase(null);
+      expect(get(store).selectedHireBaseIdentity).toBeNull();
+      expect(firstMap.hireBases).toHaveBeenLastCalledWith(union.bases, null);
+      expect(firstMap.focusedNetwork).toHaveBeenLastCalledWith([]);
+
+      store.setMapView(undefined);
+      store.setMapView(secondMap);
+      expect(secondMap.network).toHaveBeenCalledWith(union.lines);
+      expect(secondMap.hireBases).toHaveBeenCalledWith(union.bases, null);
+      expect(secondMap.focusedNetwork).toHaveBeenCalledWith([]);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps retained generation old and refreshes after clearing changed constraints', async () => {
+    vi.useFakeTimers();
+    try {
+      const union = networkResponse();
+      const selected = networkResponse('base-one', union.lines, [{
+        type: 'LineString', coordinates: [[-5, 55], [-6, 56]],
+      }]);
+      const canalNetwork = vi.fn().mockResolvedValueOnce(union).mockResolvedValueOnce(selected).mockResolvedValue(union);
+      const firstMap = viewportMap(() => {});
+      const secondMap = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map: firstMap });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      store.setNetworkRequest(networkRequest(8));
+      store.selectHireBase(null);
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+
+      store.setMapView(undefined);
+      store.setMapView(secondMap);
+      expect(secondMap.network).toHaveBeenCalledWith(union.lines);
+      expect(secondMap.hireBases).toHaveBeenCalledWith(union.bases, null);
+      expect(secondMap.focusedNetwork).toHaveBeenCalledWith([]);
+      await vi.waitFor(() => expect(canalNetwork).toHaveBeenCalledTimes(3));
+
+      expect(canalNetwork).toHaveBeenLastCalledWith({ ...networkRequest(8), selected_base_identity: null });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('replaces a pending first network request when selection is cleared before payload', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveNetwork!: (value: CanalNetworkResponse) => void;
+      const canalNetwork = vi.fn(() => new Promise<CanalNetworkResponse>((resolve) => { resolveNetwork = resolve; }));
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map });
+
+      store.setNetworkRequest(networkRequest());
+      store.selectHireBase('base-one');
+      store.selectHireBase(null);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(canalNetwork).toHaveBeenCalledOnce();
+      expect(canalNetwork).toHaveBeenCalledWith({ ...networkRequest(), selected_base_identity: null });
+      resolveNetwork(networkResponse());
+      await vi.waitFor(() => expect(get(store).hasNetworkOverlay).toBe(true));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('replaces a pending first network request when reset runs before payload', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveFirst!: (value: CanalNetworkResponse) => void;
+      let resolveSecond!: (value: CanalNetworkResponse) => void;
+      const canalNetwork = vi.fn()
+        .mockImplementationOnce(() => new Promise<CanalNetworkResponse>((resolve) => { resolveFirst = resolve; }))
+        .mockImplementationOnce(() => new Promise<CanalNetworkResponse>((resolve) => { resolveSecond = resolve; }));
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.reset();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+      expect(canalNetwork).toHaveBeenLastCalledWith({ ...networkRequest(), selected_base_identity: null });
+      resolveFirst(networkResponse('stale'));
+      resolveSecond(networkResponse());
+      await vi.waitFor(() => expect(get(store).hasNetworkOverlay).toBe(true));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resets a selected base at default constraints without requesting again', async () => {
+    vi.useFakeTimers();
+    try {
+      const union = networkResponse();
+      const selected = networkResponse('base-one', union.lines, [{
+        type: 'LineString', coordinates: [[-5, 55], [-6, 56]],
+      }]);
+      const canalNetwork = vi.fn().mockResolvedValueOnce(union).mockResolvedValueOnce(selected);
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      store.reset();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(get(store).selectedHireBaseIdentity).toBeNull();
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+      expect(map.focusedNetwork).toHaveBeenLastCalledWith([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('skips the union repaint when only the selected base changes', async () => {
+    vi.useFakeTimers();
+    try {
+      const union = networkResponse();
+      const selected = networkResponse('base-one', union.lines, [{
+        type: 'LineString', coordinates: [[-5, 55], [-6, 56]],
+      }]);
+      const canalNetwork = vi.fn().mockResolvedValueOnce(union).mockResolvedValueOnce(selected);
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      expect(map.network).toHaveBeenCalledTimes(1);
+
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+      expect(map.network).toHaveBeenCalledTimes(1);
+      expect(map.focusedNetwork).toHaveBeenLastCalledWith([
+        { type: 'LineString', coordinates: [[-5, 55], [-6, 56]] },
+      ]);
+      expect(map.hireBases).toHaveBeenLastCalledWith(union.bases, 'base-one');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('repaints the union when the constraint key changes', async () => {
+    vi.useFakeTimers();
+    try {
+      const union = networkResponse();
+      const selected = networkResponse('base-one', [{
+        type: 'LineString', coordinates: [[-7, 57], [-8, 58]],
+      }], []);
+      const daysFive = networkResponse('base-one', [{
+        type: 'LineString', coordinates: [[-9, 59], [-10, 60]],
+      }], []);
+      const canalNetwork = vi.fn()
+        .mockResolvedValueOnce(union)
+        .mockResolvedValueOnce(selected)
+        .mockResolvedValueOnce(daysFive);
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      store.setNetworkRequest(networkRequest(5));
+      await vi.advanceTimersByTimeAsync(100);
+
+      // Base switch at days=7 skipped the union repaint; the days change repaints.
+      expect(map.network).toHaveBeenCalledTimes(2);
+      expect(map.network).toHaveBeenLastCalledWith([
+        { type: 'LineString', coordinates: [[-9, 59], [-10, 60]] },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('collapses reset and App default constraints to one null-selection request', async () => {
+    vi.useFakeTimers();
+    try {
+      const union = networkResponse();
+      const canalNetwork = vi.fn().mockResolvedValue(union);
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.setNetworkRequest(networkRequest(8));
+      store.reset();
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+      expect(canalNetwork).toHaveBeenLastCalledWith({ ...networkRequest(), selected_base_identity: null });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('replays retained union and matching-owner focus while starting a newer request', async () => {
+    vi.useFakeTimers();
+    try {
+      const union = networkResponse();
+      const focused = networkResponse('base-one', union.lines, [{
+        type: 'LineString', coordinates: [[-5, 55], [-6, 56]],
+      }]);
+      const canalNetwork = vi.fn()
+        .mockResolvedValueOnce(union)
+        .mockResolvedValueOnce(focused)
+        .mockImplementation(() => new Promise<CanalNetworkResponse>(() => {}));
+      const firstMap = viewportMap(() => {});
+      const secondMap = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map: firstMap });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      store.setNetworkRequest(networkRequest(8));
+      store.setMapView(undefined);
+      store.setMapView(secondMap);
+
+      expect(secondMap.network).toHaveBeenCalledWith(union.lines);
+      expect(secondMap.hireBases).toHaveBeenCalledWith(union.bases, 'base-one');
+      expect(secondMap.focusedNetwork).toHaveBeenCalledWith(focused.highlight_lines);
+      await Promise.resolve();
+      expect(canalNetwork).toHaveBeenLastCalledWith({ ...networkRequest(8), selected_base_identity: 'base-one' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('replays retained union without mismatched-owner focus after a switch', async () => {
+    vi.useFakeTimers();
+    try {
+      const union = networkResponse();
+      const focused = networkResponse('base-one', union.lines, [{
+        type: 'LineString', coordinates: [[-5, 55], [-6, 56]],
+      }]);
+      const canalNetwork = vi.fn()
+        .mockResolvedValueOnce(union)
+        .mockResolvedValueOnce(focused)
+        .mockImplementation(() => new Promise<CanalNetworkResponse>(() => {}));
+      const firstMap = viewportMap(() => {});
+      const secondMap = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map: firstMap });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-two');
+      store.setMapView(undefined);
+      store.setMapView(secondMap);
+
+      expect(secondMap.network).toHaveBeenCalledWith(union.lines);
+      expect(secondMap.focusedNetwork).toHaveBeenCalledWith([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers once from a duck-typed missing selected base error', async () => {
+    vi.useFakeTimers();
+    try {
+      const missing = { status: 422, code: 'selected_base_not_found' };
+      const union = networkResponse();
+      const canalNetwork = vi.fn()
+        .mockResolvedValueOnce(union)
+        .mockRejectedValueOnce(missing)
+        .mockResolvedValueOnce(union);
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(get(store).selectedHireBaseIdentity).toBeNull();
+      expect(get(store).networkError).toBeNull();
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledTimes(3);
+      expect(canalNetwork).toHaveBeenLastCalledWith({ ...networkRequest(), selected_base_identity: null });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('replays matching-key ownership before retry and preserves one retry after remount', async () => {
+    vi.useFakeTimers();
+    try {
+      const missing = { status: 422, code: 'selected_base_not_found' };
+      const union = networkResponse();
+      let resolveRetry!: (value: CanalNetworkResponse) => void;
+      const canalNetwork = vi.fn()
+        .mockResolvedValueOnce(union)
+        .mockRejectedValueOnce(missing)
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveRetry = resolve; }));
+      const firstMap = viewportMap(() => {});
+      const secondMap = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map: firstMap });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+      expect(get(store).selectedHireBaseIdentity).toBeNull();
+      store.setMapView(undefined);
+      store.setMapView(secondMap);
+      expect(secondMap.network).toHaveBeenCalledWith(union.lines);
+      expect(secondMap.hireBases).toHaveBeenCalledWith(union.bases, null);
+      expect(secondMap.focusedNetwork).toHaveBeenCalledWith([]);
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledTimes(3);
+      expect(canalNetwork).toHaveBeenLastCalledWith({ ...networkRequest(), selected_base_identity: null });
+      resolveRetry(union);
+      await vi.advanceTimersByTimeAsync(0);
+
+      store.setMapView(undefined);
+      store.setMapView(secondMap);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps mismatched-key retained union old and refreshes after remount', async () => {
+    vi.useFakeTimers();
+    try {
+      const missing = { status: 422, code: 'selected_base_not_found' };
+      const union = networkResponse();
+      let resolveRetry!: (value: CanalNetworkResponse) => void;
+      const canalNetwork = vi.fn()
+        .mockResolvedValueOnce(union)
+        .mockRejectedValueOnce(missing)
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveRetry = resolve; }));
+      const firstMap = viewportMap(() => {});
+      const secondMap = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map: firstMap });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.setNetworkRequest(networkRequest(8));
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledWith({ ...networkRequest(8), selected_base_identity: 'base-one' });
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+      expect(get(store).selectedHireBaseIdentity).toBeNull();
+
+      store.setMapView(undefined);
+      store.setMapView(secondMap);
+      expect(secondMap.network).toHaveBeenCalledWith(union.lines);
+      expect(secondMap.hireBases).toHaveBeenCalledWith(union.bases, null);
+      expect(secondMap.focusedNetwork).toHaveBeenCalledWith([]);
+      await vi.waitFor(() => expect(canalNetwork).toHaveBeenCalledTimes(3));
+      expect(canalNetwork).toHaveBeenLastCalledWith({ ...networkRequest(8), selected_base_identity: null });
+      resolveRetry(union);
+      await vi.advanceTimersByTimeAsync(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('publishes a normal network error when the null-selection retry fails', async () => {
+    vi.useFakeTimers();
+    try {
+      const missing = { status: 422, code: 'selected_base_not_found' };
+      const canalNetwork = vi.fn()
+        .mockResolvedValueOnce(networkResponse())
+        .mockRejectedValueOnce(missing)
+        .mockRejectedValueOnce(new Error('null retry unavailable'));
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.waitFor(() => expect(get(store).networkError).toBe('null retry unavailable'));
+      expect(get(store).selectedHireBaseIdentity).toBeNull();
+      expect(canalNetwork).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }
@@ -258,7 +837,7 @@ describe('trip store', () => {
 
     expect(canalNetwork).toHaveBeenCalledOnce();
     expect(secondMap.network).toHaveBeenCalledWith(network.lines);
-    expect(secondMap.hireBases).toHaveBeenCalledWith(network.bases);
+    expect(secondMap.hireBases).toHaveBeenCalledWith(network.bases, null);
     expect(secondMap.fitNetwork).not.toHaveBeenCalled();
   });
 
@@ -280,7 +859,7 @@ describe('trip store', () => {
       await vi.advanceTimersByTimeAsync(100);
       await vi.waitFor(() => expect(map.network).toHaveBeenLastCalledWith([]));
 
-      expect(map.hireBases).toHaveBeenLastCalledWith(baseOnly.bases);
+      expect(map.hireBases).toHaveBeenLastCalledWith(baseOnly.bases, null);
       expect(map.fitNetwork).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
@@ -369,7 +948,7 @@ describe('trip store', () => {
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
     await store.planCanalRoute({});
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     store.setMapView(map);
     expect(map.marker).toHaveBeenCalledWith('origin', { lat: 51, lon: -1 });
     expect(map.marker).toHaveBeenCalledWith('destination', { lat: 53, lon: -1 });
@@ -386,14 +965,14 @@ describe('trip store', () => {
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
     const canalDraw = vi.fn();
-    const map = { marker: vi.fn(() => { throw new Error('marker failed'); }), candidates: vi.fn(), land: vi.fn(), canal: canalDraw, network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(() => { throw new Error('marker failed'); }), candidates: vi.fn(), land: vi.fn(), canal: canalDraw, network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     store.setMapView(map);
     expect(map.candidates).toHaveBeenCalledTimes(2);
     expect(canalDraw).toHaveBeenCalledWith(null);
   });
   it('selects and draws the recommended reachable candidate for both symmetric endpoints', async () => {
     const marker = vi.fn(); const candidates = vi.fn(); const landDraw = vi.fn();
-    const map = { marker, candidates, land: landDraw, canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker, candidates, land: landDraw, canal: vi.fn(), network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ map });
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', { lat: 53, lon: -3 });
@@ -431,7 +1010,7 @@ describe('trip store', () => {
 
   it('retains place and candidates when land routing fails', async () => {
     const clearLand = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand, destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand, destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ routeError: new Error('land unavailable'), map });
     await store.setEndpointCoordinate('origin', place('origin'));
     expect(get(store).origin).toMatchObject({ selectedUid: 2, landRoute: null });
@@ -441,7 +1020,7 @@ describe('trip store', () => {
 
   it('constructs the exact canal request and draws the route', async () => {
     const drawCanal = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: drawCanal, network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: drawCanal, network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store, canalRoute } = setup({ map });
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
@@ -455,7 +1034,7 @@ describe('trip store', () => {
   it('clears the old route and locks before a failed replan', async () => {
     const drawCanal = vi.fn();
     const drawLocks = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: drawCanal, network: vi.fn(), fitNetwork: vi.fn(), pois: vi.fn(), locks: drawLocks, day: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: drawCanal, network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), pois: vi.fn(), locks: drawLocks, day: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store, canalRoute } = setup({ map });
     const lockedRoute: CanalRouteResponse = {
       ...canal,
@@ -522,7 +1101,7 @@ describe('trip store', () => {
 
   it('clears prior POIs before a failed refresh for a newly selected day', async () => {
     const drawPois = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), pois: drawPois, locks: vi.fn(), day: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), pois: drawPois, locks: vi.fn(), day: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const fullRoutePois: RoutePoisResponse = {
       pois: [{ identity: 'node/1/pub', kind: 'pub', name: 'The Pub', coordinate: { lat: 51, lon: -1 }, distance_to_route_m: 10 }],
       zoom_in_required: false,
@@ -910,7 +1489,7 @@ describe('trip store', () => {
 
   it('swallows map failures while retaining usable state', async () => {
     const failing = () => { throw new Error('map failed'); };
-    const map = { marker: failing, candidates: failing, land: failing, canal: failing, network: failing, fitNetwork: failing, onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: failing, candidates: failing, land: failing, canal: failing, network: failing, focusedNetwork: failing, hireBases: failing, fitNetwork: failing, onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ map });
     await expect(store.setEndpointCoordinate('origin', place('origin'))).resolves.toBeUndefined();
     expect(get(store).origin.selectedUid).toBe(2);
@@ -921,7 +1500,7 @@ describe('trip store', () => {
     let resolveOld!: (value: CanalRouteResponse) => void;
     let resolveNew!: (value: CanalRouteResponse) => void;
     const draw = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: draw, network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: draw, network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store, canalRoute } = setup({ map });
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
@@ -944,7 +1523,7 @@ describe('trip store', () => {
   it('invalidates an in-flight canal route when either endpoint changes', async () => {
     let resolveRoute!: (value: CanalRouteResponse) => void;
     const draw = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: draw, network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: draw, network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store, canalRoute } = setup({ map });
     await store.setEndpointCoordinate('origin', place('origin', 51));
     await store.setEndpointCoordinate('destination', place('destination', 53));
@@ -961,7 +1540,7 @@ describe('trip store', () => {
 
   it('initializes required selections as null and clears stale land for destination changes', async () => {
     const clearLand = vi.fn();
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand, destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand, destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ map });
     expect(get(store).origin.selectedUid).toBeNull();
     expect(get(store).destination.selectedUid).toBeNull();
@@ -972,7 +1551,7 @@ describe('trip store', () => {
   });
 
   it('turns a land-overlay clear failure into a warning without losing endpoint state', async () => {
-    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), clearLand: () => { throw new Error('clear failed'); }, destroy: vi.fn() } as unknown as MapView;
+    const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: () => { throw new Error('clear failed'); }, destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ map });
     await store.setEndpointCoordinate('destination', place('destination', 53));
     expect(get(store).destination.selectedUid).toBe(4);

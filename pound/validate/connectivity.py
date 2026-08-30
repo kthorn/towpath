@@ -75,14 +75,10 @@ def validate_graph(
     if poi_validation is not None:
         report.update(
             {
-                "poi_duplicate_identities": int(
-                    poi_validation.get("duplicate_identities", 0)
-                ),
+                "poi_duplicate_identities": int(poi_validation.get("duplicate_identities", 0)),
                 "poi_empty_geometry": int(poi_validation.get("empty_geometry", 0)),
                 "poi_invalid_geometry": int(poi_validation.get("invalid_geometry", 0)),
-                "poi_rejected_by_corridor": int(
-                    poi_validation.get("rejected_by_corridor", 0)
-                ),
+                "poi_rejected_by_corridor": int(poi_validation.get("rejected_by_corridor", 0)),
             }
         )
     return report

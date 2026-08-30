@@ -113,8 +113,13 @@ def test_invalid_geometry_is_repaired_and_empty_geometry_is_reported():
     graph = _graph()
     centre = _offset_from_edge(graph, 20)
     bowtie = Polygon(
-        [(centre.x, centre.y), (centre.x + 0.001, centre.y + 0.001),
-         (centre.x, centre.y + 0.001), (centre.x + 0.001, centre.y), (centre.x, centre.y)]
+        [
+            (centre.x, centre.y),
+            (centre.x + 0.001, centre.y + 0.001),
+            (centre.x, centre.y + 0.001),
+            (centre.x + 0.001, centre.y),
+            (centre.x, centre.y),
+        ]
     )
     result = attach_pois(
         graph,
@@ -328,9 +333,7 @@ def test_streaming_accumulator_counts_rejected_duplicate_once_like_legacy():
 
 def test_streaming_accumulator_can_discard_unique_rejected_winners():
     graph = _graph()
-    accumulator = PoiBuildAccumulator(
-        PoiAttachmentIndex(graph), retain_rejected_winners=False
-    )
+    accumulator = PoiBuildAccumulator(PoiAttachmentIndex(graph), retain_rejected_winners=False)
 
     accumulator.add(_candidate(_offset_from_edge(graph, 2000)))
 

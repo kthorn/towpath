@@ -18,6 +18,18 @@ from pound.web.boat_hire import BOAT_HIRE_ENRICHMENT_FIELDS
 from pound.web.config import WebSettings
 
 
+@pytest.fixture(autouse=True)
+def _clear_network_geometry_cache():
+    """Keep the process-global API geometry caches from leaking between tests."""
+    import pound.web.api as api_module
+
+    api_module._network_union_cache.clear()
+    api_module._network_highlight_cache.clear()
+    yield
+    api_module._network_union_cache.clear()
+    api_module._network_highlight_cache.clear()
+
+
 def catalog_place(kind: str, osm_id: int, lat: float, lon: float) -> CatalogPlace:
     return CatalogPlace(
         osm_type=OsmElementType.NODE,
@@ -43,21 +55,28 @@ def artifact_metadata(revision: str, *, source: str = "test") -> dict:
     }
 
 
+def write_boat_hire_row(
+    location_id: str, latitude: str, longitude: str, osm_node_id: int
+) -> dict[str, str]:
+    row = dict.fromkeys(BOAT_HIRE_ENRICHMENT_FIELDS, "")
+    row.update(
+        record_type="company_base",
+        source_provider_id="test-provider",
+        location_id=location_id,
+        latitude=latitude,
+        longitude=longitude,
+        osm_url=f"https://www.openstreetmap.org/node/{osm_node_id}",
+        exclude="",
+    )
+    return row
+
+
 def write_boat_hire_enrichment(
     path: Path,
     *,
     rows: list[dict[str, str]] | None = None,
 ) -> Path:
-    default = dict.fromkeys(BOAT_HIRE_ENRICHMENT_FIELDS, "")
-    default.update(
-        record_type="company_base",
-        source_provider_id="test-provider",
-        location_id="base:test",
-        latitude="51.0",
-        longitude="-1.0",
-        osm_url="https://www.openstreetmap.org/node/1",
-        exclude="",
-    )
+    default = write_boat_hire_row("base:test", "51.0", "-1.0", 1)
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=BOAT_HIRE_ENRICHMENT_FIELDS)
         writer.writeheader()
@@ -189,6 +208,15 @@ def fixture_pois() -> tuple[PointOfInterest, ...]:
 
 @pytest.fixture
 def web_client(tmp_path: Path, route_graph: nx.Graph) -> Generator[TestClient, None, None]:
+    yield from build_web_client(tmp_path, route_graph, boat_hire_rows=None)
+
+
+def build_web_client(
+    tmp_path: Path,
+    route_graph: nx.Graph,
+    *,
+    boat_hire_rows: list[dict[str, str]] | None,
+) -> Generator[TestClient, None, None]:
     artifact_path = tmp_path / "graph.pkl"
     save_artifact(route_graph, fixture_pois(), artifact_path, artifact_metadata("revision-test"))
     catalog_path = tmp_path / "catalog.pkl"
@@ -210,7 +238,10 @@ def web_client(tmp_path: Path, route_graph: nx.Graph) -> Generator[TestClient, N
     settings = WebSettings(
         artifact_path=artifact_path,
         static_dir=tmp_path / "static",
-        boat_hire_enrichment_path=write_boat_hire_enrichment(tmp_path / "boat-hire.csv"),
+        boat_hire_enrichment_path=write_boat_hire_enrichment(
+            tmp_path / "boat-hire.csv",
+            rows=boat_hire_rows if boat_hire_rows is not None else None,
+        ),
         catalog_path=catalog_path,
         candidate_pool_size=3,
         google_destination_limit=2,

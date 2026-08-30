@@ -76,9 +76,7 @@ def test_build_profile_reports_failure_before_reraising(monkeypatch):
     }
 
 
-def test_read_england_profiles_ingest_phases_and_internal_pbf_counts(
-    tmp_path, monkeypatch
-):
+def test_read_england_profiles_ingest_phases_and_internal_pbf_counts(tmp_path, monkeypatch):
     source = tmp_path / "region.osm.pbf"
     source.write_bytes(b"source")
     features = WaterwayFeatures(
@@ -108,9 +106,7 @@ def test_read_england_profiles_ingest_phases_and_internal_pbf_counts(
     monkeypatch.setattr(osm, "filter_navigable_ways", lambda value: value)
     stream = io.StringIO()
 
-    result = osm.read_england(
-        source, profiler=BuildProfiler(enabled=True, stream=stream)
-    )
+    result = osm.read_england(source, profiler=BuildProfiler(enabled=True, stream=stream))
 
     records = [json.loads(line) for line in stream.getvalue().splitlines()]
     assert result is features

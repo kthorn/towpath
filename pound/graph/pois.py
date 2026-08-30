@@ -178,9 +178,9 @@ class PoiAttachmentIndex:
     ) -> list[tuple[PointOfInterest | None, str | None]]:
         """Attach a bounded batch with vectorized geometry and nearest-edge operations."""
         candidate_list = list(candidates)
-        results: list[tuple[PointOfInterest | None, str | None] | None] = [
-            None
-        ] * len(candidate_list)
+        results: list[tuple[PointOfInterest | None, str | None] | None] = [None] * len(
+            candidate_list
+        )
         if not candidate_list:
             return []
 
@@ -236,17 +236,13 @@ class PoiAttachmentIndex:
             return [result for result in results if result is not None]
 
         geometries_bng = _to_bng(geometries[usable_indexes])
-        corridors = [
-            _CORRIDOR_M[candidate_list[index].category] for index in usable_indexes
-        ]
+        corridors = [_CORRIDOR_M[candidate_list[index].category] for index in usable_indexes]
         indexes = self.tree.query(
             geometries_bng,
             predicate="dwithin",
             distance=corridors,
         )
-        distances = geometry_distance(
-            geometries_bng[indexes[0]], self.tree.geometries[indexes[1]]
-        )
+        distances = geometry_distance(geometries_bng[indexes[0]], self.tree.geometries[indexes[1]])
         ranked: dict[int, tuple[float, tuple[int, int], int]] = {}
         for source_index, edge_index, distance in zip(
             indexes[0], indexes[1], distances, strict=True
@@ -265,9 +261,7 @@ class PoiAttachmentIndex:
                 results[candidate_index] = (None, "rejected_by_corridor")
             else:
                 distance_m, edge_key, edge_index = nearest
-                accepted.append(
-                    (candidate_index, local_index, edge_index, distance_m, edge_key)
-                )
+                accepted.append((candidate_index, local_index, edge_index, distance_m, edge_key))
 
         if accepted:
             accepted_bng = geometries_bng[[item[1] for item in accepted]]
@@ -277,9 +271,7 @@ class PoiAttachmentIndex:
             projected_bng = get_point(nearest_lines, -1)
             candidate_nearest_wgs84 = _to_wgs84(candidate_nearest_bng)
             projected_wgs84 = _to_wgs84(projected_bng)
-            representative_wgs84 = point_on_surface(
-                geometries[[item[0] for item in accepted]]
-            )
+            representative_wgs84 = point_on_surface(geometries[[item[0] for item in accepted]])
 
             for accepted_index, (
                 candidate_index,
@@ -384,14 +376,10 @@ class PoiAttachmentIndex:
 class PoiBuildAccumulator:
     """Attach candidates immediately while retaining deterministic identity winners only."""
 
-    def __init__(
-        self, index: PoiAttachmentIndex, *, retain_rejected_winners: bool = True
-    ) -> None:
+    def __init__(self, index: PoiAttachmentIndex, *, retain_rejected_winners: bool = True) -> None:
         self.index = index
         self._retain_rejected_winners = retain_rejected_winners
-        self._winners: dict[
-            tuple, tuple[str, PointOfInterest | None, str | None]
-        ] = {}
+        self._winners: dict[tuple, tuple[str, PointOfInterest | None, str | None]] = {}
         self._summary = {
             "duplicate_identities": 0,
             "empty_geometry": 0,
@@ -465,9 +453,7 @@ def attach_pois(graph: nx.Graph, candidates: Iterable[PoiCandidate]) -> PoiBuild
     Neither the graph nor any input candidate is modified.
     """
     ordered_candidates, duplicate_count = _deduplicate_candidates(candidates)
-    accumulator = PoiBuildAccumulator(
-        PoiAttachmentIndex(graph), retain_rejected_winners=False
-    )
+    accumulator = PoiBuildAccumulator(PoiAttachmentIndex(graph), retain_rejected_winners=False)
     for candidate in ordered_candidates:
         accumulator.add(candidate)
     result = accumulator.build_result()

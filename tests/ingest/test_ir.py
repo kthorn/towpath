@@ -34,8 +34,14 @@ def test_poi_candidate_round_trip_and_identity():
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("lat", 91), ("lat", -91), ("lon", 181), ("lon", -181),
-     ("projected_lat", 91), ("projected_lon", 181)],
+    [
+        ("lat", 91),
+        ("lat", -91),
+        ("lon", 181),
+        ("lon", -181),
+        ("projected_lat", 91),
+        ("projected_lon", 181),
+    ],
 )
 def test_point_of_interest_rejects_out_of_bounds_coordinates(field, value):
     values = _point_of_interest_values()
@@ -138,7 +144,10 @@ def test_waterway_features_round_trip():
         ],
         nodes=[
             WaterwayNode(
-                osm_id=10, lat=51.75, lon=-1.26, tags={"waterway": "lock_gate"},
+                osm_id=10,
+                lat=51.75,
+                lon=-1.26,
+                tags={"waterway": "lock_gate"},
                 kind=NodeKind.LOCK_GATE,
             )
         ],

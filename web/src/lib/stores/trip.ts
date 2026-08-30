@@ -66,6 +66,8 @@ export interface TripState {
   canalRoute: CanalRouteResponse | null;
   routeError: string | null;
   networkError: string | null;
+  networkLoading: boolean;
+  selectedHireBaseIdentity: string | null;
   hasNetworkOverlay: boolean;
   routing: boolean;
   selectedDay: number | null;
@@ -79,10 +81,46 @@ export interface TripState {
 
 export type CanalConstraints = Omit<CanalRouteRequest, 'start_uid' | 'end_uid' | 'artifact_revision'>;
 
+type NetworkConstraintKey = readonly [
+  number,
+  number,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+];
+
+const networkConstraintKey = (request: CanalNetworkRequest): NetworkConstraintKey => [
+  request.days,
+  request.hours_per_day,
+  request.boat_length_m,
+  request.boat_beam_m,
+  request.boat_draft_m,
+  request.boat_height_m,
+  request.movable_bridge_delay_min,
+];
+
+const sameConstraintKey = (left: NetworkConstraintKey, right: NetworkConstraintKey) =>
+  left.every((value, index) => value === right[index]);
+
+const sameNetworkRequest = (left: CanalNetworkRequest, right: CanalNetworkRequest) =>
+  left.days === right.days &&
+  left.hours_per_day === right.hours_per_day &&
+  left.boat_length_m === right.boat_length_m &&
+  left.boat_beam_m === right.boat_beam_m &&
+  left.boat_draft_m === right.boat_draft_m &&
+  left.boat_height_m === right.boat_height_m &&
+  left.movable_bridge_delay_min === right.movable_bridge_delay_min &&
+  left.selected_base_identity === right.selected_base_identity;
+
 type SuccessfulNetwork = {
   requestGeneration: number;
   lines: GeoJSONLineString[];
+  highlightLines: GeoJSONLineString[];
   bases: BoatHireBase[];
+  selectedBaseIdentity: string | null;
+  constraintKey: NetworkConstraintKey;
 };
 
 export interface TripStore extends Readable<TripState> {
@@ -97,6 +135,7 @@ export interface TripStore extends Readable<TripState> {
   togglePlaceKinds(kinds: string[], policy: PlacesQueryPolicy): void;
   refreshPlaces(bounds: MapBounds): Promise<void>;
   reset(): void;
+  selectHireBase(identity: string | null): void;
   setNetworkRequest(request: CanalNetworkRequest): void;
   setMapView(mapView: MapView | undefined): void;
 }
@@ -127,7 +166,8 @@ export function createTripStore(dependencies: {
   let mapView = dependencies.mapView;
   const initial: TripState = {
     origin: emptyEndpoint(), destination: emptyEndpoint(), canalRoute: null, routeError: null, routing: false,
-    selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null, networkError: null, hasNetworkOverlay: false,
+    selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null, networkError: null, networkLoading: false,
+    selectedHireBaseIdentity: null, hasNetworkOverlay: false,
     places: { enabledKinds: [], places: [], loading: false, error: null },
     placesStatus: 'unknown', placesResultLimitExceeded: false,
   };
@@ -143,8 +183,10 @@ export function createTripStore(dependencies: {
   let desiredNetworkGeneration = 0;
   let mapAttachmentGeneration = mapView ? 1 : 0;
   let networkPaintedAttachmentGeneration: number | undefined;
+  let paintedUnion: { attachmentGeneration: number; constraintKey: NetworkConstraintKey } | null = null;
   let successfulNetwork: SuccessfulNetwork | undefined;
   let networkRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let networkRetryPendingGeneration: number | undefined;
   let networkRequest: { generation: number; promise: Promise<void> } | undefined;
   let viewportUnsubscribe: (() => void) | undefined;
   let lastViewportBounds: MapBounds | undefined;
@@ -199,11 +241,22 @@ export function createTripStore(dependencies: {
   const isCurrentMapAttachment = (view: MapView, attachmentGeneration: number) =>
     mapView === view && mapAttachmentGeneration === attachmentGeneration;
   const drawNetwork = (view: MapView, attachmentGeneration: number, network: SuccessfulNetwork) => {
-    if (network.requestGeneration !== desiredNetworkGeneration ||
-        !isCurrentMapAttachment(view, attachmentGeneration)) return;
-    mapCall('origin', () => view.network(network.lines));
     if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
-    mapCall('origin', () => view.hireBases(network.bases));
+    // ponytail: union lines are byte-identical when only the selected base changed;
+    // skipping the repaint avoids re-pathing thousands of polylines.
+    const unionUnchanged = paintedUnion?.attachmentGeneration === attachmentGeneration
+      && sameConstraintKey(paintedUnion.constraintKey, network.constraintKey);
+    if (!unionUnchanged) {
+      mapCall('origin', () => view.network(network.lines));
+      if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
+      paintedUnion = { attachmentGeneration, constraintKey: network.constraintKey };
+    }
+    mapCall('origin', () => view.hireBases(network.bases, state.selectedHireBaseIdentity));
+    if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
+    const focusedLines = network.selectedBaseIdentity === state.selectedHireBaseIdentity
+      ? network.highlightLines
+      : [];
+    mapCall('origin', () => view.focusedNetwork(focusedLines));
     if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
     const shouldFit = networkPaintedAttachmentGeneration !== attachmentGeneration || network.lines.length === 0;
     networkPaintedAttachmentGeneration = attachmentGeneration;
@@ -215,11 +268,19 @@ export function createTripStore(dependencies: {
     const request = desiredNetworkRequest;
     const generation = desiredNetworkGeneration;
     if (!mapView || !request || networkRequest?.generation === generation) return;
+    networkRetryPendingGeneration = undefined;
     const promise = Promise.resolve()
       .then(() => poundApi.canalNetwork(request))
-      .then(({ lines, bases }) => {
+      .then(({ lines, highlight_lines, bases }) => {
         if (generation !== desiredNetworkGeneration) return;
-        const network = { requestGeneration: generation, lines, bases };
+        const network: SuccessfulNetwork = {
+          requestGeneration: generation,
+          lines,
+          highlightLines: highlight_lines,
+          bases,
+          selectedBaseIdentity: request.selected_base_identity ?? null,
+          constraintKey: networkConstraintKey(request),
+        };
         successfulNetwork = network;
         inner.update((current) => ({ ...current, networkError: null, hasNetworkOverlay: true }));
         const view = mapView;
@@ -227,12 +288,23 @@ export function createTripStore(dependencies: {
       })
       .catch((error) => {
         if (generation !== desiredNetworkGeneration) return;
+        if (request.selected_base_identity != null &&
+            typeof error === 'object' && error !== null &&
+            'status' in error && error.status === 422 &&
+            'code' in error && error.code === 'selected_base_not_found') {
+          clearHireBaseSelection(true);
+          return;
+        }
         inner.update((current) => ({ ...current, networkError: message(error) }));
       })
       .finally(() => {
-        if (networkRequest?.generation === generation) networkRequest = undefined;
+        if (networkRequest?.generation === generation) {
+          networkRequest = undefined;
+          inner.update((current) => ({ ...current, networkLoading: false }));
+        }
       });
     networkRequest = { generation, promise };
+    inner.update((current) => ({ ...current, networkLoading: true }));
   };
   const cancelScheduledNetworkRefresh = () => {
     if (networkRefreshTimer === undefined) return;
@@ -246,11 +318,69 @@ export function createTripStore(dependencies: {
     networkRefreshTimer = setTimeout(() => {
       networkRefreshTimer = undefined;
       if (!mapView || generation !== desiredNetworkGeneration) return;
+      if (networkRetryPendingGeneration === generation) networkRetryPendingGeneration = undefined;
       loadNetwork();
     }, 100);
   };
+  const repaintHireBaseSelection = (identity: string | null) => {
+    const view = mapView;
+    if (!view) return;
+    const retained = successfulNetwork;
+    if (retained) mapCall('origin', () => view.hireBases(retained.bases, identity));
+    mapCall('origin', () => view.focusedNetwork([]));
+  };
+  const clearHireBaseSelection = (retry = false) => {
+    cancelScheduledNetworkRefresh();
+    const nextRequest = desiredNetworkRequest
+      ? { ...desiredNetworkRequest, selected_base_identity: null }
+      : undefined;
+    desiredNetworkRequest = nextRequest;
+    desiredNetworkGeneration += 1;
+    networkRetryPendingGeneration = retry ? desiredNetworkGeneration : undefined;
+    inner.update((current) => ({
+      ...current,
+      selectedHireBaseIdentity: null,
+      ...(retry ? { networkError: null } : {}),
+    }));
+    repaintHireBaseSelection(null);
+
+    const retained = successfulNetwork;
+    const reusable = retained && nextRequest && sameConstraintKey(
+      retained.constraintKey,
+      networkConstraintKey(nextRequest),
+    );
+    if (reusable) {
+      successfulNetwork = {
+        ...retained,
+        requestGeneration: desiredNetworkGeneration,
+        highlightLines: [],
+        selectedBaseIdentity: null,
+        constraintKey: networkConstraintKey(nextRequest),
+      };
+    }
+    if (retry || !reusable) scheduleNetworkRefresh();
+  };
+  function selectHireBase(identity: string | null): void {
+    if (identity === state.selectedHireBaseIdentity) return;
+    if (identity === null) {
+      clearHireBaseSelection();
+      return;
+    }
+    cancelScheduledNetworkRefresh();
+    networkRetryPendingGeneration = undefined;
+    desiredNetworkGeneration += 1;
+    if (desiredNetworkRequest) {
+      desiredNetworkRequest = { ...desiredNetworkRequest, selected_base_identity: identity };
+    }
+    inner.update((current) => ({ ...current, selectedHireBaseIdentity: identity }));
+    repaintHireBaseSelection(identity);
+    scheduleNetworkRefresh();
+  }
   const setNetworkRequest = (request: CanalNetworkRequest) => {
-    desiredNetworkRequest = request;
+    const normalized = { ...request, selected_base_identity: state.selectedHireBaseIdentity };
+    if (desiredNetworkRequest && sameNetworkRequest(desiredNetworkRequest, normalized)) return;
+    networkRetryPendingGeneration = undefined;
+    desiredNetworkRequest = normalized;
     desiredNetworkGeneration += 1;
     scheduleNetworkRefresh();
   };
@@ -589,6 +719,7 @@ export function createTripStore(dependencies: {
   }
 
   function reset(): void {
+    clearHireBaseSelection();
     generations.origin += 1;
     generations.destination += 1;
     routeGeneration += 1;
@@ -630,7 +761,7 @@ export function createTripStore(dependencies: {
   return {
     subscribe: inner.subscribe, setEndpointCoordinate, selectCandidate, confirmGeometricFallback,
     planCanalRoute, togglePoiKind, togglePlaceKind, togglePlaceKinds, selectDay, refreshRoutePois, refreshPlaces,
-    reset, setNetworkRequest,
+    reset, selectHireBase, setNetworkRequest,
     setMapView(value) {
       cancelScheduledPoiRefresh();
       viewportUnsubscribe?.();
@@ -642,11 +773,9 @@ export function createTripStore(dependencies: {
       mapView = value;
       if (!mapView) return;
       const network = successfulNetwork;
-      if (network?.requestGeneration === desiredNetworkGeneration) {
-        drawNetwork(mapView, attachmentGeneration, network);
-      } else {
-        loadNetwork();
-      }
+      if (network) drawNetwork(mapView, attachmentGeneration, network);
+      if (networkRetryPendingGeneration === desiredNetworkGeneration) scheduleNetworkRefresh();
+      else if (!network || network.requestGeneration !== desiredNetworkGeneration) loadNetwork();
       for (const slot of ['origin', 'destination'] as const) {
         const endpoint = state[slot];
         if (endpoint.place) mapCall(slot, () => mapView?.marker(slot, endpoint.place!.coordinate));

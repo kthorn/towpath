@@ -23,11 +23,12 @@ function hireBase(overrides: Partial<BoatHireBase> = {}): BoatHireBase {
   };
 }
 
-function setup() {
-  const mapListeners: Array<{ callback: (event: never) => void; remove: ReturnType<typeof vi.fn> }> = [];
+function setup(options: { zoom?: number } = {}) {
+  let currentZoom = options.zoom ?? 13;
+  const mapListeners: Array<{ event: string; callback: (event: never) => void; remove: ReturnType<typeof vi.fn> }> = [];
   const map = {
-    addListener: vi.fn((_event, callback) => {
-      const listener = { callback, remove: vi.fn() };
+    addListener: vi.fn((event: string, callback) => {
+      const listener = { event, callback, remove: vi.fn() };
       mapListeners.push(listener);
       return listener;
     }),
@@ -61,7 +62,7 @@ function setup() {
       return listener;
     }),
   };
-  const polylines: Array<{ options: Record<string, unknown>; setMap: ReturnType<typeof vi.fn> }> = [];
+  const polylines: Array<{ options: Record<string, unknown>; setMap: ReturnType<typeof vi.fn>; setPath: ReturnType<typeof vi.fn> }> = [];
   const facade: MapFacade = {
     createMap: vi.fn(() => map),
     createMarker: vi.fn((options) => {
@@ -83,20 +84,27 @@ function setup() {
     }),
     createInfoWindow: vi.fn(() => infoWindow),
     createPolyline: vi.fn((options) => {
-      const polyline = { options, setMap: vi.fn() };
+      const polyline = { options, setMap: vi.fn(), setPath: vi.fn() };
       polylines.push(polyline);
       return polyline;
     }),
     fitBounds: vi.fn(),
     getBounds: vi.fn(() => ({ south: 50, west: -2, north: 54, east: 0 })),
+    getZoom: vi.fn(() => currentZoom),
   };
   const element = document.createElement('div');
+  const setZoom = (zoom: number) => { currentZoom = zoom; };
+  const fireMapEvent = (event: string, payload: never = undefined as never) => {
+    for (const listener of mapListeners) if (listener.event === event) listener.callback(payload);
+  };
   return {
     view: createGoogleMapView(facade, element),
     element,
     facade,
     map,
     mapListeners,
+    setZoom,
+    fireMapEvent,
     markers,
     markerListeners,
     infoWindow,
@@ -178,13 +186,15 @@ describe('Google map adapter', () => {
     expect(element).not.toHaveAttribute('data-origin-land-overlay');
 
     expect(polylines[0].setMap).toHaveBeenCalledWith(null);
-    expect(polylines[1].setMap).not.toHaveBeenCalled();
-    expect(polylines[1].options.path).toEqual([{ lat: 52.5, lng: -1.5 }, { lat: 52.6, lng: -1.6 }]);
+    expect(polylines[1].options).toMatchObject({ strokeColor: '#e0f2fe', strokeWeight: 11, zIndex: 5 });
+    expect(polylines[2].options).toMatchObject({ strokeColor: '#0369a1', strokeWeight: 7, zIndex: 6 });
+    expect(polylines[2].options.path).toEqual([{ lat: 52.5, lng: -1.5 }, { lat: 52.6, lng: -1.6 }]);
     expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [{ lat: 52.5, lng: -1.5 }, { lat: 52.6, lng: -1.6 }]);
 
     view.canal(null);
     expect(element).not.toHaveAttribute('data-canal-overlay');
     expect(polylines[1].setMap).toHaveBeenCalledWith(null);
+    expect(polylines[2].setMap).toHaveBeenCalledWith(null);
   });
 
   it('draws, replaces, fits, and destroys full network polylines', () => {
@@ -198,14 +208,24 @@ describe('Google map adapter', () => {
     ];
 
     view.network(lines);
-    expect(facade.createPolyline).toHaveBeenCalledTimes(2);
-    expect(polylines[0].options).toMatchObject({ strokeColor: '#0e7490', strokeWeight: 3, strokeOpacity: 0.55 });
-    expect(polylines[1].options).toMatchObject({ strokeColor: '#0e7490', strokeWeight: 3, strokeOpacity: 0.55 });
+    expect(facade.createPolyline).toHaveBeenCalledTimes(4);
+    expect(polylines[0].options).toMatchObject({ strokeColor: '#e0f2fe', strokeWeight: 8, zIndex: 1 });
+    expect(polylines[1].options).toMatchObject({ strokeColor: '#0284c7', strokeWeight: 4, zIndex: 2 });
+    expect(polylines[2].options).toMatchObject({ strokeColor: '#e0f2fe', strokeWeight: 8, zIndex: 1 });
+    expect(polylines[3].options).toMatchObject({ strokeColor: '#0284c7', strokeWeight: 4, zIndex: 2 });
 
     view.network(replacement);
-    expect(polylines[0].setMap).toHaveBeenCalledWith(null);
-    expect(polylines[1].setMap).toHaveBeenCalledWith(null);
-    expect(facade.createPolyline).toHaveBeenCalledTimes(3);
+    expect(facade.createPolyline).toHaveBeenCalledTimes(4);
+    expect(polylines[0].setPath).toHaveBeenCalledWith([
+      { lat: 52, lng: -2 },
+      { lat: 52.1, lng: -2.1 },
+    ]);
+    expect(polylines[1].setPath).toHaveBeenCalledWith([
+      { lat: 52, lng: -2 },
+      { lat: 52.1, lng: -2.1 },
+    ]);
+    expect(polylines[2].setMap).toHaveBeenCalledWith(null);
+    expect(polylines[3].setMap).toHaveBeenCalledWith(null);
 
     view.fitNetwork();
     expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [
@@ -214,20 +234,104 @@ describe('Google map adapter', () => {
     ]);
 
     view.destroy();
-    expect(polylines[2].setMap).toHaveBeenCalledWith(null);
+    expect(polylines[0].setMap).toHaveBeenCalledWith(null);
+    expect(polylines[1].setMap).toHaveBeenCalledWith(null);
+  });
+
+  it('reuses network polylines when repainting at a different line count', () => {
+    const { view, facade, polylines } = setup();
+    const lineA: GeoJSONLineString = { type: 'LineString', coordinates: [[-1, 51], [-1.1, 51.1]] };
+    const lineB: GeoJSONLineString = { type: 'LineString', coordinates: [[-1.2, 51.2], [-1.3, 51.3]] };
+    const lineC: GeoJSONLineString = { type: 'LineString', coordinates: [[-2, 52], [-2.1, 52.1]] };
+
+    view.network([lineA, lineB]);
+    expect(facade.createPolyline).toHaveBeenCalledTimes(4);
+
+    view.network([lineA, lineB, lineC]);
+    expect(facade.createPolyline).toHaveBeenCalledTimes(6);
+    expect(polylines[0].setPath).toHaveBeenCalledWith([
+      { lat: 51, lng: -1 },
+      { lat: 51.1, lng: -1.1 },
+    ]);
+    expect(polylines[4].setMap).not.toHaveBeenCalledWith(null);
+
+    view.network([lineC]);
+    expect(facade.createPolyline).toHaveBeenCalledTimes(6);
+    expect(polylines[0].setPath).toHaveBeenCalledWith([
+      { lat: 52, lng: -2 },
+      { lat: 52.1, lng: -2.1 },
+    ]);
+    expect(polylines.slice(2).every((line) => line.setMap.mock.calls.some(([map]) => map === null))).toBe(true);
+  });
+
+  it('hides network casing below the detail zoom and restores it on zoom-in', () => {
+    const { view, facade, polylines, fireMapEvent, setZoom } = setup({ zoom: 9 });
+    const line: GeoJSONLineString = { type: 'LineString', coordinates: [[-1, 51], [-1.1, 51.1]] };
+
+    view.network([line]);
+    expect(facade.createPolyline).toHaveBeenCalledTimes(2);
+    expect(polylines[0].setMap).toHaveBeenCalledWith(null);
+    expect(polylines[1].options).toMatchObject({ strokeColor: '#0284c7', strokeWeight: 4, zIndex: 2 });
+
+    setZoom(13);
+    fireMapEvent('idle');
+    expect(polylines[0].setMap).toHaveBeenCalledWith(expect.anything());
+  });
+
+  it('draws focused reach with ordered layers, excludes it from fitting, and cleans it up', () => {
+    const { view, facade, polylines } = setup();
+    const line: GeoJSONLineString = { type: 'LineString', coordinates: [[-1, 51], [-1.1, 51.1]] };
+    const focusedLine: GeoJSONLineString = { type: 'LineString', coordinates: [[-10, 60], [-10.1, 60.1]] };
+
+    view.network([line]);
+    view.focusedNetwork([focusedLine]);
+    view.canal(line);
+    view.day({
+      day: 1,
+      geometry: line,
+      start: { lat: 51, lon: -1 },
+      end: { lat: 52, lon: -2 },
+    });
+    view.land('origin', { path: [{ lat: 51, lon: -1 }], durationSeconds: 1, distanceMeters: 1 });
+
+    expect(polylines[1].options).toMatchObject({ strokeColor: '#0284c7', strokeWeight: 4, zIndex: 2 });
+    expect(polylines[3].options).toMatchObject({ strokeColor: '#00324d', strokeWeight: 6, zIndex: 4 });
+    expect(polylines[5].options).toMatchObject({ strokeColor: '#0369a1', strokeWeight: 7, zIndex: 6 });
+    expect(polylines[7].options).toMatchObject({ strokeColor: '#0ea5e9', strokeWeight: 9, zIndex: 8 });
+    expect(polylines[8].options).toMatchObject({ strokeColor: '#2563eb', strokeWeight: 5, zIndex: 9 });
+
+    vi.mocked(facade.fitBounds).mockClear();
+    view.fitNetwork();
+    expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [
+      { lat: 51, lng: -1 },
+      { lat: 51.1, lng: -1.1 },
+    ]);
+
+    const replacement: GeoJSONLineString = { type: 'LineString', coordinates: [[-20, 70], [-20.1, 70.1]] };
+    view.focusedNetwork([replacement]);
+    expect(polylines[2].setPath).toHaveBeenCalledWith([
+      { lat: 70, lng: -20 },
+      { lat: 70.1, lng: -20.1 },
+    ]);
+    view.focusedNetwork([]);
+    expect(polylines.slice(2, 4).every((line) => line.setMap.mock.calls.some(([map]) => map === null))).toBe(true);
+
+    view.focusedNetwork([focusedLine]);
+    view.destroy();
+    expect(polylines.slice(9, 11).every((line) => line.setMap.mock.calls.some(([map]) => map === null))).toBe(true);
   });
 
   it('fits hire bases when the network has no lines', () => {
     const { view, facade } = setup();
     view.network([]);
-    view.hireBases([hireBase()]);
+    view.hireBases([hireBase()], null);
     view.fitNetwork();
     expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [{ lat: 51, lng: -1 }]);
   });
 
   it('renders hire-base markers with hover labels and operator/base popups', () => {
     const { view, element, facade, markers, markerListeners, infoWindow } = setup();
-    view.hireBases([hireBase()]);
+    view.hireBases([hireBase()], null);
 
     const marker = markers[0];
     expect(marker.title).toBe('Canal Holidays — Base One');
@@ -248,15 +352,159 @@ describe('Google map adapter', () => {
     expect(vi.mocked(facade.createMarker).mock.calls[0][0].content).not.toHaveTextContent('Base One');
   });
 
+  it('selects hire bases, updates marker styling, and opens the popup', () => {
+    const { view, markers, markerListeners, infoWindow } = setup();
+    const selected = vi.fn();
+    const unsubscribe = view.onHireBaseSelect(selected);
+    view.hireBases([hireBase()], null);
+
+    const marker = markers[0];
+    const stopPropagation = vi.fn();
+    markerListeners.find(({ marker: candidate, event }) => candidate === marker && event === 'click')?.callback({
+      stopPropagation,
+    } as never);
+
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    expect(selected).toHaveBeenCalledWith('operator/base-one');
+    expect(marker.content).toHaveClass('selected');
+    expect(marker.title).toContain('(selected)');
+    expect(marker.content).toHaveAttribute('aria-label', expect.stringContaining('selected'));
+    expect(infoWindow.open).toHaveBeenCalledWith(expect.objectContaining({ anchor: marker }));
+    unsubscribe();
+  });
+
+  it('reuses unchanged ordered hire-base markers and only updates selection styling', () => {
+    const { view, markers, markerListeners, infoWindow } = setup();
+    const first = hireBase();
+    const second = hireBase({ identity: 'operator/base-two', name: 'Base Two', coordinate: { lat: 52, lon: -2 } });
+    view.hireBases([first, second], first.identity);
+    const firstMarker = markers[0];
+    const secondMarker = markers[1];
+
+    markerListeners.find(({ marker, event }) => marker === firstMarker && event === 'click')?.callback({} as never);
+    infoWindow.close.mockClear();
+    view.hireBases([first, second], second.identity);
+
+    expect(markers).toHaveLength(2);
+    expect(markers[0]).toBe(firstMarker);
+    expect(markers[1]).toBe(secondMarker);
+    expect(infoWindow.close).not.toHaveBeenCalled();
+    expect(firstMarker.content).not.toHaveClass('selected');
+    expect(secondMarker.content).toHaveClass('selected');
+    expect(firstMarker.title).not.toContain('(selected)');
+    expect(secondMarker.title).toContain('(selected)');
+  });
+
+  it('replaces hire-base markers for every changed full-record field without notifying', () => {
+    const changes: Array<Partial<BoatHireBase>> = [
+      { operator: 'Different Operator' },
+      { name: 'Different Base' },
+      { identity: 'operator/base-two' },
+      { coordinate: { lat: 52, lon: -2 } },
+    ];
+
+    for (const change of changes) {
+      const { view, markers, markerListeners, infoWindow } = setup();
+      const selected = vi.fn();
+      view.onHireBaseSelect(selected);
+      const original = hireBase();
+      view.hireBases([original], original.identity);
+      const oldMarker = markers[0];
+      const oldListeners = markerListeners.filter(({ marker }) => marker === oldMarker);
+      markerListeners.find(({ marker, event }) => marker === oldMarker && event === 'click')?.callback({} as never);
+      selected.mockClear();
+      infoWindow.close.mockClear();
+
+      view.hireBases([hireBase(change)], original.identity);
+
+      expect(infoWindow.close).toHaveBeenCalledOnce();
+      expect(oldMarker.map).toBeNull();
+      expect(oldListeners.every(({ remove }) => remove.mock.calls.length > 0)).toBe(true);
+      expect(selected).not.toHaveBeenCalled();
+    }
+  });
+
+  it('detects in-place mutation of a hire-base coordinate and replaces markers', () => {
+    const { view, markers, markerListeners, infoWindow } = setup();
+    const base = hireBase();
+    const bases = [base];
+    view.hireBases(bases, null);
+    const oldMarker = markers[0];
+    const oldListeners = markerListeners.filter(({ marker }) => marker === oldMarker);
+    infoWindow.close.mockClear();
+    base.coordinate.lat = 52;
+    base.coordinate.lon = -2;
+    view.hireBases(bases, null);
+    expect(infoWindow.close).toHaveBeenCalledOnce();
+    expect(oldMarker.map).toBeNull();
+    expect(oldListeners.every(({ remove }) => remove.mock.calls.length > 0)).toBe(true);
+    expect(markers[1].map).not.toBeNull();
+    expect(markers[1].position).toEqual({ lat: 52, lng: -2 });
+  });
+
+  it('keeps hire-base subscribers through marker replacement', () => {
+    const { view, markers, markerListeners } = setup();
+    const selected = vi.fn();
+    view.onHireBaseSelect(selected);
+    view.hireBases([hireBase()], null);
+    markerListeners.find(({ marker, event }) => marker === markers[0] && event === 'click')?.callback({} as never);
+    expect(selected).toHaveBeenLastCalledWith('operator/base-one');
+
+    selected.mockClear();
+    const replacement = hireBase({ identity: 'operator/base-two', name: 'Base Two' });
+    view.hireBases([replacement], null);
+    markerListeners.find(({ marker, event }) => marker === markers[1] && event === 'click')?.callback({} as never);
+
+    expect(selected).toHaveBeenCalledWith('operator/base-two');
+  });
+
+  it('clears active hire-base selection on the first background click after popup close', () => {
+    const { view, mapListeners, markerListeners, markers, infoWindowListeners, fireMapEvent } = setup();
+    const endpointClick = vi.fn();
+    const selected = vi.fn();
+    view.onMapClick(endpointClick);
+    view.onHireBaseSelect(selected);
+    view.hireBases([hireBase()], null);
+    markerListeners.find(({ marker, event }) => marker === markers[0] && event === 'click')?.callback({} as never);
+    infoWindowListeners.find(({ event }) => event === 'closeclick')?.callback();
+
+    fireMapEvent('click', { latLng: { lat: () => 53, lng: () => -2 } } as never);
+    expect(selected).toHaveBeenLastCalledWith(null);
+    expect(endpointClick).not.toHaveBeenCalled();
+
+    fireMapEvent('click', { latLng: { lat: () => 53, lng: () => -2 } } as never);
+    expect(endpointClick).toHaveBeenCalledWith({ lat: 53, lon: -2 });
+  });
+
+  it('unsubscribes and destroys hire-base selection and marker listeners', () => {
+    const { view, markers, markerListeners, infoWindowListeners } = setup();
+    const selected = vi.fn();
+    const unsubscribe = view.onHireBaseSelect(selected);
+    view.hireBases([hireBase()], null);
+    unsubscribe();
+    markerListeners.find(({ marker, event }) => marker === markers[0] && event === 'click')?.callback({} as never);
+    expect(selected).not.toHaveBeenCalled();
+
+    const afterDestroy = vi.fn();
+    view.onHireBaseSelect(afterDestroy);
+    view.destroy();
+    markerListeners.find(({ marker, event }) => marker === markers[0] && event === 'click')?.callback({} as never);
+
+    expect(afterDestroy).not.toHaveBeenCalled();
+    expect(markers[0].map).toBeNull();
+    expect(markerListeners.every(({ remove }) => remove.mock.calls.length > 0)).toBe(true);
+    expect(infoWindowListeners.every(({ remove }) => remove.mock.calls.length > 0)).toBe(true);
+  });
+
   it('closes and clears replaced hire-base markers and listeners', () => {
     const { view, markers, markerListeners, infoWindow } = setup();
-    view.hireBases([hireBase()]);
+    view.hireBases([hireBase()], null);
     const oldMarker = markers[0];
     const oldListeners = markerListeners.filter(({ marker }) => marker === oldMarker);
     markerListeners.find(({ marker, event }) => marker === oldMarker && event === 'click')?.callback({} as never);
     infoWindow.close.mockClear();
 
-    view.hireBases([hireBase({ identity: 'operator/base-two', name: 'Base Two' })]);
+    view.hireBases([hireBase({ identity: 'operator/base-two', name: 'Base Two' })], null);
 
     expect(infoWindow.close).toHaveBeenCalledOnce();
     expect(oldMarker.map).toBeNull();
@@ -266,7 +514,7 @@ describe('Google map adapter', () => {
 
   it('clears hire-base markers and listeners on destroy', () => {
     const { view, markers, markerListeners, infoWindow } = setup();
-    view.hireBases([hireBase()]);
+    view.hireBases([hireBase()], null);
     view.destroy();
 
     expect(markers[0].map).toBeNull();
@@ -304,7 +552,8 @@ describe('Google map adapter', () => {
 
     expect(markers.some((marker) => marker.title === 'The Pub')).toBe(true);
     expect(markers.some((marker) => marker.title === 'Lock (approximate) — day 1')).toBe(true);
-    expect(polylines.at(-1)?.options.strokeWeight).toBe(8);
+    expect(polylines[0].options).toMatchObject({ strokeColor: '#e0f2fe', strokeWeight: 13, zIndex: 7 });
+    expect(polylines[1].options).toMatchObject({ strokeColor: '#0ea5e9', strokeWeight: 9, zIndex: 8 });
     expect(facade.fitBounds).toHaveBeenCalled();
   });
 
@@ -329,7 +578,8 @@ describe('Google map adapter', () => {
     ]);
 
     view.day(null);
-    expect(polylines.at(-1)?.setMap).toHaveBeenCalledWith(null);
+    expect(polylines[2].setMap).toHaveBeenCalledWith(null);
+    expect(polylines[3].setMap).toHaveBeenCalledWith(null);
     expect(facade.fitBounds).toHaveBeenLastCalledWith(expect.anything(), [
       { lat: 51, lng: -1 },
       { lat: 51.5, lng: -1.5 },
@@ -338,7 +588,7 @@ describe('Google map adapter', () => {
   });
 
   it('ignores undefined initial bounds and delivers first usable idle bounds', () => {
-    const { view, facade, mapListeners } = setup();
+    const { view, facade, mapListeners, fireMapEvent } = setup();
     // First getBounds returns undefined (pre-idle), then returns real bounds
     facade.getBounds = vi.fn()
       .mockReturnValueOnce(undefined)
@@ -350,37 +600,39 @@ describe('Google map adapter', () => {
     expect(callback).not.toHaveBeenCalled();
 
     // Simulate map idle — bounds now available
-    mapListeners[0].callback(undefined as never);
+    fireMapEvent('idle');
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith({ south: 50, west: -2, north: 54, east: 0 });
   });
 
   it('reports viewport bounds immediately and when the map becomes idle', () => {
-    const { view, facade, mapListeners } = setup();
+    const { view, facade, mapListeners, fireMapEvent } = setup();
     const callback = vi.fn();
     const unsubscribe = view.onViewportIdle(callback);
 
     expect(callback).toHaveBeenCalledWith({ south: 50, west: -2, north: 54, east: 0 });
-    mapListeners[0].callback(undefined as never);
+    fireMapEvent('idle');
     expect(callback).toHaveBeenCalledTimes(2);
     unsubscribe();
-    expect(mapListeners[0].remove).toHaveBeenCalledOnce();
+    const viewportListener = mapListeners.filter(({ event }) => event === 'idle').at(-1);
+    expect(viewportListener?.remove).toHaveBeenCalledOnce();
     expect(facade.getBounds).toHaveBeenCalledTimes(2);
   });
 
   it('converts map clicks and cleans up unsubscribe and destroy listeners', () => {
-    const { view, mapListeners } = setup();
+    const { view, mapListeners, fireMapEvent } = setup();
     const first = vi.fn();
     const second = vi.fn();
     const unsubscribe = view.onMapClick(first);
     view.onMapClick(second);
-    mapListeners[0].callback({ latLng: { lat: () => 53, lng: () => -2 } } as never);
+    fireMapEvent('click', { latLng: { lat: () => 53, lng: () => -2 } } as never);
     unsubscribe();
     view.destroy();
 
     expect(first).toHaveBeenCalledWith({ lat: 53, lon: -2 });
-    expect(mapListeners[0].remove).toHaveBeenCalledOnce();
-    expect(mapListeners[1].remove).toHaveBeenCalledOnce();
+    const clickListeners = mapListeners.filter(({ event }) => event === 'click');
+    expect(clickListeners[0].remove).toHaveBeenCalledOnce();
+    expect(clickListeners[1].remove).toHaveBeenCalledOnce();
   });
 
   it('assigns grouped catalog glyphs, titles, and name/kind hover tooltips', () => {
@@ -498,7 +750,7 @@ describe('Google map adapter', () => {
   });
 
   it('lets the next background click select an endpoint after native InfoWindow close', () => {
-    const { view, mapListeners, markerListeners, infoWindowListeners } = setup();
+    const { view, mapListeners, markerListeners, infoWindowListeners, fireMapEvent } = setup();
     const endpointClick = vi.fn();
     view.onMapClick(endpointClick);
     view.places!([placeResponse()]);
@@ -507,13 +759,13 @@ describe('Google map adapter', () => {
     const closeClick = infoWindowListeners.find(({ event }) => event === 'closeclick');
     expect(closeClick).toBeDefined();
     closeClick?.callback();
-    mapListeners[0].callback({ latLng: { lat: () => 53, lng: () => -2 } } as never);
+    fireMapEvent('click', { latLng: { lat: () => 53, lng: () => -2 } } as never);
 
     expect(endpointClick).toHaveBeenCalledWith({ lat: 53, lon: -2 });
   });
 
   it('cleans replaced marker listeners and popup state, consumes the first background click, and closes on escape', () => {
-    const { view, element, mapListeners, markerListeners, markers, infoWindow } = setup();
+    const { view, element, mapListeners, markerListeners, markers, infoWindow, fireMapEvent } = setup();
     const endpointClick = vi.fn();
     view.onMapClick(endpointClick);
     view.places!([placeResponse()]);
@@ -527,10 +779,10 @@ describe('Google map adapter', () => {
     infoWindow.close.mockClear();
 
     markerListeners.filter(({ event }) => event === 'click').at(-1)?.callback({} as never);
-    mapListeners[0].callback({} as never);
+    fireMapEvent('click', {} as never);
     expect(infoWindow.close).toHaveBeenCalledTimes(1);
     expect(endpointClick).not.toHaveBeenCalled();
-    mapListeners[0].callback({ latLng: { lat: () => 53, lng: () => -2 } } as never);
+    fireMapEvent('click', { latLng: { lat: () => 53, lng: () => -2 } } as never);
     expect(endpointClick).toHaveBeenCalledWith({ lat: 53, lon: -2 });
 
     markerListeners.filter(({ event }) => event === 'click').at(-1)?.callback({} as never);

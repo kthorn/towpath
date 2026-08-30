@@ -176,6 +176,13 @@ def test_network_request_requires_bounded_schedule():
         CanalNetworkRequest.model_validate({"days": 1})
 
 
+def test_network_request_validates_selected_base_identity():
+    request = CanalNetworkRequest(days=1, hours_per_day=6, selected_base_identity=None)
+    assert request.selected_base_identity is None
+    with pytest.raises(ValidationError):
+        CanalNetworkRequest(days=1, hours_per_day=6, selected_base_identity="")
+
+
 @pytest.mark.parametrize(
     "field",
     ["hours_per_day", "boat_length_m", "boat_beam_m", "boat_draft_m", "boat_height_m"],

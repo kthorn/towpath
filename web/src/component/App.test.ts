@@ -100,6 +100,7 @@ function setup(
 		mapReject?: boolean;
 		sameNode?: boolean;
 		networkError?: string;
+		networkLoading?: boolean;
 		hasNetworkOverlay?: boolean;
 	} = {},
 ) {
@@ -122,6 +123,8 @@ function setup(
 			: route,
 		routeError: null,
 		networkError: overrides.networkError ?? null,
+		networkLoading: overrides.networkLoading ?? false,
+		selectedHireBaseIdentity: null,
 		hasNetworkOverlay: overrides.hasNetworkOverlay ?? false,
 		routing: false,
 		selectedDay: null,
@@ -152,6 +155,7 @@ function setup(
 		togglePlaceKinds: vi.fn(),
 		refreshPlaces: vi.fn(async () => {}),
 		reset: vi.fn(),
+		selectHireBase: vi.fn(),
 		setNetworkRequest: vi.fn(),
 		setMapView: vi.fn(),
 	};
@@ -159,13 +163,20 @@ function setup(
 	const mapClick = {
 		callback: (_coordinate: { lat: number; lon: number }) => {},
 	};
+	const hireBaseSelect = {
+		callback: (_identity: string | null) => {},
+	};
+	const removeHireBaseSelect = vi.fn();
 	const map: MapView = {
 		marker: vi.fn(),
 		candidates: vi.fn(),
 		land: vi.fn(),
 		canal: vi.fn(),
 		network: vi.fn(),
-		hireBases: vi.fn(),
+		focusedNetwork: vi.fn(),
+		hireBases: vi.fn(
+			(_bases: never[], _selectedIdentity: string | null) => {},
+		),
 		fitNetwork: vi.fn(),
 		places: vi.fn(),
 		pois: vi.fn(),
@@ -177,6 +188,10 @@ function setup(
 		onMapClick: vi.fn((callback) => {
 			mapClick.callback = callback;
 			return vi.fn();
+		}),
+		onHireBaseSelect: vi.fn((callback) => {
+			hireBaseSelect.callback = callback;
+			return removeHireBaseSelect;
 		}),
 		onViewportIdle: vi.fn(() => vi.fn()),
 	};
@@ -194,7 +209,16 @@ function setup(
 				})
 			: vi.fn(async () => map),
 	};
-	return { dependencies, store, selects, mapClick, calls };
+	return {
+		dependencies,
+		store,
+		selects,
+		map,
+		mapClick,
+		hireBaseSelect,
+		removeHireBaseSelect,
+		calls,
+	};
 }
 
 describe("trip planning interface", () => {
@@ -346,6 +370,18 @@ describe("trip planning interface", () => {
 		]);
 	});
 
+	it("connects hire-base selections to the store", async () => {
+		const { dependencies, store, map, hireBaseSelect } = setup();
+		render(App, { props: { dependencies } });
+		await vi.waitFor(() => expect(map.onHireBaseSelect).toHaveBeenCalledOnce());
+
+		hireBaseSelect.callback("base-one");
+		hireBaseSelect.callback(null);
+
+		expect(store.selectHireBase).toHaveBeenNthCalledWith(1, "base-one");
+		expect(store.selectHireBase).toHaveBeenNthCalledWith(2, null);
+	});
+
 	it("shows candidate recommendation, metrics, unavailable reasons, and confirmation", async () => {
 		const { dependencies, store } = setup({ unavailable: true });
 		render(App, { props: { dependencies } });
@@ -399,6 +435,31 @@ describe("trip planning interface", () => {
 			boat_height_m: null,
 			movable_bridge_delay_min: null,
 		});
+	});
+
+	it("places cruising-time inputs above the map while keeping route actions with the planner", () => {
+		render(App, { props: { dependencies: setup().dependencies } });
+		const main = screen.getByRole("main");
+		const schedule = screen.getByRole("group", { name: "Cruising time" });
+		const map = main.querySelector(".map-column");
+		const planner = main.querySelector(".planner-column");
+
+		expect(schedule.parentElement).toBe(main);
+		expect(schedule.compareDocumentPosition(map!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+		expect(schedule).not.toContainElement(
+			screen.getByRole("button", { name: /plan canal route/i }),
+		);
+		expect(planner).toContainElement(
+			screen.getByRole("button", { name: /plan canal route/i }),
+		);
+		const days = screen.getByLabelText('Days');
+		const hours = screen.getByLabelText('Hours per day');
+		expect(days).toHaveAttribute('form', 'route-actions');
+		expect(hours).toHaveAttribute('form', 'route-actions');
+		expect(screen.getByRole('button', { name: 'Plan canal route' }).closest('form')).toHaveAttribute(
+			'id',
+			'route-actions',
+		);
 	});
 
 	it("defaults and resets the required schedule controls", async () => {
@@ -488,6 +549,25 @@ describe("trip planning interface", () => {
 				movable_bridge_delay_min: null,
 			}),
 		);
+	});
+
+	it("reports a loading canal network overlay before the first response", () => {
+		render(App, {
+			props: {
+				dependencies: setup({ networkLoading: true }).dependencies,
+			},
+		});
+		expect(screen.getByRole("status")).toHaveTextContent(/loading canal network overlay/i);
+		expect(screen.getByRole("button", { name: /plan canal route/i })).toBeVisible();
+	});
+
+	it("does not show the loading notice once the overlay is available", () => {
+		render(App, {
+			props: {
+				dependencies: setup({ networkLoading: true, hasNetworkOverlay: true }).dependencies,
+			},
+		});
+		expect(screen.queryByText(/loading canal network overlay/i)).not.toBeInTheDocument();
 	});
 
 	it("reports an unavailable canal network overlay without blocking the planner", () => {
@@ -712,7 +792,10 @@ describe("trip planning interface", () => {
 			land: vi.fn(),
 			canal: vi.fn(),
 			network: vi.fn(),
-			hireBases: vi.fn(),
+			focusedNetwork: vi.fn(),
+			hireBases: vi.fn(
+				(_bases: never[], _selectedIdentity: string | null) => {},
+			),
 			fitNetwork: vi.fn(),
 			places: vi.fn(),
 			pois: vi.fn(),
@@ -722,6 +805,7 @@ describe("trip planning interface", () => {
 			closeInfoWindow: vi.fn(),
 			destroy: vi.fn(),
 			onMapClick: vi.fn(() => vi.fn()),
+			onHireBaseSelect: vi.fn(() => vi.fn()),
 			onViewportIdle: vi.fn(() => vi.fn()),
 		};
 		const secondMap: MapView = {
@@ -730,7 +814,10 @@ describe("trip planning interface", () => {
 			land: vi.fn(),
 			canal: vi.fn(),
 			network: vi.fn(),
-			hireBases: vi.fn(),
+			focusedNetwork: vi.fn(),
+			hireBases: vi.fn(
+				(_bases: never[], _selectedIdentity: string | null) => {},
+			),
 			fitNetwork: vi.fn(),
 			places: vi.fn(),
 			pois: vi.fn(),
@@ -740,6 +827,7 @@ describe("trip planning interface", () => {
 			closeInfoWindow: vi.fn(),
 			destroy: vi.fn(),
 			onMapClick: vi.fn(() => vi.fn()),
+			onHireBaseSelect: vi.fn(() => vi.fn()),
 			onViewportIdle: vi.fn(() => vi.fn()),
 		};
 		let loadCount = 0;
@@ -769,6 +857,7 @@ describe("trip planning interface", () => {
 			(_input, _select) => detach[index++],
 		);
 		const removeClick = vi.fn();
+		const removeHireBaseSelect = vi.fn();
 		const destroy = vi.fn();
 		const view = {
 			marker: vi.fn(),
@@ -776,10 +865,14 @@ describe("trip planning interface", () => {
 			land: vi.fn(),
 			canal: vi.fn(),
 			network: vi.fn(),
-			hireBases: vi.fn(),
+			focusedNetwork: vi.fn(),
+			hireBases: vi.fn(
+				(_bases: never[], _selectedIdentity: string | null) => {},
+			),
 			fitNetwork: vi.fn(),
 			clearLand: vi.fn(),
 			onMapClick: vi.fn(() => removeClick),
+			onHireBaseSelect: vi.fn(() => removeHireBaseSelect),
 			destroy,
 		} as unknown as MapView;
 		fixture.dependencies.loadMapView = vi.fn(async () => view);
@@ -791,7 +884,14 @@ describe("trip planning interface", () => {
 		expect(detach[0]).toHaveBeenCalled();
 		expect(detach[1]).toHaveBeenCalled();
 		expect(removeClick).toHaveBeenCalled();
+		expect(removeHireBaseSelect).toHaveBeenCalled();
 		expect(destroy).toHaveBeenCalled();
+		expect(removeClick.mock.invocationCallOrder[0]).toBeLessThan(
+			destroy.mock.invocationCallOrder[0],
+		);
+		expect(removeHireBaseSelect.mock.invocationCallOrder[0]).toBeLessThan(
+			destroy.mock.invocationCallOrder[0],
+		);
 	});
 
 	it("ignores a map rejection that arrives after unmount", async () => {

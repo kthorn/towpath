@@ -4,6 +4,7 @@ import { createPoundApi, PoundApiError } from './api';
 import type {
   CanalCandidatesResponse,
   CanalNetworkRequest,
+  CanalNetworkResponse,
   CanalRouteResponse,
   HealthResponse,
   PlacesRequest,
@@ -100,13 +101,45 @@ describe('createPoundApi', () => {
       boat_height_m: null, movable_bridge_delay_min: null,
     };
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ artifact_revision: 'artifact-123', lines: [], bases: [] }), {
+      new Response(JSON.stringify({ artifact_revision: 'artifact-123', lines: [], highlight_lines: [], bases: [] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
     );
 
     await createPoundApi(fetchFn).canalNetwork(request);
+    expect(fetchFn).toHaveBeenCalledWith('/api/canal-network', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
+    });
+  });
+
+  it('posts the network reachability request with selected focus lines', async () => {
+    const request: CanalNetworkRequest = {
+      days: 7,
+      hours_per_day: 6,
+      boat_length_m: null,
+      boat_beam_m: null,
+      boat_draft_m: null,
+      boat_height_m: null,
+      movable_bridge_delay_min: null,
+      selected_base_identity: 'test-provider/base:test',
+    };
+    const response: CanalNetworkResponse = {
+      artifact_revision: 'artifact-123',
+      lines: [],
+      highlight_lines: [{ type: 'LineString', coordinates: [[-1, 51], [-1.1, 51.1]] }],
+      bases: [],
+    };
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const result = await createPoundApi(fetchFn).canalNetwork(request);
+
+    expect(result).toEqual(response);
     expect(fetchFn).toHaveBeenCalledWith('/api/canal-network', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
     });

@@ -23,8 +23,7 @@ def _normalized(value: Any) -> Any:
 
 def _nodes(artifact: GraphArtifact) -> dict:
     return {
-        node_id: _normalized(attributes)
-        for node_id, attributes in artifact.graph.nodes(data=True)
+        node_id: _normalized(attributes) for node_id, attributes in artifact.graph.nodes(data=True)
     }
 
 

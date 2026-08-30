@@ -26,6 +26,81 @@ def test_network_post_returns_lines_and_ordered_bases(web_client: TestClient):
         }
     ]
     assert response.json()["lines"]
+    assert response.json()["highlight_lines"] == []
+
+
+def test_selected_base_returns_union_and_focused_lines(web_client: TestClient):
+    baseline = web_client.post("/api/canal-network", json=_network_request()).json()
+    response = web_client.post(
+        "/api/canal-network",
+        json=_network_request(selected_base_identity="test-provider/base:test"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["lines"] == baseline["lines"]
+    assert response.json()["highlight_lines"]
+
+
+def test_unknown_selected_base_is_structured_422(web_client: TestClient):
+    response = web_client.post(
+        "/api/canal-network",
+        json=_network_request(selected_base_identity="missing/base"),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "selected_base_not_found"
+    assert response.json()["detail"]["fields"] == ["selected_base_identity"]
+
+
+def test_empty_selected_base_is_request_validation_422(web_client: TestClient):
+    response = web_client.post(
+        "/api/canal-network",
+        json=_network_request(selected_base_identity=""),
+    )
+
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], list)
+
+
+def test_ineligible_selected_base_returns_empty_highlight(web_client: TestClient):
+    response = web_client.post(
+        "/api/canal-network",
+        json=_network_request(
+            selected_base_identity="test-provider/base:test",
+            boat_beam_m=99,
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["highlight_lines"] == []
+
+
+def test_unknown_selected_base_does_not_override_network_unavailable(
+    web_client: TestClient,
+):
+    app = cast(FastAPI, web_client.app)
+    app.state.network_unavailable = True
+    response = web_client.post(
+        "/api/canal-network",
+        json=_network_request(selected_base_identity="missing/base"),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "network_unavailable"
+
+
+def test_unknown_selected_base_does_not_override_network_budget(web_client: TestClient):
+    response = web_client.post(
+        "/api/canal-network",
+        json=_network_request(
+            selected_base_identity="missing/base",
+            days=8,
+            hours_per_day=24,
+        ),
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "network_query_budget_exceeded"
 
 
 def test_network_uses_half_the_schedule_as_outward_return_trip_reach(

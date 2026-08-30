@@ -19,6 +19,8 @@
   let active = $state<EndpointSlot>('origin');
   let plannerSession = $state({ days: 7 as string | number, hours: 6 as string | number });
   let searchKey = $state(0);
+  let routeError = $state('');
+  let submissionGeneration = 0;
   const networkRequest = $derived.by(() => {
     try {
       return { ...parseSchedule(plannerSession.days, plannerSession.hours), ...$boatSettings };
@@ -53,7 +55,23 @@
     navigation.navigate('planner');
   }
 
+  async function planTrip() {
+    const generation = ++submissionGeneration;
+    routeError = '';
+    try {
+      await dependencies.store.planCanalRoute({
+        ...parseSchedule(plannerSession.days, plannerSession.hours),
+        ...$boatSettings,
+      });
+    } catch (cause) {
+      if (generation === submissionGeneration)
+        routeError = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
   function resetTrip() {
+    submissionGeneration += 1;
+    routeError = '';
     dependencies.store.reset();
     plannerSession = { days: 7, hours: 6 };
     searchKey += 1;
@@ -84,9 +102,13 @@
           : 'Boat settings saved for this session; browser storage is unavailable.'}
       </p>
     {/if}
+    <BoatConstraints formId="route-actions" bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
     <div class="map-column">
       <fieldset class="map-target"><legend>Map click sets</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set destination from map</label></fieldset>
-		<MapCanvas load={dependencies.loadMapView} onclick={(coordinate) => dependencies.store.setEndpointCoordinate(active, coordinate)} onready={(view) => dependencies.store.setMapView(view)} />
+		<MapCanvas load={dependencies.loadMapView} onclick={(coordinate) => dependencies.store.setEndpointCoordinate(active, coordinate)} onhirebaseselect={dependencies.store.selectHireBase} onready={(view) => dependencies.store.setMapView(view)} />
+    {#if $store.networkLoading && !$store.hasNetworkOverlay}
+      <p class="network-status" role="status">Loading canal network overlay…</p>
+    {/if}
     {#if $store.networkError}
       <p class="network-status" role="status">
         {$store.hasNetworkOverlay
@@ -100,7 +122,13 @@
 			<EndpointPanel slot="origin" endpoint={$store.origin} {store} search={dependencies.placeSearch} />
 			<EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} />
 		{/key}
-      <BoatConstraints {store} settings={boatSettings} onReset={resetTrip} bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
+      <form id="route-actions" class="route-actions" novalidate onsubmit={(event) => { event.preventDefault(); planTrip(); }}>
+        <div class="constraint-actions">
+          <button type="submit">Plan canal route</button>
+          <button type="button" onclick={resetTrip}>Reset trip</button>
+        </div>
+        {#if routeError}<p role="alert">{routeError}</p>{/if}
+      </form>
       <TripSummary state={$store} onDaySelect={store.selectDay} />
       <RouteLayers {store} />
     </div>

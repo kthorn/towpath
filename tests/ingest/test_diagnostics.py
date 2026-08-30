@@ -25,8 +25,7 @@ def test_poi_diagnostics_bounds_each_reason_independently():
         diagnostics.record("unknown_value", f"node/{index}")
 
     assert all(
-        len(examples) == MAX_EXAMPLES_PER_REASON
-        for examples in diagnostics._examples.values()
+        len(examples) == MAX_EXAMPLES_PER_REASON for examples in diagnostics._examples.values()
     )
     assert diagnostics.build_report().skipped_counts == {
         "invalid_geometry": 8,
