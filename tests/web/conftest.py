@@ -20,12 +20,14 @@ from pound.web.config import WebSettings
 
 @pytest.fixture(autouse=True)
 def _clear_network_geometry_cache():
-    """Keep the process-global API geometry cache from leaking between tests."""
+    """Keep the process-global API geometry caches from leaking between tests."""
     import pound.web.api as api_module
 
-    api_module._network_geometry_cache.clear()
+    api_module._network_union_cache.clear()
+    api_module._network_highlight_cache.clear()
     yield
-    api_module._network_geometry_cache.clear()
+    api_module._network_union_cache.clear()
+    api_module._network_highlight_cache.clear()
 
 
 def catalog_place(kind: str, osm_id: int, lat: float, lon: float) -> CatalogPlace:
@@ -53,21 +55,26 @@ def artifact_metadata(revision: str, *, source: str = "test") -> dict:
     }
 
 
+def write_boat_hire_row(location_id: str, latitude: str, longitude: str) -> dict[str, str]:
+    row = dict.fromkeys(BOAT_HIRE_ENRICHMENT_FIELDS, "")
+    row.update(
+        record_type="company_base",
+        source_provider_id="test-provider",
+        location_id=location_id,
+        latitude=latitude,
+        longitude=longitude,
+        osm_url=f"https://www.openstreetmap.org/node/{location_id}",
+        exclude="",
+    )
+    return row
+
+
 def write_boat_hire_enrichment(
     path: Path,
     *,
     rows: list[dict[str, str]] | None = None,
 ) -> Path:
-    default = dict.fromkeys(BOAT_HIRE_ENRICHMENT_FIELDS, "")
-    default.update(
-        record_type="company_base",
-        source_provider_id="test-provider",
-        location_id="base:test",
-        latitude="51.0",
-        longitude="-1.0",
-        osm_url="https://www.openstreetmap.org/node/1",
-        exclude="",
-    )
+    default = write_boat_hire_row("base:test", "51.0", "-1.0")
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=BOAT_HIRE_ENRICHMENT_FIELDS)
         writer.writeheader()
@@ -212,7 +219,13 @@ def web_client(tmp_path: Path, route_graph: nx.Graph) -> Generator[TestClient, N
     settings = WebSettings(
         artifact_path=artifact_path,
         static_dir=tmp_path / "static",
-        boat_hire_enrichment_path=write_boat_hire_enrichment(tmp_path / "boat-hire.csv"),
+        boat_hire_enrichment_path=write_boat_hire_enrichment(
+            tmp_path / "boat-hire.csv",
+            rows=[
+                write_boat_hire_row("base:test", "51.0", "-1.0"),
+                write_boat_hire_row("base:two", "51.001", "-1.001"),
+            ],
+        ),
         catalog_path=catalog_path,
         candidate_pool_size=3,
         google_destination_limit=2,

@@ -176,6 +176,7 @@ export function createTripStore(dependencies: {
   let desiredNetworkGeneration = 0;
   let mapAttachmentGeneration = mapView ? 1 : 0;
   let networkPaintedAttachmentGeneration: number | undefined;
+  let paintedUnion: { attachmentGeneration: number; constraintKey: NetworkConstraintKey } | null = null;
   let successfulNetwork: SuccessfulNetwork | undefined;
   let networkRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let networkRetryPendingGeneration: number | undefined;
@@ -233,8 +234,15 @@ export function createTripStore(dependencies: {
     mapView === view && mapAttachmentGeneration === attachmentGeneration;
   const drawNetwork = (view: MapView, attachmentGeneration: number, network: SuccessfulNetwork) => {
     if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
-    mapCall('origin', () => view.network(network.lines));
-    if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
+    // ponytail: union lines are byte-identical when only the selected base changed;
+    // skipping the repaint avoids re-pathing thousands of polylines.
+    const unionUnchanged = paintedUnion?.attachmentGeneration === attachmentGeneration
+      && sameConstraintKey(paintedUnion.constraintKey, network.constraintKey);
+    if (!unionUnchanged) {
+      mapCall('origin', () => view.network(network.lines));
+      if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
+      paintedUnion = { attachmentGeneration, constraintKey: network.constraintKey };
+    }
     mapCall('origin', () => view.hireBases(network.bases, state.selectedHireBaseIdentity));
     if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
     const focusedLines = network.selectedBaseIdentity === state.selectedHireBaseIdentity

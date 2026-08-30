@@ -521,6 +521,68 @@ describe('trip store', () => {
     }
   });
 
+  it('skips the union repaint when only the selected base changes', async () => {
+    vi.useFakeTimers();
+    try {
+      const union = networkResponse();
+      const selected = networkResponse('base-one', union.lines, [{
+        type: 'LineString', coordinates: [[-5, 55], [-6, 56]],
+      }]);
+      const canalNetwork = vi.fn().mockResolvedValueOnce(union).mockResolvedValueOnce(selected);
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      expect(map.network).toHaveBeenCalledTimes(1);
+
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(canalNetwork).toHaveBeenCalledTimes(2);
+      expect(map.network).toHaveBeenCalledTimes(1);
+      expect(map.focusedNetwork).toHaveBeenLastCalledWith([
+        { type: 'LineString', coordinates: [[-5, 55], [-6, 56]] },
+      ]);
+      expect(map.hireBases).toHaveBeenLastCalledWith(union.bases, 'base-one');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('repaints the union when the constraint key changes', async () => {
+    vi.useFakeTimers();
+    try {
+      const union = networkResponse();
+      const selected = networkResponse('base-one', [{
+        type: 'LineString', coordinates: [[-7, 57], [-8, 58]],
+      }], []);
+      const daysFive = networkResponse('base-one', [{
+        type: 'LineString', coordinates: [[-9, 59], [-10, 60]],
+      }], []);
+      const canalNetwork = vi.fn()
+        .mockResolvedValueOnce(union)
+        .mockResolvedValueOnce(selected)
+        .mockResolvedValueOnce(daysFive);
+      const map = viewportMap(() => {});
+      const { store } = setup({ canalNetwork, map });
+
+      store.setNetworkRequest(networkRequest());
+      await vi.advanceTimersByTimeAsync(100);
+      store.selectHireBase('base-one');
+      await vi.advanceTimersByTimeAsync(100);
+      store.setNetworkRequest(networkRequest(5));
+      await vi.advanceTimersByTimeAsync(100);
+
+      // Base switch at days=7 skipped the union repaint; the days change repaints.
+      expect(map.network).toHaveBeenCalledTimes(2);
+      expect(map.network).toHaveBeenLastCalledWith([
+        { type: 'LineString', coordinates: [[-9, 59], [-10, 60]] },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('collapses reset and App default constraints to one null-selection request', async () => {
     vi.useFakeTimers();
     try {

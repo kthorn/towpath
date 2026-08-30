@@ -61,14 +61,47 @@ def test_selected_identity_is_part_of_cache_key(
         "/api/canal-network",
         json={"days": 7, "hours_per_day": 6, "selected_base_identity": "test-provider/base:test"},
     )
-    # A selected request computes the union and the focused highlight (two calls);
-    # a changed identity is a different cache key, so both must recompute.
-    assert calls["count"] == 3
+    # A selected request reuses the cached union and computes only the cheap
+    # single-anchor highlight (one extra reachability call).
+    assert calls["count"] == 2
 
-    # Repeating either request must hit the cache and add no calls.
+    # Repeating either request must hit the caches and add no calls.
     web_client.post("/api/canal-network", json={"days": 7, "hours_per_day": 6})
     web_client.post(
         "/api/canal-network",
         json={"days": 7, "hours_per_day": 6, "selected_base_identity": "test-provider/base:test"},
+    )
+    assert calls["count"] == 2
+
+
+def test_switching_bases_only_computes_highlights(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    calls = {"count": 0}
+    original = api_module.select_boat_hire_reachability
+
+    def counting(*args: object, **kwargs: object):
+        calls["count"] += 1
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(api_module, "select_boat_hire_reachability", counting)
+    payload = {"days": 7, "hours_per_day": 6}
+
+    web_client.post("/api/canal-network", json=payload)
+    assert calls["count"] == 1
+
+    web_client.post(
+        "/api/canal-network", json={**payload, "selected_base_identity": "test-provider/base:test"}
+    )
+    assert calls["count"] == 2
+
+    web_client.post(
+        "/api/canal-network", json={**payload, "selected_base_identity": "test-provider/base:two"}
+    )
+    assert calls["count"] == 3
+
+    # Switching back to a previously selected base is a pure cache hit.
+    web_client.post(
+        "/api/canal-network", json={**payload, "selected_base_identity": "test-provider/base:test"}
     )
     assert calls["count"] == 3

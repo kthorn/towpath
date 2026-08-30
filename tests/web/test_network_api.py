@@ -23,7 +23,13 @@ def test_network_post_returns_lines_and_ordered_bases(web_client: TestClient):
             "operator": "test-provider",
             "name": "base:test",
             "coordinate": {"lat": 51.0, "lon": -1.0},
-        }
+        },
+        {
+            "identity": "test-provider/base:two",
+            "operator": "test-provider",
+            "name": "base:two",
+            "coordinate": {"lat": 51.001, "lon": -1.001},
+        },
     ]
     assert response.json()["lines"]
     assert response.json()["highlight_lines"] == []

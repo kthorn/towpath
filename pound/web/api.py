@@ -29,10 +29,12 @@ from pound.web.boat_hire import select_boat_hire_reachability
 from pound.web.config import MAX_NETWORK_TRAVEL_MINUTES
 from pound.web.network import prepare_network_geometry
 
-# ponytail: process-global LRU of computed reachability geometry (~2 MB/entry);
-# per-app caches if multi-artifact apps ever share this process.
-_NETWORK_GEOMETRY_CACHE_MAX = 8
-_network_geometry_cache: OrderedDict[tuple, tuple[tuple, tuple]] = OrderedDict()
+# ponytail: process-global LRUs of computed reachability geometry (~2 MB per union
+# entry); per-app caches if multi-artifact apps ever share this process.
+_NETWORK_UNION_CACHE_MAX = 8
+_NETWORK_HIGHLIGHT_CACHE_MAX = 32
+_network_union_cache: OrderedDict[tuple, tuple] = OrderedDict()
+_network_highlight_cache: OrderedDict[tuple, tuple] = OrderedDict()
 _network_geometry_lock = threading.Lock()
 
 router = APIRouter(prefix="/api")
@@ -134,14 +136,12 @@ def canal_network(body: CanalNetworkRequest, request: Request) -> CanalNetworkRe
         body.boat_draft_m,
         body.boat_height_m,
         resolve_movable_bridge_delay(body.movable_bridge_delay_min),
-        body.selected_base_identity,
     )
     with _network_geometry_lock:
-        cached = _network_geometry_cache.get(cache_key)
-        if cached is not None:
-            _network_geometry_cache.move_to_end(cache_key)
-            lines, highlight_lines = cached
-    if cached is None:
+        lines = _network_union_cache.get(cache_key)
+        if lines is not None:
+            _network_union_cache.move_to_end(cache_key)
+    if lines is None:
         overlay_graph = select_boat_hire_reachability(
             request.app.state.graph,
             request.app.state.boat_hire_anchors,
@@ -154,25 +154,6 @@ def canal_network(body: CanalNetworkRequest, request: Request) -> CanalNetworkRe
         )
         try:
             lines = prepare_network_geometry(overlay_graph)
-            if selected_anchors:
-                highlight_lines = list(
-                    prepare_network_geometry(
-                        select_boat_hire_reachability(
-                            request.app.state.graph,
-                            selected_anchors,
-                            cutoff_min=travel_minutes,
-                            boat_length_m=body.boat_length_m,
-                            boat_beam_m=body.boat_beam_m,
-                            boat_draft_m=body.boat_draft_m,
-                            boat_height_m=body.boat_height_m,
-                            movable_bridge_delay_min=resolve_movable_bridge_delay(
-                                body.movable_bridge_delay_min
-                            ),
-                        )
-                    )
-                )
-            else:
-                highlight_lines = []
         except Exception as exc:
             raise _error(
                 503,
@@ -180,10 +161,46 @@ def canal_network(body: CanalNetworkRequest, request: Request) -> CanalNetworkRe
                 message="The canal network overlay is unavailable.",
             ) from exc
         with _network_geometry_lock:
-            _network_geometry_cache[cache_key] = (lines, tuple(highlight_lines))
-            _network_geometry_cache.move_to_end(cache_key)
-            while len(_network_geometry_cache) > _NETWORK_GEOMETRY_CACHE_MAX:
-                _network_geometry_cache.popitem(last=False)
+            _network_union_cache[cache_key] = lines
+            _network_union_cache.move_to_end(cache_key)
+            while len(_network_union_cache) > _NETWORK_UNION_CACHE_MAX:
+                _network_union_cache.popitem(last=False)
+
+    if selected_anchors:
+        highlight_key = (*cache_key, body.selected_base_identity)
+        with _network_geometry_lock:
+            highlight_lines = _network_highlight_cache.get(highlight_key)
+            if highlight_lines is not None:
+                _network_highlight_cache.move_to_end(highlight_key)
+        if highlight_lines is None:
+            try:
+                highlight_lines = prepare_network_geometry(
+                    select_boat_hire_reachability(
+                        request.app.state.graph,
+                        selected_anchors,
+                        cutoff_min=travel_minutes,
+                        boat_length_m=body.boat_length_m,
+                        boat_beam_m=body.boat_beam_m,
+                        boat_draft_m=body.boat_draft_m,
+                        boat_height_m=body.boat_height_m,
+                        movable_bridge_delay_min=resolve_movable_bridge_delay(
+                            body.movable_bridge_delay_min
+                        ),
+                    )
+                )
+            except Exception as exc:
+                raise _error(
+                    503,
+                    code="network_unavailable",
+                    message="The canal network overlay is unavailable.",
+                ) from exc
+            with _network_geometry_lock:
+                _network_highlight_cache[highlight_key] = highlight_lines
+                _network_highlight_cache.move_to_end(highlight_key)
+                while len(_network_highlight_cache) > _NETWORK_HIGHLIGHT_CACHE_MAX:
+                    _network_highlight_cache.popitem(last=False)
+    else:
+        highlight_lines = ()
 
     bases = [
         BoatHireBase(
