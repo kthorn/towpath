@@ -49,7 +49,7 @@ export interface TransferRouter {
 
 export interface MapView {
   marker(slot: EndpointSlot, coordinate: LatLon | null): void;
-  candidates(slot: EndpointSlot, candidates: CanalCandidate[], selectedUid?: number): void;
+  candidates(slot: EndpointSlot, candidates: CanalCandidate[], selectedCandidateId?: string): void;
   land(slot: EndpointSlot, route: LandRoute | null): void;
   canal(geometry: GeoJSONLineString | null): void;
   network(lines: GeoJSONLineString[]): void;

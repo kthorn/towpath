@@ -25,13 +25,15 @@ function storedSettings(): unknown {
 	}
 }
 
+const candidateId = (uid: number) => `candidate-${uid}`;
+const candidateHandle = (uid: number) => ({ edge: [uid, uid + 1] as [number, number], fraction: 0.5 });
 const endpoint = (name: string, uid: number, unavailable = false) => ({
 	place: { name, address: `${name} address`, coordinate: { lat: 51, lon: -1 } },
 	candidates: [
 		{
 			candidate: {
-				uid,
-				artifact_revision: "r1",
+				candidate_id: candidateId(uid),
+				handle: candidateHandle(uid),
 				coordinate: { lat: 51.1, lon: -1.1 },
 				straight_line_distance_m: 1250,
 				display_name: `${name} Wharf`,
@@ -48,8 +50,8 @@ const endpoint = (name: string, uid: number, unavailable = false) => ({
 		},
 		{
 			candidate: {
-				uid: uid + 100,
-				artifact_revision: "r1",
+				candidate_id: candidateId(uid + 100),
+				handle: candidateHandle(uid + 100),
 				coordinate: { lat: 51.2, lon: -1.2 },
 				straight_line_distance_m: 1700,
 				display_name: `${name} Alternative`,
@@ -61,7 +63,8 @@ const endpoint = (name: string, uid: number, unavailable = false) => ({
 			distanceMeters: 3100,
 		},
 	],
-	selectedUid: uid,
+	selectedCandidateId: candidateId(uid),
+	selectedHandle: candidateHandle(uid),
 	artifactRevision: "r1",
 	landRoute: unavailable
 		? null
@@ -411,7 +414,7 @@ describe("trip planning interface", () => {
 				name: /Bletchley Park Alternative/i,
 			}),
 		);
-		expect(store.selectCandidate).toHaveBeenCalledWith("origin", 101);
+		expect(store.selectCandidate).toHaveBeenCalledWith("origin", candidateId(101));
 	});
 
 	it("submits exact controlled schedule with empty boat settings", async () => {

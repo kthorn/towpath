@@ -196,8 +196,8 @@ def test_network_geometry_failure_is_nonfatal_to_routing(
         route_response = client.post(
             "/api/canal-route",
             json={
-                "start_uid": 1,
-                "end_uid": 3,
+                "start": {"edge": [1, 2], "fraction": 0},
+                "end": {"edge": [2, 3], "fraction": 1},
                 "artifact_revision": "revision-test",
                 "hours_per_day": 6,
             },

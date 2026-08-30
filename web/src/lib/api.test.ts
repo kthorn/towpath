@@ -5,6 +5,7 @@ import type {
   CanalCandidatesResponse,
   CanalNetworkRequest,
   CanalNetworkResponse,
+  CanalPointHandle,
   CanalRouteResponse,
   HealthResponse,
   PlacesRequest,
@@ -17,8 +18,8 @@ const candidatesResponse: CanalCandidatesResponse = {
   artifact_revision: 'artifact-123',
   candidates: [
     {
-      uid: 42,
-      artifact_revision: 'artifact-123',
+      candidate_id: '41:42:0.500000000000',
+      handle: { edge: [41, 42], fraction: 0.5 },
       coordinate: { lat: 51.997, lon: -0.742 },
       straight_line_distance_m: 125.5,
       display_name: 'Grand Union Canal',
@@ -146,9 +147,20 @@ describe('createPoundApi', () => {
   });
 
   it('posts route constraints and parses the complete route response', async () => {
-    const request = {
-      start_uid: 42,
-      end_uid: 84,
+    const request: {
+      start: CanalPointHandle;
+      end: CanalPointHandle;
+      artifact_revision: string;
+      days: number;
+      hours_per_day: number;
+      boat_length_m: number | null;
+      boat_beam_m: number | null;
+      boat_draft_m: number | null;
+      boat_height_m: number | null;
+      movable_bridge_delay_min: number;
+    } = {
+      start: { edge: [41, 42], fraction: 0.5 },
+      end: { edge: [83, 84], fraction: 0.5 },
       artifact_revision: 'artifact-123',
       days: 2,
       hours_per_day: 6,

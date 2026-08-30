@@ -5,10 +5,15 @@ from pathlib import Path
 import networkx as nx
 import pytest  # pyright: ignore[reportMissingImports]
 from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
-from pound.artifact import ROUTING_ARTIFACT_SCHEMA_VERSION
-from pound.catalog.metadata import CatalogMetadata
-from pound.catalog.models import CatalogPlace
-from pound.models import OsmElementType, PoiCategory, RuntimePoi, WayDimensions
+from pound.artifact import ROUTING_ARTIFACT_SCHEMA_VERSION  # pyright: ignore[reportMissingImports]
+from pound.catalog.metadata import CatalogMetadata  # pyright: ignore[reportMissingImports]
+from pound.catalog.models import CatalogPlace  # pyright: ignore[reportMissingImports]
+from pound.models import (  # pyright: ignore[reportMissingImports]
+    OsmElementType,
+    PoiCategory,
+    RuntimePoi,
+    WayDimensions,
+)
 from pound_web.app import create_app
 from pound_web.boat_hire import BOAT_HIRE_ENRICHMENT_FIELDS
 from pound_web.config import WebSettings
@@ -241,7 +246,6 @@ def build_web_client(
         catalog_path=catalog_path,
         candidate_pool_size=3,
         google_destination_limit=2,
-        minimum_candidate_spacing_m=0,
     )
     with TestClient(create_app(settings)) as client:
         yield client

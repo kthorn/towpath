@@ -2,12 +2,14 @@ import pytest
 from pound_web.api import CanalNetworkRequest, CanalRouteRequest
 from pydantic import ValidationError
 
+_HANDLE = {"edge": [1, 2], "fraction": 0.5}
+
 
 def test_movable_bridge_delay_is_finite_and_nonnegative():
     with pytest.raises(ValidationError):
         CanalRouteRequest(
-            start_uid=1,
-            end_uid=2,
+            start=_HANDLE,
+            end=_HANDLE,
             artifact_revision="r",
             movable_bridge_delay_min=float("nan"),
         )
@@ -19,8 +21,8 @@ def test_movable_bridge_delay_is_finite_and_nonnegative():
 )
 def test_route_trust_boundary_rejects_nonfinite_hours_and_dimensions(field):
     payload = {
-        "start_uid": 1,
-        "end_uid": 2,
+        "start": _HANDLE,
+        "end": _HANDLE,
         "artifact_revision": "revision-test",
         field: float("inf"),
     }
@@ -29,7 +31,7 @@ def test_route_trust_boundary_rejects_nonfinite_hours_and_dimensions(field):
         CanalRouteRequest.model_validate(payload)
 
     valid = CanalRouteRequest.model_validate(
-        {"start_uid": 1, "end_uid": 2, "artifact_revision": "revision-test"}
+        {"start": _HANDLE, "end": _HANDLE, "artifact_revision": "revision-test"}
     )
     assert valid.days is None
 

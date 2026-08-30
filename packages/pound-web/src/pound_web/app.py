@@ -52,6 +52,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         app.state.artifact_revision = artifact.metadata["artifact_revision"]
         app.state.settings = runtime_settings
         app.state.spatial_index = GraphSpatialIndex(artifact.graph)
+        app.state.candidate_index = app.state.spatial_index.candidate_index
         app.state.poi_spatial_index = PoiSpatialIndex(artifact.pois)
         seeds = load_boat_hire_seeds(runtime_settings.boat_hire_enrichment_path)
         app.state.boat_hire_anchors = snap_boat_hire_bases(app.state.spatial_index, seeds)
@@ -94,6 +95,28 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         request: Request,
         exc: RequestValidationError,
     ):
+        if request.url.path == "/api/canal-route":
+            fields = sorted(
+                {
+                    str(error["loc"][1])
+                    for error in exc.errors()
+                    if len(error["loc"]) > 1
+                    and error["loc"][1] in {"start", "end"}
+                    and error["type"] != "missing"
+                }
+            )
+            if fields:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "detail": {
+                            "code": "invalid_node_handle",
+                            "message": "One or more canal node handles do not exist.",
+                            "fields": fields,
+                        }
+                    },
+                )
+
         if request.url.path != "/api/places":
             return await request_validation_exception_handler(request, exc)
 

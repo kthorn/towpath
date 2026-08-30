@@ -5,18 +5,19 @@ from collections import OrderedDict
 
 from fastapi import APIRouter, HTTPException, Request  # pyright: ignore[reportMissingImports]
 from pound.models import RETAINED_POI_KINDS
-from pound.route.candidates import nearest_coord_candidates, select_spaced_candidates
+from pound.route.candidates import nearest_candidates
 from pound.route.cost import resolve_movable_bridge_delay
-from pound.route.plan import RouteUnavailableError, plan_canal_route
+from pound.route.plan import RouteUnavailableError, plan_projected_route
 from pound.schemas import (
     BoatHireBase,
     CanalCandidatesResponse,
     CanalNetworkResponse,
+    CanalPointHandle,
     CanalRouteResponse,
     Coordinate,
     PlacesRequest,
     PlacesResponse,
-    ResolvedConstraints,
+    ProjectedRouteConstraints,
     RoutePoisRequest,
     RoutePoisResponse,
 )
@@ -25,6 +26,7 @@ from pydantic import (  # pyright: ignore[reportMissingImports]
     ConfigDict,
     Field,
     FiniteFloat,
+    field_validator,
 )
 
 from pound_web.boat_hire import select_boat_hire_reachability
@@ -72,8 +74,8 @@ class CanalRouteRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    start_uid: int
-    end_uid: int
+    start: CanalPointHandle
+    end: CanalPointHandle
     artifact_revision: str
     days: int | None = Field(gt=0, default=None)
     hours_per_day: FiniteFloat = Field(gt=0, default=6.0)
@@ -82,6 +84,23 @@ class CanalRouteRequest(BaseModel):
     boat_beam_m: FiniteFloat | None = Field(gt=0, default=None)
     boat_draft_m: FiniteFloat | None = Field(gt=0, default=None)
     boat_height_m: FiniteFloat | None = Field(gt=0, default=None)
+
+    @field_validator("start", "end", mode="before")
+    @classmethod
+    def reject_coercible_handle_values(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        edge = value.get("edge")
+        fraction = value.get("fraction")
+        if isinstance(edge, (list, tuple)) and (
+            len(edge) != 2 or any(type(uid) is not int for uid in edge)
+        ):
+            raise ValueError("edge must contain two integer UIDs")
+        if "fraction" in value and (
+            isinstance(fraction, bool) or type(fraction) not in (int, float)
+        ):
+            raise ValueError("fraction must be numeric")
+        return value
 
 
 class APIError(BaseModel):
@@ -222,22 +241,14 @@ def canal_network(body: CanalNetworkRequest, request: Request) -> CanalNetworkRe
 def canal_candidates(body: CanalCandidatesRequest, request: Request) -> CanalCandidatesResponse:
     """Return tuned, spaced graph candidates nearest to a map coordinate."""
 
-    graph = request.app.state.graph
     revision = request.app.state.artifact_revision
     settings = request.app.state.settings
-    pool = nearest_coord_candidates(
+    candidates = nearest_candidates(
         body.lat,
         body.lon,
-        graph,
-        request.app.state.spatial_index,
-        artifact_revision=revision,
+        request.app.state.candidate_index,
         limit=settings.candidate_pool_size,
-    )
-    candidates = select_spaced_candidates(
-        pool,
-        destination_limit=settings.google_destination_limit,
-        minimum_spacing_m=settings.minimum_candidate_spacing_m,
-    )
+    )[: settings.google_destination_limit]
     return CanalCandidatesResponse(artifact_revision=revision, candidates=candidates)
 
 
@@ -318,22 +329,26 @@ def canal_route(body: CanalRouteRequest, request: Request) -> CanalRouteResponse
         )
 
     graph = request.app.state.graph
-    missing_fields = [
+    invalid_fields = [
         field
-        for field, uid in (("start_uid", body.start_uid), ("end_uid", body.end_uid))
-        if uid not in graph
+        for field, handle in (("start", body.start), ("end", body.end))
+        if not graph.has_edge(*handle.edge)
+        or (
+            0 < handle.fraction < 1
+            and graph.edges[handle.edge].get("candidate_eligible", True) is False
+        )
     ]
-    if missing_fields:
+    if invalid_fields:
         raise _error(
             400,
             code="invalid_node_handle",
             message="One or more canal node handles do not exist.",
-            fields=missing_fields,
+            fields=invalid_fields,
         )
 
-    constraints = ResolvedConstraints(
-        start_uid=body.start_uid,
-        end_uid=body.end_uid,
+    constraints = ProjectedRouteConstraints(
+        start=body.start,
+        end=body.end,
         days=body.days,
         hours_per_day=body.hours_per_day,
         movable_bridge_delay_min=body.movable_bridge_delay_min,
@@ -343,6 +358,6 @@ def canal_route(body: CanalRouteRequest, request: Request) -> CanalRouteResponse
         boat_height_m=body.boat_height_m,
     )
     try:
-        return plan_canal_route(constraints, graph=graph)
+        return plan_projected_route(constraints, artifact=request.app.state.artifact)
     except RouteUnavailableError as exc:
         raise _error(422, code="route_unavailable", message=str(exc)) from exc

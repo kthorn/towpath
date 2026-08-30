@@ -14,8 +14,8 @@ def test_concurrent_routes_are_deterministic_and_do_not_mutate_graph(web_client:
     before_edges = copy.deepcopy({(u, v): data for u, v, data in graph.edges(data=True)})
     payloads = [
         {
-            "start_uid": 1,
-            "end_uid": 3,
+            "start": {"edge": [1, 2], "fraction": 0},
+            "end": {"edge": [2, 3], "fraction": 1},
             "artifact_revision": "revision-test",
             "hours_per_day": 6,
             "boat_beam_m": beam,

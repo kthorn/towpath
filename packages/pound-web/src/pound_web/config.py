@@ -26,7 +26,6 @@ class WebSettings:
     boat_hire_enrichment_path: Path
     candidate_pool_size: int = 20
     google_destination_limit: int = 10
-    minimum_candidate_spacing_m: float = 250.0
     catalog_path: Path | None = None
     catalog_max_kinds: int = MAX_CATALOG_KINDS
     catalog_max_viewport_span_deg: float = MAX_PLACES_VIEWPORT_SPAN_DEGREES
@@ -40,8 +39,6 @@ class WebSettings:
             raise ValueError("candidate_pool_size must be greater than zero")
         if self.google_destination_limit <= 0:
             raise ValueError("google_destination_limit must be greater than zero")
-        if self.minimum_candidate_spacing_m < 0:
-            raise ValueError("minimum_candidate_spacing_m must be nonnegative")
         if not 0 < self.catalog_max_kinds <= MAX_CATALOG_KINDS:
             raise ValueError(f"catalog_max_kinds must be from 1 through {MAX_CATALOG_KINDS}")
         if not math.isfinite(self.catalog_max_viewport_span_deg) or not (
@@ -88,9 +85,6 @@ class WebSettings:
             catalog_path=Path(catalog_path) if catalog_path else None,
             candidate_pool_size=int(os.environ.get("POUND_CANDIDATE_POOL_SIZE", "20")),
             google_destination_limit=int(os.environ.get("POUND_GOOGLE_DESTINATION_LIMIT", "10")),
-            minimum_candidate_spacing_m=float(
-                os.environ.get("POUND_MINIMUM_CANDIDATE_SPACING_M", "250.0")
-            ),
             catalog_max_kinds=int(os.environ.get("POUND_CATALOG_MAX_KINDS", "16")),
             catalog_max_viewport_span_deg=float(
                 os.environ.get("POUND_CATALOG_MAX_VIEWPORT_SPAN_DEG", "10.0")

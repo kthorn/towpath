@@ -100,8 +100,8 @@ def test_network_filters_display_without_filtering_routing_graph(
         route = client.post(
             "/api/canal-route",
             json={
-                "start_uid": 4,
-                "end_uid": 5,
+                "start": {"edge": [4, 5], "fraction": 0},
+                "end": {"edge": [4, 5], "fraction": 1},
                 "artifact_revision": "overlay-test",
                 "hours_per_day": 6,
             },
@@ -224,8 +224,8 @@ def test_all_excluded_bases_are_unavailable_but_routing_remains_available(
         route = client.post(
             "/api/canal-route",
             json={
-                "start_uid": 1,
-                "end_uid": 3,
+                "start": {"edge": [1, 2], "fraction": 0},
+                "end": {"edge": [2, 3], "fraction": 1},
                 "artifact_revision": "overlay-test",
                 "hours_per_day": 6,
             },

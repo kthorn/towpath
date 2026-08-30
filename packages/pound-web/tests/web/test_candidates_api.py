@@ -3,8 +3,8 @@ from typing import cast
 from unittest.mock import patch
 
 import networkx as nx
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
+from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
 from pound_web.api import CanalCandidatesRequest
 from pound_web.app import create_app
 from pound_web.config import WebSettings
@@ -17,36 +17,39 @@ def test_candidate_http_model_has_contract_name():
     assert CanalCandidatesRequest.__name__ == "CanalCandidatesRequest"
 
 
-def test_candidates_returns_named_sorted_points_with_revision(web_client: TestClient):
+def test_candidates_returns_projected_points_with_revision(web_client: TestClient):
     response = web_client.post("/api/canal-candidates", json={"lat": 51.0, "lon": -1.0})
 
     assert response.status_code == 200
     body = response.json()
     assert body["artifact_revision"] == "revision-test"
-    assert [candidate["uid"] for candidate in body["candidates"]] == [1, 2]
-    assert body["candidates"][0]["display_name"] == "Start"
-    assert body["candidates"][0]["coordinate"] == {"lat": 51.0, "lon": -1.0}
-    assert {candidate["artifact_revision"] for candidate in body["candidates"]} == {"revision-test"}
+    assert [candidate["candidate_id"] for candidate in body["candidates"]] == [
+        "1:2:0.000000000000",
+        "2:3:1.000000000000",
+    ]
+    assert body["candidates"][0] == {
+        "candidate_id": "1:2:0.000000000000",
+        "handle": {"edge": [1, 2], "fraction": 0.0},
+        "coordinate": {"lat": 51.0, "lon": -1.0},
+        "straight_line_distance_m": 0.0,
+        "display_name": "Start",
+    }
+    assert all("uid" not in candidate for candidate in body["candidates"])
+    assert all("artifact_revision" not in candidate for candidate in body["candidates"])
 
 
-def test_candidates_uses_runtime_tuning(web_client: TestClient):
+def test_candidates_uses_shared_index_and_runtime_ceilings(web_client: TestClient):
     app = cast(FastAPI, web_client.app)
-    with (
-        patch("pound_web.api.nearest_coord_candidates", return_value=[]) as nearest,
-        patch("pound_web.api.select_spaced_candidates", return_value=[]) as spaced,
-    ):
+    with patch("pound_web.api.nearest_candidates", return_value=[]) as nearest:
         response = web_client.post("/api/canal-candidates", json={"lat": 51, "lon": -1})
 
     assert response.status_code == 200
     nearest.assert_called_once_with(
         51.0,
         -1.0,
-        app.state.graph,
-        app.state.spatial_index,
-        artifact_revision="revision-test",
+        app.state.candidate_index,
         limit=3,
     )
-    spaced.assert_called_once_with([], destination_limit=2, minimum_spacing_m=0)
 
 
 def test_candidates_empty_graph_returns_empty_list(tmp_path: Path):

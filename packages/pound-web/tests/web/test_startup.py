@@ -67,7 +67,6 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("POUND_BOAT_HIRE_ENRICHMENT_PATH", "/tmp/boat-hire.csv")
     monkeypatch.setenv("POUND_CANDIDATE_POOL_SIZE", "30")
     monkeypatch.setenv("POUND_GOOGLE_DESTINATION_LIMIT", "12")
-    monkeypatch.setenv("POUND_MINIMUM_CANDIDATE_SPACING_M", "125.5")
     monkeypatch.setenv("POUND_CATALOG_PATH", "/tmp/catalog.pkl")
     monkeypatch.setenv("POUND_CATALOG_MAX_KINDS", "4")
     monkeypatch.setenv("POUND_CATALOG_MAX_VIEWPORT_SPAN_DEG", "3.5")
@@ -85,7 +84,6 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
         catalog_path=Path("/tmp/catalog.pkl"),
         candidate_pool_size=30,
         google_destination_limit=12,
-        minimum_candidate_spacing_m=125.5,
         catalog_max_kinds=4,
         catalog_max_viewport_span_deg=3.5,
         catalog_max_radius_m=1500,
@@ -100,7 +98,6 @@ def test_settings_from_env_reads_paths_and_tuning(monkeypatch: pytest.MonkeyPatc
     [
         ("candidate_pool_size", 0),
         ("google_destination_limit", -1),
-        ("minimum_candidate_spacing_m", -0.1),
         ("catalog_max_kinds", 0),
         ("catalog_max_viewport_span_deg", 0),
         ("catalog_max_viewport_span_deg", MAX_PLACES_VIEWPORT_SPAN_DEGREES + 0.1),
@@ -209,6 +206,7 @@ def test_startup_attaches_artifact_state_and_loads_once(tmp_path: Path):
             assert app.state.boat_hire_anchors == ()
             assert app.state.network_unavailable is True
             assert isinstance(app.state.spatial_index, GraphSpatialIndex)
+            assert app.state.candidate_index is app.state.spatial_index.candidate_index
             assert isinstance(app.state.poi_spatial_index, PoiSpatialIndex)
             assert app.state.places_index is None
             assert app.state.places_status == "unavailable"

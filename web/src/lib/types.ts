@@ -3,9 +3,14 @@ export interface LatLon {
   lon: number;
 }
 
+export interface CanalPointHandle {
+  edge: [number, number];
+  fraction: number;
+}
+
 export interface CanalCandidate {
-  uid: number;
-  artifact_revision: string;
+  candidate_id: string;
+  handle: CanalPointHandle;
   coordinate: LatLon;
   straight_line_distance_m: number;
   display_name: string;
@@ -51,8 +56,6 @@ export interface RouteLeg {
 }
 
 export interface RouteAccessSegment {
-  from_uid: number;
-  to_uid: number;
   osm_way_id: number;
   kind: 'discouraged' | 'unknown';
   tag: 'boat' | 'access';
@@ -260,8 +263,8 @@ export interface CanalRouteResponse {
 export type CanalCandidatesRequest = LatLon;
 
 export interface CanalRouteRequest {
-  start_uid: number;
-  end_uid: number;
+  start: CanalPointHandle;
+  end: CanalPointHandle;
   artifact_revision: string;
   days?: number | null;
   hours_per_day?: number;
