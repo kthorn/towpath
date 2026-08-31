@@ -32,5 +32,5 @@ timeout = "10s"
 
 [[vm]]
 cpu_kind = "shared"
-cpus = 4
-memory = "8gb"
+cpus = 2
+memory = "4gb"
