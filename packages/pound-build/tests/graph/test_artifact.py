@@ -117,7 +117,13 @@ def test_prepare_converts_build_pois_to_durable_runtime_records():
 
 def test_write_publishes_runtime_payload_for_core_loader(tmp_path: Path):
     path = tmp_path / "graph.pkl"
-    artifact = prepare_artifact(_graph(), [_poi()], {"Oxford": (51.752, -1.257)}, _metadata())
+    detailed = prepare_artifact(_graph(), [_poi()], {"Oxford": (51.752, -1.257)}, _metadata())
+    artifact = RuntimeArtifact(
+        graph=compact_graph(detailed.graph),
+        pois=detailed.pois,
+        gazetteer=detailed.gazetteer,
+        metadata=detailed.metadata,
+    )
 
     write_artifact(artifact, path)
 
@@ -129,6 +135,16 @@ def test_write_publishes_runtime_payload_for_core_loader(tmp_path: Path):
     assert loaded.pois == artifact.pois
     assert loaded.gazetteer == artifact.gazetteer
     assert loaded.metadata == artifact.metadata
+
+
+def test_write_rejects_detailed_runtime_artifact(tmp_path: Path):
+    artifact = prepare_artifact(_graph(), [_poi()], {}, _metadata())
+    path = tmp_path / "detailed.pkl"
+
+    with pytest.raises(InvalidArtifactError, match="osm_node_ids"):
+        write_artifact(artifact, path)
+
+    assert not path.exists()
 
 
 @pytest.mark.parametrize(

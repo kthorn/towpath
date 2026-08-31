@@ -4,6 +4,7 @@ import networkx as nx
 from pound.artifact import RuntimeArtifact  # pyright: ignore[reportMissingImports]
 from pound.models import WayDimensions  # pyright: ignore[reportMissingImports]
 from pound_build.artifact import prepare_artifact, write_artifact
+from pound_build.graph.compact import compact_graph
 from pound_build.ingest.ir import PointOfInterest
 
 from scripts.compare_build_artifacts import (  # pyright: ignore[reportMissingImports]
@@ -101,7 +102,13 @@ def _artifact(
 
 
 def _write(artifact: RuntimeArtifact, path) -> None:
-    write_artifact(artifact, path)
+    compact = RuntimeArtifact(
+        graph=compact_graph(artifact.graph),
+        pois=artifact.pois,
+        gazetteer=artifact.gazetteer,
+        metadata=artifact.metadata,
+    )
+    write_artifact(compact, path)
 
 
 def test_compare_artifacts_ignores_only_revision_and_build_time():

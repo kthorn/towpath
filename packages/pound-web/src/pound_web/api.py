@@ -46,6 +46,14 @@ _network_union_cache: OrderedDict[tuple, tuple] = OrderedDict()
 _network_highlight_cache: OrderedDict[tuple, tuple] = OrderedDict()
 _network_geometry_lock = threading.Lock()
 
+
+def clear_network_geometry_caches() -> None:
+    """Clear process-global geometry cache entries between application lifespans."""
+    with _network_geometry_lock:
+        _network_union_cache.clear()
+        _network_highlight_cache.clear()
+
+
 router = APIRouter(prefix="/api")
 
 

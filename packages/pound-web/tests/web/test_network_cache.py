@@ -5,11 +5,11 @@ from pathlib import Path
 
 import networkx as nx
 import pound_web.api as api_module
-import pytest
-from fastapi.testclient import TestClient
+import pytest  # pyright: ignore[reportMissingImports]
+from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
 from pound_web.boat_hire import BOAT_HIRE_ENRICHMENT_FIELDS
 
-from .conftest import build_web_client
+from .conftest import build_web_client, write_boat_hire_row
 
 
 @pytest.fixture
@@ -133,3 +133,39 @@ def test_switching_bases_only_computes_highlights(
         "/api/canal-network", json={**payload, "selected_base_identity": "test-provider/base:test"}
     )
     assert calls["count"] == 3
+
+
+def test_lifespan_clears_geometry_caches_for_recreated_app(tmp_path: Path, route_graph: nx.Graph):
+    payload = {
+        "days": 7,
+        "hours_per_day": 6,
+        "selected_base_identity": "test-provider/base:test",
+    }
+    first_lifespan = build_web_client(
+        tmp_path,
+        route_graph,
+        boat_hire_rows=[write_boat_hire_row("base:test", "51.0", "-1.0", 1)],
+    )
+    first_client = next(first_lifespan)
+    try:
+        first = first_client.post("/api/canal-network", json=payload)
+        assert first.status_code == 200
+    finally:
+        next(first_lifespan, None)
+
+    second_lifespan = build_web_client(
+        tmp_path,
+        route_graph,
+        boat_hire_rows=[write_boat_hire_row("base:test", "51.002", "-1.002", 3)],
+    )
+    second_client = next(second_lifespan)
+    try:
+        second = second_client.post("/api/canal-network", json=payload)
+        assert second.status_code == 200
+    finally:
+        next(second_lifespan, None)
+
+    for geometry in (second.json()["lines"], second.json()["highlight_lines"]):
+        coordinates = {tuple(coordinate) for line in geometry for coordinate in line["coordinates"]}
+        assert (-1.002, 51.002) in coordinates
+        assert (-1.0, 51.0) not in coordinates

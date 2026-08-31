@@ -1,8 +1,8 @@
 from typing import cast
 
-import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+import pytest  # pyright: ignore[reportMissingImports]
+from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
+from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
 from pound_web.app import create_app
 
 
@@ -51,14 +51,19 @@ def test_unknown_selected_base_is_structured_422(web_client: TestClient):
     assert response.json()["detail"]["fields"] == ["selected_base_identity"]
 
 
-def test_empty_selected_base_is_request_validation_422(web_client: TestClient):
+@pytest.mark.parametrize("selected_base_identity", ["", 1])
+def test_invalid_selected_base_is_request_validation_422(
+    web_client: TestClient, selected_base_identity: object
+):
     response = web_client.post(
         "/api/canal-network",
-        json=_network_request(selected_base_identity=""),
+        json=_network_request(selected_base_identity=selected_base_identity),
     )
 
     assert response.status_code == 422
-    assert isinstance(response.json()["detail"], list)
+    assert any(
+        error["loc"] == ["body", "selected_base_identity"] for error in response.json()["detail"]
+    )
 
 
 def test_ineligible_selected_base_returns_empty_highlight(web_client: TestClient):

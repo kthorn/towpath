@@ -26,6 +26,7 @@ from pound.graph.spatial import (  # pyright: ignore[reportMissingImports]
 from starlette.concurrency import run_in_threadpool  # pyright: ignore[reportMissingImports]
 from starlette.staticfiles import StaticFiles  # pyright: ignore[reportMissingImports]
 
+from pound_web.api import clear_network_geometry_caches
 from pound_web.api import router as api_router
 from pound_web.boat_hire import load_boat_hire_seeds, snap_boat_hire_bases
 from pound_web.config import WebSettings
@@ -49,6 +50,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        clear_network_geometry_caches()
         runtime_settings = settings if settings is not None else WebSettings.from_env()
         artifact = _load_web_artifact(runtime_settings)
         app.state.artifact = artifact

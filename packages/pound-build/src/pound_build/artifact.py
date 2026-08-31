@@ -9,7 +9,7 @@ import os
 import pickle
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import networkx as nx
@@ -18,8 +18,8 @@ from pound.artifact import (  # pyright: ignore[reportMissingImports]
     InvalidArtifactError,
     RuntimeArtifact,
 )
-from pound.geometry import (
-    edge_line_wgs84 as _edge_line_wgs84,  # pyright: ignore[reportMissingImports]
+from pound.geometry import (  # pyright: ignore[reportMissingImports]
+    edge_line_wgs84 as _edge_line_wgs84,
 )
 from pound.models import (  # pyright: ignore[reportMissingImports]
     POI_CORRIDOR_M,
@@ -583,17 +583,19 @@ def write_artifact(
     metadata: dict | None = None,
     path: Path | None = None,
 ) -> None:
-    """Atomically publish a validated compact artifact.
-
-    The two-argument RuntimeArtifact form remains for existing build utilities; new builds use
-    ``(graph, runtime_pois, gazetteer, metadata, path)`` so validation stays in the producer.
-    """
+    """Atomically publish a validated compact artifact."""
     artifact: RuntimeArtifact
     output_path: Path
     if isinstance(artifact_or_graph, RuntimeArtifact):
         if gazetteer is not None or metadata is not None or path is not None:
             raise _invalid("artifact", artifact_or_graph, "unexpected compact artifact arguments")
-        artifact = artifact_or_graph
+        runtime_artifact = cast(Any, artifact_or_graph)
+        artifact = _prepare_compact_artifact(
+            runtime_artifact.graph,
+            runtime_artifact.pois,
+            runtime_artifact.gazetteer,
+            runtime_artifact.metadata,
+        )
         output_path = Path(runtime_pois_or_path)
     else:
         if path is None:

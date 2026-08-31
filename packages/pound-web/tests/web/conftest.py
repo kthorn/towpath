@@ -29,11 +29,9 @@ def _clear_network_geometry_cache():
     """Keep the process-global API geometry caches from leaking between tests."""
     import pound_web.api as api_module
 
-    api_module._network_union_cache.clear()
-    api_module._network_highlight_cache.clear()
+    api_module.clear_network_geometry_caches()
     yield
-    api_module._network_union_cache.clear()
-    api_module._network_highlight_cache.clear()
+    api_module.clear_network_geometry_caches()
 
 
 def catalog_place(kind: str, osm_id: int, lat: float, lon: float) -> CatalogPlace:
