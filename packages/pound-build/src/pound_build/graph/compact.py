@@ -296,6 +296,8 @@ def _emit_chain_group(
     _emit_chain(compact, source, ordered[0], tolerance_m)
     for path in ordered[1:]:
         anchor = min(path[1:-1], default=None)
+        if anchor is not None:
+            compact.add_node(anchor, **_runtime_node_data(source.nodes[anchor]))
         if anchor is None:
             _emit_chain(compact, source, path, tolerance_m)
             continue

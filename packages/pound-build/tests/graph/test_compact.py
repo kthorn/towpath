@@ -182,6 +182,32 @@ def test_parallel_alternative_keeps_one_deterministic_anchor():
     assert compact.edges[2, 3]["osm_way_id"] == 12
 
 
+def test_shorter_parallel_path_keeps_alternate_anchor_attributes():
+    source = nx.Graph()
+    coordinates = {
+        0: (51.7500, -1.2600),
+        1: (51.7504, -1.2598),
+        2: (51.7507, -1.2598),
+        10: (51.7510, -1.2600),
+        20: (51.7495, -1.2600),
+        30: (51.7515, -1.2600),
+    }
+    for uid, coordinate in coordinates.items():
+        _node(source, uid, *coordinate)
+    _edge(source, 0, 1, osm_way_id=10)
+    _edge(source, 1, 2, osm_way_id=10)
+    _edge(source, 2, 10, osm_way_id=10)
+    _edge(source, 0, 10, osm_way_id=10)
+    _edge(source, 0, 20, osm_way_id=20)
+    _edge(source, 10, 30, osm_way_id=30)
+    _without_coords(source)
+
+    compact = compact_graph(source)
+
+    assert compact.nodes[1]["lat"] == coordinates[1][0]
+    assert compact.nodes[1]["lon"] == coordinates[1][1]
+
+
 def test_reversed_chain_path_keeps_canonical_edge_geometry():
     source = nx.Graph()
     _node(source, 2, 51.7500, -1.2600)

@@ -14,7 +14,9 @@ from .conftest import artifact_metadata, write_boat_hire_enrichment
 from .fixtures import write_runtime_artifact
 
 
-def _graph(edge: tuple[int, int], *, west: float = -1.01) -> nx.Graph:
+def _graph(
+    edge: tuple[int, int], *, west: float = -1.01, candidate_eligible: bool = True
+) -> nx.Graph:
     low, high = edge
     graph = nx.Graph()
     graph.add_node(low, lat=51.0, lon=west + 0.01, movable_bridge_ids=())
@@ -27,6 +29,7 @@ def _graph(edge: tuple[int, int], *, west: float = -1.01) -> nx.Graph:
         dimensions=WayDimensions(),
         movable_bridge_ids=(),
         geometry=[(51.0, west + 0.01), (51.0, west)],
+        candidate_eligible=candidate_eligible,
     )
     return graph
 
@@ -41,10 +44,17 @@ def _seeds() -> tuple:
 
 
 def _artifacts(
-    tmp_path: Path, *, old_west: float = -1.01, new_west: float = -1.01
+    tmp_path: Path,
+    *,
+    old_west: float = -1.01,
+    new_west: float = -1.01,
+    old_candidate_eligible: bool = True,
 ) -> tuple[Path, Path]:
     old_path = write_runtime_artifact(
-        _graph((1, 2), west=old_west), [], tmp_path / "old.pkl", artifact_metadata("old")
+        _graph((1, 2), west=old_west, candidate_eligible=old_candidate_eligible),
+        [],
+        tmp_path / "old.pkl",
+        artifact_metadata("old"),
     )
     new_path = write_runtime_artifact(
         _graph((3, 4), west=new_west), [], tmp_path / "new.pkl", artifact_metadata("new")
@@ -67,6 +77,15 @@ def test_verification_reports_sorted_old_and_new_projection_for_every_base(tmp_p
     assert all(entry["new_snap_distance_m"] < 1.0 for entry in report["bases"])
     assert report["threshold_breaches"] == []
     assert report["required_exception_changes"] == []
+
+
+def test_verification_uses_legacy_edge_projection_for_old_artifact(tmp_path: Path):
+    old_path, new_path = _artifacts(tmp_path, old_candidate_eligible=False)
+
+    report = verify_boat_hire_snaps(old_path, new_path, _seeds())
+
+    assert all(entry["old_snap_distance_m"] < 1.0 for entry in report["bases"])
+    assert report["old_threshold_breaches"] == []
 
 
 def test_verification_command_reports_old_threshold_breaches_even_when_new_is_valid(

@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from pound.artifact import RuntimeArtifact, load_artifact  # pyright: ignore[reportMissingImports]
-from pound.graph.spatial import GraphSpatialIndex  # pyright: ignore[reportMissingImports]
+from pound.graph.spatial import (  # pyright: ignore[reportMissingImports]
+    CandidateSpatialIndex,
+    GraphSpatialIndex,
+)
 from pound_web.boat_hire import (  # pyright: ignore[reportMissingImports]
     BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M,
     BOAT_HIRE_OVERLAY_DISTANCE_M,
@@ -23,24 +26,30 @@ def _graph(artifact: RuntimeArtifact | Path):
     return load_artifact(artifact).graph if isinstance(artifact, Path) else artifact.graph
 
 
-def _project(index: GraphSpatialIndex, seed: BoatHireSeed):
-    result = index.candidate_index.nearest_projection(seed.latitude, seed.longitude)
+def _project_old(index: GraphSpatialIndex, seed: BoatHireSeed) -> tuple[tuple[int, int], float]:
+    edge, _projected, distance = index.project_to_nearest_edge(seed.latitude, seed.longitude)
+    return edge, float(distance)
+
+
+def _project_new(index: CandidateSpatialIndex, seed: BoatHireSeed) -> tuple[tuple[int, int], float]:
+    result = index.nearest_projection(seed.latitude, seed.longitude)
     if result is None:
         raise ValueError(f"Boat-hire seed {seed.identity} could not be projected")
-    return result
+    projected, distance = result
+    return projected.handle.edge, float(distance)
 
 
 def _entry(
-    seed: BoatHireSeed, old_index: GraphSpatialIndex, new_index: GraphSpatialIndex
+    seed: BoatHireSeed, old_index: GraphSpatialIndex, new_index: CandidateSpatialIndex
 ) -> dict[str, Any]:
-    old_projected, old_distance = _project(old_index, seed)
-    new_projected, new_distance = _project(new_index, seed)
+    old_edge, old_distance = _project_old(old_index, seed)
+    new_edge, new_distance = _project_new(new_index, seed)
     return {
         "identity": seed.identity,
-        "old_edge": list(old_projected.handle.edge),
-        "old_snap_distance_m": float(old_distance),
-        "new_edge": list(new_projected.handle.edge),
-        "new_snap_distance_m": float(new_distance),
+        "old_edge": list(old_edge),
+        "old_snap_distance_m": old_distance,
+        "new_edge": list(new_edge),
+        "new_snap_distance_m": new_distance,
     }
 
 
@@ -55,8 +64,8 @@ def verify_boat_hire_snaps(
     if not any(seed.identity == _REQUIRED_BASE_IDENTITY for seed in boat_hire_seeds):
         raise ValueError(f"curated seeds must include {_REQUIRED_BASE_IDENTITY}")
 
-    old_index = GraphSpatialIndex(_graph(old_artifact))
-    new_index = GraphSpatialIndex(_graph(new_artifact))
+    old_index = GraphSpatialIndex(_graph(old_artifact), build_candidate_index=False)
+    new_index = CandidateSpatialIndex(_graph(new_artifact))
     entries = tuple(_entry(seed, old_index, new_index) for seed in boat_hire_seeds)
     old_threshold_breaches: list[str] = []
     threshold_breaches: list[str] = []

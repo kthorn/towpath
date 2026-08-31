@@ -156,7 +156,7 @@ class GraphSpatialIndex:
     edge_tree: STRtree | None
     candidate_index: Any
 
-    def __init__(self, graph: nx.Graph) -> None:
+    def __init__(self, graph: nx.Graph, *, build_candidate_index: bool = True) -> None:
         edge_records = sorted(
             (
                 (min(u, v), max(u, v)),
@@ -174,7 +174,11 @@ class GraphSpatialIndex:
         object.__setattr__(self, "edge_keys", edge_keys)
         object.__setattr__(self, "edge_lines", edge_lines)
         object.__setattr__(self, "edge_tree", STRtree(edge_lines) if edge_lines else None)
-        object.__setattr__(self, "candidate_index", CandidateSpatialIndex(graph))
+        object.__setattr__(
+            self,
+            "candidate_index",
+            CandidateSpatialIndex(graph) if build_candidate_index else None,
+        )
 
     def distance_to_waterway(self, geometry: BaseGeometry | bytes) -> float | None:
         """Return metric distance from normalized catalog geometry to a navigable edge."""
