@@ -3,7 +3,7 @@
 import argparse
 import json
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -53,29 +53,50 @@ def _entry(
     }
 
 
-def verify_boat_hire_snaps(
-    old_artifact: RuntimeArtifact | Path,
-    new_artifact: RuntimeArtifact | Path,
-    seeds: Iterable[BoatHireSeed] | Path,
-) -> dict[str, Any]:
-    """Return a deterministic old/new snap report and threshold failures."""
-    boat_hire_seeds = load_boat_hire_seeds(seeds) if isinstance(seeds, Path) else tuple(seeds)
-    boat_hire_seeds = tuple(sorted(boat_hire_seeds, key=lambda seed: seed.identity))
+def canonical_boat_hire_seeds(seeds: Iterable[BoatHireSeed]) -> tuple[BoatHireSeed, ...]:
+    """Return sorted curated seeds after enforcing the required Base62 entry."""
+    boat_hire_seeds = tuple(sorted(seeds, key=lambda seed: seed.identity))
     if not any(seed.identity == _REQUIRED_BASE_IDENTITY for seed in boat_hire_seeds):
         raise ValueError(f"curated seeds must include {_REQUIRED_BASE_IDENTITY}")
+    return boat_hire_seeds
 
-    old_index = GraphSpatialIndex(_graph(old_artifact), build_candidate_index=False)
-    new_index = CandidateSpatialIndex(_graph(new_artifact))
-    entries = tuple(_entry(seed, old_index, new_index) for seed in boat_hire_seeds)
+
+def complete_records_by_identity(
+    seeds: Iterable[BoatHireSeed], records: Iterable[Mapping[str, Any]], *, description: str
+) -> dict[str, Mapping[str, Any]]:
+    """Require exactly one report record for every curated seed."""
+    expected = {seed.identity for seed in seeds}
+    records = tuple(records)
+    by_identity = {str(record["identity"]): record for record in records}
+    actual = set(by_identity)
+    if len(by_identity) != len(records) or actual != expected:
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        raise ValueError(
+            f"{description} identity coverage is incomplete: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    return by_identity
+
+
+def build_boat_hire_snap_report(
+    seeds: Iterable[BoatHireSeed], entries: Iterable[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Apply shared completeness and distance-threshold checks to snap entries."""
+    boat_hire_seeds = canonical_boat_hire_seeds(seeds)
+    entries_by_identity = complete_records_by_identity(
+        boat_hire_seeds, entries, description="boat-hire snap report"
+    )
     old_threshold_breaches: list[str] = []
     threshold_breaches: list[str] = []
     required_exception_changes: list[str] = []
-    for seed, entry in zip(boat_hire_seeds, entries, strict=True):
+    for seed in boat_hire_seeds:
+        entry = entries_by_identity[seed.identity]
         default_limit = BOAT_HIRE_OVERLAY_DISTANCE_M
         limit = BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M.get(seed.identity, default_limit)
-        if entry["old_snap_distance_m"] > limit:
+        if float(entry["old_snap_distance_m"]) > limit:
             old_threshold_breaches.append(seed.identity)
-        new_distance = entry["new_snap_distance_m"]
+        new_distance = float(entry["new_snap_distance_m"])
         if new_distance > limit:
             threshold_breaches.append(seed.identity)
             required_exception_changes.append(seed.identity)
@@ -84,13 +105,27 @@ def verify_boat_hire_snaps(
             and seed.identity not in BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M
         ):
             required_exception_changes.append(seed.identity)
-
     return {
-        "bases": list(entries),
+        "bases": [entries_by_identity[seed.identity] for seed in boat_hire_seeds],
         "old_threshold_breaches": old_threshold_breaches,
         "threshold_breaches": threshold_breaches,
         "required_exception_changes": required_exception_changes,
     }
+
+
+def verify_boat_hire_snaps(
+    old_artifact: RuntimeArtifact | Path,
+    new_artifact: RuntimeArtifact | Path,
+    seeds: Iterable[BoatHireSeed] | Path,
+) -> dict[str, Any]:
+    """Return a deterministic old/new snap report and threshold failures."""
+    boat_hire_seeds = canonical_boat_hire_seeds(
+        load_boat_hire_seeds(seeds) if isinstance(seeds, Path) else tuple(seeds)
+    )
+    old_index = GraphSpatialIndex(_graph(old_artifact), build_candidate_index=False)
+    new_index = CandidateSpatialIndex(_graph(new_artifact))
+    entries = tuple(_entry(seed, old_index, new_index) for seed in boat_hire_seeds)
+    return build_boat_hire_snap_report(boat_hire_seeds, entries)
 
 
 def _parser() -> argparse.ArgumentParser:

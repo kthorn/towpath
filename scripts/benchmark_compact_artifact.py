@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import pickle  # pi-lens-ignore: python-pickle
 import resource
@@ -143,6 +144,19 @@ def _public_route_record(record: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in record.items() if not key.startswith("_")}
 
 
+def _unavailable_route_record(case: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep source coordinates so compact routing is attempted after an old miss."""
+    return {
+        "available": False,
+        "source_distance_m": None,
+        "infrastructure": {},
+        "restrictions": [],
+        "_geometry": None,
+        "_source_start": list(_case_coordinates(case, "start")),
+        "_source_end": list(_case_coordinates(case, "end")),
+    }
+
+
 def _route_cases_from_legacy(
     routes: Iterable[tuple[str, Mapping[str, Any]]],
 ) -> tuple[dict[str, Any], ...]:
@@ -163,6 +177,16 @@ def _route_cases_from_legacy(
     return tuple(cases)
 
 
+def _missing_route_record() -> dict[str, Any]:
+    return {
+        "available": None,
+        "source_distance_m": None,
+        "infrastructure": {},
+        "restrictions": [],
+        "_geometry": None,
+    }
+
+
 def _route_parity(
     before_routes: Iterable[tuple[str, Mapping[str, Any]]],
     after_routes: Iterable[tuple[str, Mapping[str, Any]]],
@@ -172,43 +196,37 @@ def _route_parity(
     names = sorted(set(before_by_name) | set(after_by_name))
     cases = []
     for name in names:
-        before = before_by_name.get(
-            name,
-            {
-                "available": False,
-                "source_distance_m": None,
-                "infrastructure": {},
-                "restrictions": [],
-                "_geometry": None,
-            },
-        )
-        after = after_by_name.get(
-            name,
-            {
-                "available": False,
-                "source_distance_m": None,
-                "infrastructure": {},
-                "restrictions": [],
-                "_geometry": None,
-            },
-        )
+        records_complete = name in before_by_name and name in after_by_name
+        before = before_by_name.get(name, _missing_route_record())
+        after = after_by_name.get(name, _missing_route_record())
         both_available = bool(before["available"] and after["available"])
         geometry_deviation_m = _geometry_deviation_m(before["_geometry"], after["_geometry"])
-        matches = {
-            "availability": before["available"] == after["available"],
-            "source_distance": (
-                not both_available
-                or abs(before["source_distance_m"] - after["source_distance_m"])
-                <= _DISTANCE_BOUND_M
-            ),
-            "infrastructure": (
-                not both_available or before["infrastructure"] == after["infrastructure"]
-            ),
-            "restrictions": not both_available or before["restrictions"] == after["restrictions"],
-            "geometry_bound": (
-                geometry_deviation_m is None or geometry_deviation_m <= _GEOMETRY_BOUND_M
-            ),
-        }
+        if not records_complete:
+            matches = {
+                "availability": False,
+                "source_distance": False,
+                "infrastructure": False,
+                "restrictions": False,
+                "geometry_bound": False,
+            }
+        else:
+            matches = {
+                "availability": before["available"] == after["available"],
+                "source_distance": (
+                    not both_available
+                    or abs(before["source_distance_m"] - after["source_distance_m"])
+                    <= _DISTANCE_BOUND_M
+                ),
+                "infrastructure": (
+                    not both_available or before["infrastructure"] == after["infrastructure"]
+                ),
+                "restrictions": (
+                    not both_available or before["restrictions"] == after["restrictions"]
+                ),
+                "geometry_bound": (
+                    geometry_deviation_m is None or geometry_deviation_m <= _GEOMETRY_BOUND_M
+                ),
+            }
         cases.append(
             {
                 "name": name,
@@ -221,6 +239,16 @@ def _route_parity(
     return {"all_match": all(all(case["matches"].values()) for case in cases), "cases": cases}
 
 
+def _snap_verifier_module():
+    """Import the sibling verifier both as a package module and CLI sibling."""
+    try:
+        return importlib.import_module("scripts.verify_boat_hire_snaps")
+    except ModuleNotFoundError as exc:
+        if exc.name != "scripts":
+            raise
+        return importlib.import_module("verify_boat_hire_snaps")
+
+
 def _boat_hire_report(before: Path, after: Path, enrichment: Path | None) -> dict[str, Any]:
     if enrichment is None:
         return {
@@ -229,11 +257,7 @@ def _boat_hire_report(before: Path, after: Path, enrichment: Path | None) -> dic
             "threshold_breaches": [],
             "required_exception_changes": [],
         }
-    from scripts.verify_boat_hire_snaps import (  # pyright: ignore[reportMissingImports]
-        verify_boat_hire_snaps,
-    )
-
-    return verify_boat_hire_snaps(before, after, enrichment)
+    return _snap_verifier_module().verify_boat_hire_snaps(before, after, enrichment)
 
 
 def _startup_seconds(path: Path, catalog: Path | None, enrichment: Path | None) -> float | None:
@@ -275,7 +299,9 @@ def _current_artifact_report(
 
     _, unpickle_seconds = _timed(lambda: _load_pickle(path))
     artifact, compatibility_seconds = _timed(lambda: load_artifact(path))
-    graph_index, graph_index_seconds = _timed(lambda: GraphSpatialIndex(artifact.graph))
+    graph_index, graph_index_seconds = _timed(
+        lambda: GraphSpatialIndex(artifact.graph, build_candidate_index=False)
+    )
     candidate_index, candidate_index_seconds = _timed(lambda: CandidateSpatialIndex(artifact.graph))
     _, poi_index_seconds = _timed(lambda: PoiSpatialIndex(artifact.pois))
     graph_pickle_bytes = len(pickle.dumps(artifact.graph, protocol=pickle.HIGHEST_PROTOCOL))
@@ -298,7 +324,7 @@ def _current_artifact_report(
         "geometry_coordinates": sum(
             len(data.get("geometry", ())) for _, _, data in artifact.graph.edges(data=True)
         ),
-        "candidate_samples": len(graph_index.candidate_index.candidate_points),
+        "candidate_samples": len(candidate_index.candidate_points),
     }
     return metrics, routes
 
@@ -306,6 +332,51 @@ def _current_artifact_report(
 def _load_pickle(path: Path) -> Any:
     with path.open("rb") as stream:
         return pickle.load(stream)  # pi-lens-ignore: python-pickle
+
+
+class _LegacyArtifactLoadError(RuntimeError):
+    """Raised when the current child cannot import an old pickle's module path."""
+
+
+def _current_artifact_report_subprocess(
+    path: Path,
+    *,
+    catalog: Path | None = None,
+    enrichment: Path | None = None,
+    route_cases: Iterable[Mapping[str, Any]] = (),
+) -> tuple[dict[str, Any], list[tuple[str, dict[str, Any]]]]:
+    """Run one artifact's phases in a fresh process for independent RSS/timings."""
+    command = [
+        "uv",
+        "run",
+        "python",
+        str(Path(__file__).resolve()),
+        "--current-report",
+        "--artifact",
+        str(path.resolve()),
+        "--route-cases-json",
+        json.dumps([dict(case) for case in route_cases], sort_keys=True),
+    ]
+    if catalog is not None:
+        command.extend(["--catalog", str(catalog.resolve())])
+    if enrichment is None:
+        command.append("--no-boat-hire-enrichment")
+    else:
+        command.extend(["--boat-hire-enrichment", str(enrichment.resolve())])
+    try:
+        result = subprocess.run(
+            command,
+            check=True,
+            text=True,
+            capture_output=True,
+            cwd=Path(__file__).resolve().parents[1],
+        )
+    except subprocess.CalledProcessError as exc:
+        if "ModuleNotFoundError" in exc.stderr and "pound." in exc.stderr:
+            raise _LegacyArtifactLoadError(path) from exc
+        raise
+    payload = json.loads(result.stdout)
+    return payload["metrics"], [(name, record) for name, record in payload["routes"]]
 
 
 def benchmark_artifacts(
@@ -317,10 +388,11 @@ def benchmark_artifacts(
     route_cases: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Return deterministic benchmark sections for two current-format artifacts."""
-    before_metrics, before_routes = _current_artifact_report(
+    route_cases = tuple(route_cases)
+    before_metrics, before_routes = _current_artifact_report_subprocess(
         Path(before), enrichment=boat_hire_enrichment, route_cases=route_cases
     )
-    after_metrics, after_routes = _current_artifact_report(
+    after_metrics, after_routes = _current_artifact_report_subprocess(
         Path(after),
         catalog=catalog,
         enrichment=boat_hire_enrichment,
@@ -347,19 +419,19 @@ def _legacy_route_record(artifact, graph_index, case: Mapping[str, Any]) -> dict
     try:
         start_uid, _ = resolve_coord(*_case_coordinates(case, "start"), artifact.graph, graph_index)
         end_uid, _ = resolve_coord(*_case_coordinates(case, "end"), artifact.graph, graph_index)
-        constraints = ResolvedConstraints(start_uid=start_uid, end_uid=end_uid)
+    except ValueError:
+        return _unavailable_route_record(case)
+    start_node = artifact.graph.nodes[start_uid]
+    end_node = artifact.graph.nodes[end_uid]
+    unavailable = _unavailable_route_record(case)
+    unavailable["_source_start"] = [start_node["lat"], start_node["lon"]]
+    unavailable["_source_end"] = [end_node["lat"], end_node["lon"]]
+    constraints = ResolvedConstraints(start_uid=start_uid, end_uid=end_uid)
+    try:
         computed = _compute_route(constraints, graph=artifact.graph)
         response = plan_canal_route(constraints, graph=artifact.graph)
-        start_node = artifact.graph.nodes[start_uid]
-        end_node = artifact.graph.nodes[end_uid]
     except (RouteUnavailableError, ValueError):
-        return {
-            "available": False,
-            "source_distance_m": None,
-            "infrastructure": {},
-            "restrictions": [],
-            "_geometry": None,
-        }
+        return unavailable
 
     restrictions = [
         f"access:{segment.osm_way_id}:{segment.kind}:{segment.tag}:{segment.value}"
@@ -381,8 +453,8 @@ def _legacy_route_record(artifact, graph_index, case: Mapping[str, Any]) -> dict
         "infrastructure": {"locks": response.route.total_locks},
         "restrictions": sorted(set(restrictions)),
         "_geometry": [list(point) for point in response.geometry.coordinates],
-        "_source_start": [start_node["lat"], start_node["lon"]],
-        "_source_end": [end_node["lat"], end_node["lon"]],
+        "_source_start": unavailable["_source_start"],
+        "_source_end": unavailable["_source_end"],
     }
 
 
@@ -481,7 +553,9 @@ def _legacy_report_subprocess(
         "--artifact",
         str(before.resolve()),
     ]
-    if enrichment is not None:
+    if enrichment is None:
+        command.append("--no-boat-hire-enrichment")
+    else:
         command.extend(["--boat-hire-enrichment", str(enrichment.resolve())])
     result = subprocess.run(
         command,
@@ -507,52 +581,32 @@ def _combined_boat_hire_report(
             "required_exception_changes": [],
         }
     from pound.artifact import load_artifact  # pyright: ignore[reportMissingImports]
-    from pound.graph.spatial import GraphSpatialIndex  # pyright: ignore[reportMissingImports]
-    from pound_web.boat_hire import (  # pyright: ignore[reportMissingImports]
-        BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M,
-        BOAT_HIRE_OVERLAY_DISTANCE_M,
-        load_boat_hire_seeds,
-    )
+    from pound.graph.spatial import CandidateSpatialIndex  # pyright: ignore[reportMissingImports]
+    from pound_web.boat_hire import load_boat_hire_seeds  # pyright: ignore[reportMissingImports]
 
-    old_by_identity = {record["identity"]: record for record in old_boats}
-    index = GraphSpatialIndex(load_artifact(after).graph)
-    bases = []
-    old_threshold_breaches = []
-    threshold_breaches = []
-    required_exception_changes = []
-    for seed in sorted(load_boat_hire_seeds(enrichment), key=lambda item: item.identity):
-        old = old_by_identity[seed.identity]
-        new, new_distance = index.candidate_index.nearest_projection(seed.latitude, seed.longitude)
+    verifier = _snap_verifier_module()
+    boat_hire_seeds = verifier.canonical_boat_hire_seeds(load_boat_hire_seeds(enrichment))
+    old_by_identity = verifier.complete_records_by_identity(
+        boat_hire_seeds, old_boats, description="legacy boat-hire report"
+    )
+    index = CandidateSpatialIndex(load_artifact(after).graph)
+    entries = []
+    for seed in boat_hire_seeds:
+        new = index.nearest_projection(seed.latitude, seed.longitude)
         if new is None:
             raise ValueError(f"Boat-hire seed {seed.identity} could not be projected")
-        limit = BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M.get(
-            seed.identity, BOAT_HIRE_OVERLAY_DISTANCE_M
-        )
-        if old["snap_distance_m"] > limit:
-            old_threshold_breaches.append(seed.identity)
-        if new_distance > limit:
-            threshold_breaches.append(seed.identity)
-            required_exception_changes.append(seed.identity)
-        elif (
-            new_distance > BOAT_HIRE_OVERLAY_DISTANCE_M
-            and seed.identity not in BOAT_HIRE_OVERLAY_DISTANCE_EXCEPTIONS_M
-        ):
-            required_exception_changes.append(seed.identity)
-        bases.append(
+        projected, new_distance = new
+        old = old_by_identity[seed.identity]
+        entries.append(
             {
                 "identity": seed.identity,
                 "old_edge": old["edge"],
                 "old_snap_distance_m": old["snap_distance_m"],
-                "new_edge": list(new.handle.edge),
+                "new_edge": list(projected.handle.edge),
                 "new_snap_distance_m": float(new_distance),
             }
         )
-    return {
-        "bases": bases,
-        "old_threshold_breaches": old_threshold_breaches,
-        "threshold_breaches": threshold_breaches,
-        "required_exception_changes": required_exception_changes,
-    }
+    return verifier.build_boat_hire_snap_report(boat_hire_seeds, entries)
 
 
 def _benchmark_with_legacy_before(
@@ -563,7 +617,7 @@ def _benchmark_with_legacy_before(
     enrichment: Path | None,
 ) -> dict[str, Any]:
     before_metrics, before_routes, old_boats = _legacy_report_subprocess(before, enrichment)
-    after_metrics, after_routes = _current_artifact_report(
+    after_metrics, after_routes = _current_artifact_report_subprocess(
         after,
         catalog=catalog,
         enrichment=enrichment,
@@ -588,13 +642,29 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("data/boat-hire-enrichment.csv"),
     )
+    parser.add_argument("--no-boat-hire-enrichment", action="store_true")
     parser.add_argument("--legacy-report", action="store_true")
+    parser.add_argument("--current-report", action="store_true")
     parser.add_argument("--artifact", type=Path)
+    parser.add_argument("--route-cases-json")
     return parser
+
+
+def _semantic_failures(report: Mapping[str, Any]) -> bool:
+    snaps = report["boat_hire_snaps"]
+    return not report["route_parity"]["all_match"] or any(
+        snaps[key]
+        for key in (
+            "old_threshold_breaches",
+            "threshold_breaches",
+            "required_exception_changes",
+        )
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    enrichment = None if args.no_boat_hire_enrichment else args.boat_hire_enrichment
     if args.legacy_report:
         if args.artifact is None:
             raise ValueError("--legacy-report requires --artifact")
@@ -602,12 +672,24 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 _legacy_artifact_report(
                     args.artifact,
-                    enrichment=args.boat_hire_enrichment,
+                    enrichment=enrichment,
                     route_cases=_REPRESENTATIVE_ROUTES,
                 ),
                 sort_keys=True,
             )
         )
+        return 0
+    if args.current_report:
+        if args.artifact is None:
+            raise ValueError("--current-report requires --artifact")
+        route_cases = json.loads(args.route_cases_json or "[]")
+        metrics, routes = _current_artifact_report(
+            args.artifact,
+            catalog=args.catalog,
+            enrichment=enrichment,
+            route_cases=route_cases,
+        )
+        print(json.dumps({"metrics": metrics, "routes": routes}, sort_keys=True))
         return 0
     if args.before is None or args.after is None:
         raise ValueError("--before and --after are required")
@@ -616,20 +698,22 @@ def main(argv: list[str] | None = None) -> int:
             args.before,
             args.after,
             catalog=args.catalog,
-            boat_hire_enrichment=args.boat_hire_enrichment,
+            boat_hire_enrichment=enrichment,
             route_cases=_REPRESENTATIVE_ROUTES,
         )
-    except ModuleNotFoundError as exc:
-        if not exc.name or not exc.name.startswith("pound."):
+    except (ModuleNotFoundError, _LegacyArtifactLoadError) as exc:
+        if isinstance(exc, ModuleNotFoundError) and (
+            not exc.name or not exc.name.startswith("pound.")
+        ):
             raise
         report = _benchmark_with_legacy_before(
             args.before,
             args.after,
             catalog=args.catalog,
-            enrichment=args.boat_hire_enrichment,
+            enrichment=enrichment,
         )
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 0
+    return 1 if _semantic_failures(report) else 0
 
 
 if __name__ == "__main__":
