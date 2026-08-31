@@ -2,6 +2,21 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
+[manifest]
+members = [
+    "pound-build",
+    "pound-core",
+    "pound-web",
+]
+
+[manifest.dependency-groups]
+dev = [
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-cov", specifier = ">=5" },
+    { name = "ruff", specifier = ">=0.6" },
+]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.5"
@@ -543,48 +558,64 @@ wheels = [
 ]
 
 [[package]]
-name = "pound"
+name = "pound-build"
 version = "0.1.0"
-source = { editable = "." }
+source = { editable = "packages/pound-build" }
 dependencies = [
-    { name = "fastapi" },
     { name = "flask" },
-    { name = "networkx" },
-    { name = "pydantic" },
-    { name = "pyproj" },
+    { name = "pound-core" },
     { name = "requests" },
-    { name = "shapely" },
-    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
 bulk = [
     { name = "osmium" },
 ]
-dev = [
-    { name = "httpx" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
+
+[package.metadata]
+requires-dist = [
+    { name = "flask", specifier = ">=3.1,<4" },
+    { name = "osmium", marker = "extra == 'bulk'", specifier = ">=3.7" },
+    { name = "pound-core", editable = "packages/pound-core" },
+    { name = "requests", specifier = ">=2.31" },
+]
+provides-extras = ["bulk"]
+
+[[package]]
+name = "pound-core"
+version = "0.1.0"
+source = { editable = "packages/pound-core" }
+dependencies = [
+    { name = "networkx" },
+    { name = "pydantic" },
+    { name = "pyproj" },
+    { name = "shapely" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "networkx", specifier = ">=3.3" },
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "pyproj", specifier = ">=3.7,<4" },
+    { name = "shapely", specifier = ">=2.1,<3" },
+]
+
+[[package]]
+name = "pound-web"
+version = "0.1.0"
+source = { editable = "packages/pound-web" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "pound-core" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.116,<0.142" },
-    { name = "flask", specifier = ">=3.1,<4" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
-    { name = "networkx", specifier = ">=3.3" },
-    { name = "osmium", marker = "extra == 'bulk'", specifier = ">=3.7" },
-    { name = "pydantic", specifier = ">=2.11" },
-    { name = "pyproj", specifier = ">=3.7,<4" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5" },
-    { name = "requests", specifier = ">=2.31" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
-    { name = "shapely", specifier = ">=2.1,<3" },
+    { name = "pound-core", editable = "packages/pound-core" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35" },
 ]
-provides-extras = ["dev", "bulk"]
 
 [[package]]
 name = "pydantic"

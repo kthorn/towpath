@@ -8,7 +8,7 @@ See `pound-engine-design.md` for the full design brief.
 ## Development
 
 ```bash
-uv sync --extra dev
+uv sync
 uv run pytest
 uv run ruff check .
 ```
@@ -18,13 +18,13 @@ uv run ruff check .
 Generate the ranked local review file, then serve it for human decisions:
 
 ```bash
-uv sync --extra dev
-uv run pound-boat-review generate \
-  --catalog pound/artifacts/england-catalog.pkl \
-  --graph pound/artifacts/england.pkl \
-  --out pound/artifacts/boat-hire-review.json
-uv run pound-boat-review serve \
-  --review pound/artifacts/boat-hire-review.json
+uv sync --package pound-build
+uv run --package pound-build python -m pound_build.review.cli generate \
+  --catalog artifacts/england-catalog.pkl \
+  --graph artifacts/england.pkl \
+  --out artifacts/boat-hire-review.json
+uv run --package pound-build python -m pound_build.review.cli serve \
+  --review artifacts/boat-hire-review.json
 ```
 
 Generation keeps only named candidates within 250 m of any routing-eligible
@@ -41,7 +41,7 @@ network-dependent Oxford/Overpass path is only a legacy ingest scaffold and is
 not the recommended way to start the application.
 
 ```bash
-uv sync --extra dev
+uv sync
 ```
 
 Point the application at an existing England artifact with an absolute path,
@@ -51,15 +51,15 @@ The artifact must have been built with a version of Pound that writes
 revisionless artifacts. Rebuild a revisionless artifact once rather than
 patching its pickle metadata.
 
-Start FastAPI from the repository root. `pound.web.app:app` reads its settings
+Start FastAPI from the repository root. `pound_web.app:app` reads its settings
 when Uvicorn starts the application, so exporting or prefixing the environment
 variables works without an application factory flag:
 
 ```bash
-POUND_ARTIFACT_PATH=/absolute/path/to/pound/artifacts/england.pkl \
-POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/pound/data/boat-hire-enrichment.csv \
+POUND_ARTIFACT_PATH=/absolute/path/to/artifacts/england.pkl \
+POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/data/boat-hire-enrichment.csv \
 POUND_STATIC_DIR=web/dist \
-uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000 --reload
+uv run uvicorn pound_web.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Confirm that the backend loaded the artifact and reports its routing status:
@@ -136,7 +136,6 @@ FastAPI supports these environment variables:
 - `POUND_CANDIDATE_POOL_SIZE` (default `20`): geometric candidates considered.
 - `POUND_GOOGLE_DESTINATION_LIMIT` (default `10`): candidates returned for the
   browser's Google route matrix request.
-- `POUND_MINIMUM_CANDIDATE_SPACING_M` (default `250`): candidate separation.
 - `POUND_CATALOG_PATH` (optional): independent OSM catalog artifact. If unset,
   routing still starts and `/api/health` reports `places_status: unavailable`.
 - `POUND_CATALOG_MAX_KINDS` (default `16`), `POUND_CATALOG_MAX_RADIUS_M`
@@ -146,13 +145,17 @@ FastAPI supports these environment variables:
   both `/api/places` modes.
 - `POUND_PLACES_MAX_TARGETS` (default `64`) bounds nearby target batches.
 
-Candidate UIDs are valid only for their artifact revision. If the backend
-reports `artifact_revision_mismatch`, ensure the rebuilt artifact is deployed,
-then refresh or reselect both endpoints to load fresh candidates and re-plan.
-The frontend needs rebuilding only when its code or `VITE_*` configuration
-changes, not merely because the backend artifact revision changed. Rebuild an
-artifact whenever its source data or graph-building rules change; do not copy
-UIDs between artifacts.
+Each candidate response carries one top-level `artifact_revision`. Candidates
+have deterministic `candidate_id` values for browser selection and structured
+`handle` values of the form `{"edge":[low_uid,high_uid],"fraction":0.5}`;
+route requests send the selected handles as `start` and `end` rather than node
+UIDs. If the backend reports `artifact_revision_mismatch`, ensure the rebuilt
+artifact is deployed, then refresh or reselect both endpoints to load fresh
+candidates and re-plan. Candidate IDs and handles are valid only for their
+artifact revision; do not copy them between artifacts. The frontend needs
+rebuilding only when its code or `VITE_*` configuration changes, not merely
+because the backend artifact revision changed. Rebuild an artifact whenever
+its source data or graph-building rules change.
 
 If Maps or Places is unavailable, each endpoint also accepts latitude and
 longitude. This non-map coordinate fallback still finds canal candidates and
@@ -202,8 +205,7 @@ keep the routing artifact as a separate read-only mount:
 
 ```bash
 docker run --rm -p 8000:8000 \
-  -e POUND_ARTIFACT_PATH=/data/england.pkl \
-  -v "$PWD/pound/artifacts/england.pkl:/data/england.pkl:ro" \
+  -v "$PWD/artifacts/england.pkl:/app/artifacts/england.pkl:ro" \
   pound-map
 ```
 
@@ -267,9 +269,9 @@ potentially billable; its exact prerequisites and command are in
 - Shapely and pyproj are core dependencies used to normalize POI geometry,
   measure corridor distances in British National Grid coordinates, and build
   runtime spatial indexes. They are installed by `uv sync`.
-- `osmium-tool` (system CLI) for `pound-ingest build england` — install via
+- `osmium-tool` (system CLI) for the England build — install via
   apt/brew/conda. The `pyosmium` Python package is separate and pulled by the
-  `bulk` extra: `uv sync --extra bulk`. The base `uv sync` works without it.
+  `bulk` extra: `uv sync --package pound-build --extra bulk`. The base `uv sync` works without it.
 
 ## Legacy regional ingest scaffold (Oxford)
 
@@ -282,15 +284,15 @@ build below for the application.
 Fetch the Oxford extract and print the summarize() report (network required):
 
 ```bash
-uv run pound-ingest oxford
+uv run --package pound-build python -m pound_build.ingest.cli oxford
 # or, also writing the features IR:
-uv run pound-ingest oxford --out pound/data/oxford_canal_waterways.json
+uv run --package pound-build python -m pound_build.ingest.cli oxford --out data/oxford_canal_waterways.json
 ```
 
 ### Build the legacy Oxford artifact
 
 ```bash
-uv run pound-ingest build oxford --out pound/artifacts/oxford.pkl
+uv run --package pound-build python -m pound_build.ingest.cli build oxford --out artifacts/oxford.pkl
 ```
 
 Produces a small pickled NetworkX graph for ingest testing only. It does not
@@ -308,16 +310,16 @@ The full bulk path needs the Geofabrik England extract (manual download; the
 CLI does not download 1.5 GB itself):
 
 ```bash
-curl -L -o pound/data/england.osm.pbf \
+curl -L -o data/england.osm.pbf \
   https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf
-uv sync --extra bulk
-uv run pound-ingest build england --out pound/artifacts/england.pkl
+uv sync --package pound-build --extra bulk
+uv run --package pound-build python -m pound_build.ingest.cli build england --out artifacts/england.pkl
 ```
 
 If the PBF is missing the build prints the URL and exits non-zero. The build
 hard-fails on `derelict_edges>0`, `self_loops>0`, or
 `tolerance_snaps_unresolved` above `--max-unresolved-snaps` (default `0`,
-forcing manual curation via `pound/data/overrides.json` before a real England
+forcing manual curation via `data/overrides.json` before a real England
 artifact is trusted). Advisory keys (`edges_missing_dims`,
 `ambiguous_place_names`, gazetteer discrepancy, and **component_count /
 component_sizes**) are reported but never fail the build.
@@ -348,7 +350,7 @@ source.
 tolerance to *measure* how fragmented the network really is, then dial up:
 
 ```bash
-uv run pound-ingest build england --out /tmp/eng.pkl --tolerance-m 1
+uv run --package pound-build python -m pound_build.ingest.cli build england --out /tmp/eng.pkl --tolerance-m 1
 # read component_count / component_sizes from the report:
 #   thousands => most 'gaps' are real OSM-edit curation; add join overrides.
 #   ~ a dozen  => the fragmentation is plausibly genuine (derelict arms,
@@ -356,7 +358,7 @@ uv run pound-ingest build england --out /tmp/eng.pkl --tolerance-m 1
 ```
 
 The report is the authority, not the threshold — `--tolerance-m` is the
-exploration dial; `pound/data/overrides.json` is where confirmed joins and
+exploration dial; `data/overrides.json` is where confirmed joins and
 suppressed false snaps land.
 
 Bulk tests are skipped by default; run them explicitly:
@@ -374,8 +376,8 @@ artifact. Build it only when catalog marker layers are needed:
 ```bash
 catalog_tmp=$(mktemp -d)
 trap 'rm -rf "$catalog_tmp"' EXIT
-uv run pound-ingest catalog england \
-  --pbf pound/data/england.osm.pbf \
+uv run --package pound-build python -m pound_build.ingest.cli catalog england \
+  --pbf data/england.osm.pbf \
   --out "$catalog_tmp/england-catalog.pkl" \
   --profile
 ```
@@ -384,7 +386,7 @@ Catalog artifacts use serialized contract version `2` and carry the exact
 attribution value `© OpenStreetMap contributors`. Catalog revisions identify
 individual builds and remain independent from routing artifact revisions.
 Catalogs built with an older or missing schema version are rejected at startup
-and must be rebuilt with `pound-ingest`; they are not migrated in place.
+and must be rebuilt with the current build CLI; they are not migrated in place.
 
 A successful real-England build produced **185,029 records**, an
 **85,378,417-byte** artifact, in **200.49 s wall time**, with **2,534,084 KiB
@@ -392,7 +394,7 @@ peak RSS**. The explicit build gates are: exactly 185,029 records for the same
 source/filter (a source refresh requires a new inventory review), artifact size
 <= **100,000,000 bytes**, build wall time <= **300 s**, and build peak RSS <=
 **3,000,000 KiB**. The real build baseline passes all four build gates. The
-benchmark run rebuilt the catalog from `pound/data/england.osm.pbf`
+benchmark run rebuilt the catalog from `data/england.osm.pbf`
 into a temporary artifact; `/usr/bin/time` measured **211.32 s** wall time and
 **2,527,792 KiB** peak RSS, also passing the build gates.
 
@@ -416,8 +418,8 @@ time_log=$(mktemp)
 trap 'rm -f "$benchmark_json" "$time_log"' EXIT
 /usr/bin/time -v uv run python scripts/catalog_query_benchmark.py \
   --catalog-artifact "$catalog_tmp/england-catalog.pkl" \
-  --routing-artifact pound/artifacts/england.pkl \
-  --boat-hire-enrichment pound/data/boat-hire-enrichment.csv \
+  --routing-artifact artifacts/england.pkl \
+  --boat-hire-enrichment data/boat-hire-enrichment.csv \
   --warmups 2 --iterations 5 >"$benchmark_json" 2>"$time_log"
 ```
 
@@ -458,11 +460,11 @@ Configure the optional catalog alongside the routing artifact when starting
 FastAPI:
 
 ```bash
-POUND_ARTIFACT_PATH=/absolute/path/to/pound/artifacts/england.pkl \
-POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/pound/data/boat-hire-enrichment.csv \
+POUND_ARTIFACT_PATH=/absolute/path/to/artifacts/england.pkl \
+POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/data/boat-hire-enrichment.csv \
 POUND_CATALOG_PATH=/absolute/path/to/england-catalog.pkl \
 POUND_STATIC_DIR=web/dist \
-uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000
+uv run uvicorn pound_web.app:app --host 127.0.0.1 --port 8000
 ```
 
 Catalog records are OSM-derived. Keep the visible linked
@@ -478,7 +480,7 @@ Minimal, eyeballing-only surface over the loaded artifact:
 ```bash
 uv run pound-plan Oxford Banbury --days 3
 # override the artifact:
-uv run pound-plan Oxford Banbury --days 3 --artifact pound/artifacts/england.pkl
+uv run pound-plan Oxford Banbury --days 3 --artifact artifacts/england.pkl
 # boat constraints:
 uv run pound-plan Oxford Banbury --days 3 --boat-beam 2.0 --boat-draft 0.8
 # disable movable-bridge delay for a what-if route comparison:
@@ -539,7 +541,7 @@ Resolve a coordinate to the nearest canal-network node uid + distance:
 ```bash
 uv run pound-locate --lat 51.75 --lon -1.26
 # override the artifact:
-uv run pound-locate --lat 51.75 --lon -1.26 --artifact pound/artifacts/england.pkl
+uv run pound-locate --lat 51.75 --lon -1.26 --artifact artifacts/england.pkl
 # fail if the nearest canal is farther than N metres (for scripting):
 uv run pound-locate --lat 51.75 --lon -1.26 --max-distance-m 200
 ```

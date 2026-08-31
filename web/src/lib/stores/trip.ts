@@ -17,6 +17,7 @@ import type {
   CanalCandidatesResponse,
   CanalNetworkRequest,
   CanalNetworkResponse,
+  CanalPointHandle,
   CanalRouteRequest,
   CanalRouteResponse,
   PlaceResponse,
@@ -43,7 +44,8 @@ interface PoundApi {
 export interface EndpointState {
   place: SelectedPlace | null;
   candidates: RankedCandidate[];
-  selectedUid: number | null;
+  selectedCandidateId: string | null;
+  selectedHandle: CanalPointHandle | null;
   artifactRevision?: string;
   landRoute: LandRoute | null;
   transferWarning: string | null;
@@ -79,7 +81,7 @@ export interface TripState {
   placesResultLimitExceeded: boolean;
 }
 
-export type CanalConstraints = Omit<CanalRouteRequest, 'start_uid' | 'end_uid' | 'artifact_revision'>;
+export type CanalConstraints = Omit<CanalRouteRequest, 'start' | 'end' | 'artifact_revision'>;
 
 type NetworkConstraintKey = readonly [
   number,
@@ -125,7 +127,7 @@ type SuccessfulNetwork = {
 
 export interface TripStore extends Readable<TripState> {
   setEndpointCoordinate(slot: EndpointSlot, place: SelectedPlace | LatLon): Promise<void>;
-  selectCandidate(slot: EndpointSlot, uid: number): Promise<void>;
+  selectCandidate(slot: EndpointSlot, candidateId: string): Promise<void>;
   confirmGeometricFallback(slot: EndpointSlot): void;
   planCanalRoute(constraints: CanalConstraints): Promise<CanalRouteResponse>;
   togglePoiKind(kind: string): void;
@@ -141,7 +143,7 @@ export interface TripStore extends Readable<TripState> {
 }
 
 const emptyEndpoint = (): EndpointState => ({
-  place: null, candidates: [], selectedUid: null, landRoute: null, transferWarning: null,
+  place: null, candidates: [], selectedCandidateId: null, selectedHandle: null, landRoute: null, transferWarning: null,
   requiresManualConfirmation: false, confirmed: false, loading: false, error: null,
 });
 
@@ -420,11 +422,11 @@ export function createTripStore(dependencies: {
 
   async function loadLandRoute(slot: EndpointSlot, generation: number): Promise<void> {
     const endpoint = state[slot];
-    const selected = endpoint.candidates.find(({ candidate }) => candidate.uid === endpoint.selectedUid);
+    const selected = endpoint.candidates.find(({ candidate }) => candidate.candidate_id === endpoint.selectedCandidateId);
     if (!endpoint.place || !selected) return;
     try {
       const route = await transferRouter.route(endpoint.place.coordinate, selected.candidate.coordinate, transferMode);
-      if (generation !== generations[slot] || state[slot].selectedUid !== selected.candidate.uid) return;
+      if (generation !== generations[slot] || state[slot].selectedCandidateId !== selected.candidate.candidate_id) return;
       updateEndpoint(slot, { landRoute: route });
       mapCall(slot, () => mapView?.land(slot, route));
     } catch (error) {
@@ -468,36 +470,39 @@ export function createTripStore(dependencies: {
     if (generation !== generations[slot]) return;
     const ranked = rankCandidates(candidateResponse.candidates, matrix);
     const allUnavailable = ranked.length > 0 && ranked.every(({ available }) => !available);
-    const selectedUid = ranked[0]?.candidate.uid ?? null;
+    const selectedCandidateId = ranked[0]?.candidate.candidate_id ?? null;
+    const selectedHandle = ranked[0]?.candidate.handle ?? null;
     const priorWarning = state[slot].transferWarning;
     const fallbackWarning = allUnavailable
       ? 'Could not verify a land transfer. Confirm the geometric fallback before canal routing.'
       : null;
     const transferWarning = [priorWarning, fallbackWarning, matrixWarning].filter(Boolean).join(' ') || null;
     updateEndpoint(slot, {
-      candidates: ranked, selectedUid, artifactRevision: candidateResponse.artifact_revision,
+      candidates: ranked, selectedCandidateId, selectedHandle, artifactRevision: candidateResponse.artifact_revision,
       requiresManualConfirmation: allUnavailable, confirmed: !allUnavailable,
       transferWarning,
       loading: false, error: null,
     });
-    mapCall(slot, () => mapView?.candidates(slot, candidateResponse.candidates, selectedUid ?? undefined));
-    if (selectedUid !== null) await loadLandRoute(slot, generation);
+    mapCall(slot, () => mapView?.candidates(slot, candidateResponse.candidates, selectedCandidateId ?? undefined));
+    if (selectedCandidateId !== null) await loadLandRoute(slot, generation);
   }
 
-  async function selectCandidate(slot: EndpointSlot, uid: number): Promise<void> {
-    if (!state[slot].candidates.some(({ candidate }) => candidate.uid === uid)) {
-      throw new Error(`Unknown ${slot} candidate UID ${uid}`);
+  async function selectCandidate(slot: EndpointSlot, candidateId: string): Promise<void> {
+    const selected = state[slot].candidates.find(({ candidate }) => candidate.candidate_id === candidateId);
+    if (!selected) {
+      throw new Error(`Unknown ${slot} candidate ${candidateId}`);
     }
     const generation = ++generations[slot];
     invalidateCanalRoute(slot);
     clearLand(slot);
     updateEndpoint(slot, {
-      selectedUid: uid,
+      selectedCandidateId: candidateId,
+      selectedHandle: selected.candidate.handle,
       landRoute: null,
       confirmed: state[slot].requiresManualConfirmation ? false : state[slot].confirmed,
     });
     mapCall(slot, () => mapView?.candidates(
-      slot, state[slot].candidates.map(({ candidate }) => candidate), uid,
+      slot, state[slot].candidates.map(({ candidate }) => candidate), candidateId,
     ));
     await loadLandRoute(slot, generation);
   }
@@ -508,7 +513,8 @@ export function createTripStore(dependencies: {
 
   async function planCanalRoute(constraints: CanalConstraints): Promise<CanalRouteResponse> {
     const { origin, destination } = state;
-    if (origin.selectedUid === null || destination.selectedUid === null) {
+    if (origin.selectedCandidateId === null || destination.selectedCandidateId === null ||
+        origin.selectedHandle === null || destination.selectedHandle === null) {
       throw new Error('Select both canal endpoints before routing');
     }
     if ((origin.requiresManualConfirmation && !origin.confirmed) ||
@@ -519,8 +525,8 @@ export function createTripStore(dependencies: {
       throw new Error('Endpoint artifact revisions do not match');
     }
     const request: CanalRouteRequest = {
-      start_uid: origin.selectedUid,
-      end_uid: destination.selectedUid,
+      start: origin.selectedHandle,
+      end: destination.selectedHandle,
       artifact_revision: origin.artifactRevision,
       ...constraints,
     };
@@ -780,7 +786,7 @@ export function createTripStore(dependencies: {
         const endpoint = state[slot];
         if (endpoint.place) mapCall(slot, () => mapView?.marker(slot, endpoint.place!.coordinate));
         mapCall(slot, () => mapView?.candidates(
-          slot, endpoint.candidates.map(({ candidate }) => candidate), endpoint.selectedUid ?? undefined,
+          slot, endpoint.candidates.map(({ candidate }) => candidate), endpoint.selectedCandidateId ?? undefined,
         ));
         if (endpoint.landRoute) mapCall(slot, () => mapView?.land(slot, endpoint.landRoute));
       }

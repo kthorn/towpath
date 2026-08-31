@@ -6,6 +6,7 @@ import type {
   BoatHireBase,
   CanalCandidatesResponse,
   CanalNetworkRequest,
+  CanalPointHandle,
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
@@ -21,10 +22,12 @@ import type { LandRoute, MapView, SelectedPlace, TransferResult, TransferRouter 
 import { createTripStore } from './trip';
 
 const place = (name: string, lat = 51, lon = -1): SelectedPlace => ({ name, address: `${name} address`, coordinate: { lat, lon } });
+const candidateHandle = (uid: number): CanalPointHandle => ({ edge: [uid, uid + 1], fraction: 0.5 });
+const candidateId = (uid: number): string => `candidate-${uid}`;
 const response = (revision: string, uids: number[]): CanalCandidatesResponse => ({
   artifact_revision: revision,
   candidates: uids.map((uid, index) => ({
-    uid, artifact_revision: revision, coordinate: { lat: 52 + index, lon: -2 - index },
+    candidate_id: candidateId(uid), handle: candidateHandle(uid), coordinate: { lat: 52 + index, lon: -2 - index },
     straight_line_distance_m: 100 + index, display_name: `candidate ${uid}`,
   })),
 });
@@ -874,7 +877,7 @@ describe('trip store', () => {
     store.setMapView(map);
     await vi.waitFor(() => expect(get(store).networkError).toBe('network unavailable'));
     await store.setEndpointCoordinate('origin', place('origin'));
-    expect(get(store).origin.selectedUid).toBe(2);
+    expect(get(store).origin.selectedCandidateId).toBe(candidateId(2));
   });
 
   it('resets trip state and fits the cached network', async () => {
@@ -952,8 +955,8 @@ describe('trip store', () => {
     store.setMapView(map);
     expect(map.marker).toHaveBeenCalledWith('origin', { lat: 51, lon: -1 });
     expect(map.marker).toHaveBeenCalledWith('destination', { lat: 53, lon: -1 });
-    expect(map.candidates).toHaveBeenCalledWith('origin', expect.any(Array), 2);
-    expect(map.candidates).toHaveBeenCalledWith('destination', expect.any(Array), 4);
+    expect(map.candidates).toHaveBeenCalledWith('origin', expect.any(Array), candidateId(2));
+    expect(map.candidates).toHaveBeenCalledWith('destination', expect.any(Array), candidateId(4));
     expect(map.land).toHaveBeenCalledWith('origin', land);
     expect(map.land).toHaveBeenCalledWith('destination', land);
     expect(map.canal).toHaveBeenCalledWith(canal.geometry);
@@ -979,8 +982,10 @@ describe('trip store', () => {
     const state = get(store);
     expect(state.origin.place?.name).toBe('origin');
     expect(state.destination.place?.coordinate).toEqual({ lat: 53, lon: -3 });
-    expect(state.origin.selectedUid).toBe(2);
-    expect(state.destination.selectedUid).toBe(4);
+    expect(state.origin.selectedCandidateId).toBe(candidateId(2));
+    expect(state.destination.selectedCandidateId).toBe(candidateId(4));
+    expect(state.origin.selectedHandle).toEqual(candidateHandle(2));
+    expect(state.destination.selectedHandle).toEqual(candidateHandle(4));
     expect(state.origin.landRoute).toEqual(land);
     expect(state.origin.requiresManualConfirmation).toBe(false);
     expect(marker).toHaveBeenCalledWith('origin', { lat: 51, lon: -1 });
@@ -991,8 +996,9 @@ describe('trip store', () => {
   it('updates selection and land route on manual override', async () => {
     const { store, transferRouter } = setup();
     await store.setEndpointCoordinate('origin', place('origin'));
-    await store.selectCandidate('origin', 1);
-    expect(get(store).origin.selectedUid).toBe(1);
+    await store.selectCandidate('origin', candidateId(1));
+    expect(get(store).origin.selectedCandidateId).toBe(candidateId(1));
+    expect(get(store).origin.selectedHandle).toEqual(candidateHandle(1));
     expect(transferRouter.route).toHaveBeenLastCalledWith(place('origin').coordinate, { lat: 52, lon: -2 }, 'WALK');
   });
 
@@ -1000,7 +1006,8 @@ describe('trip store', () => {
     const { store } = setup({ matrices: [[{ available: false, reason: 'none' }, { available: false, reason: 'none' }]] });
     await store.setEndpointCoordinate('origin', place('origin'));
     const endpoint = get(store).origin;
-    expect(endpoint.selectedUid).toBe(1);
+    expect(endpoint.selectedCandidateId).toBe(candidateId(1));
+    expect(endpoint.selectedHandle).toEqual(candidateHandle(1));
     expect(endpoint.transferWarning).toMatch(/could not verify/i);
     expect(endpoint.requiresManualConfirmation).toBe(true);
     expect(endpoint.confirmed).toBe(false);
@@ -1013,7 +1020,7 @@ describe('trip store', () => {
     const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand, destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ routeError: new Error('land unavailable'), map });
     await store.setEndpointCoordinate('origin', place('origin'));
-    expect(get(store).origin).toMatchObject({ selectedUid: 2, landRoute: null });
+    expect(get(store).origin).toMatchObject({ selectedCandidateId: candidateId(2), landRoute: null });
     expect(get(store).origin.transferWarning).toMatch(/land unavailable/);
     expect(clearLand).toHaveBeenCalledWith('origin');
   });
@@ -1026,7 +1033,7 @@ describe('trip store', () => {
     await store.setEndpointCoordinate('destination', place('destination', 53));
     const constraints = { days: 4, hours_per_day: 7, boat_beam_m: 2.1, movable_bridge_delay_min: 0 };
     await store.planCanalRoute(constraints);
-    expect(canalRoute).toHaveBeenCalledWith({ start_uid: 2, end_uid: 4, artifact_revision: 'r1', ...constraints });
+    expect(canalRoute).toHaveBeenCalledWith({ start: candidateHandle(2), end: candidateHandle(4), artifact_revision: 'r1', ...constraints });
     expect(get(store).canalRoute).toEqual(canal);
     expect(drawCanal).toHaveBeenCalledWith(canal.geometry);
   });
@@ -1417,8 +1424,8 @@ describe('trip store', () => {
     await store.setEndpointCoordinate('destination', place('destination', 53));
     await expect(store.planCanalRoute({})).rejects.toThrow(errorText);
     expect(get(store).routeError).toContain(errorText);
-    expect(get(store).origin.selectedUid).toBe(2);
-    expect(get(store).destination.selectedUid).toBe(4);
+    expect(get(store).origin.selectedCandidateId).toBe(candidateId(2));
+    expect(get(store).destination.selectedCandidateId).toBe(candidateId(4));
   });
 
   it('blocks all-unavailable routing until explicit confirmation', async () => {
@@ -1445,7 +1452,7 @@ describe('trip store', () => {
     resolveOld(response('r1', [1]));
     await old;
     expect(get(store).origin.place?.name).toBe('new');
-    expect(get(store).origin.selectedUid).toBe(9);
+    expect(get(store).origin.selectedCandidateId).toBe(candidateId(9));
   });
 
   it('ignores stale destination candidate responses symmetrically', async () => {
@@ -1459,7 +1466,7 @@ describe('trip store', () => {
     resolveOld(response('r1', [3]));
     await old;
     expect(get(store).destination.place?.name).toBe('new destination');
-    expect(get(store).destination.selectedUid).toBe(8);
+    expect(get(store).destination.selectedCandidateId).toBe(candidateId(8));
   });
 
   it('ignores stale matrix and land-route responses', async () => {
@@ -1479,11 +1486,11 @@ describe('trip store', () => {
     vi.mocked(transferRouter.route)
       .mockImplementationOnce(() => new Promise((resolve) => { resolveLand = resolve; }))
       .mockResolvedValueOnce({ ...land, distanceMeters: 999 });
-    const oldLand = store.selectCandidate('origin', 3);
-    await store.selectCandidate('origin', 4);
+    const oldLand = store.selectCandidate('origin', candidateId(3));
+    await store.selectCandidate('origin', candidateId(4));
     resolveLand({ ...land, distanceMeters: 111 });
     await oldLand;
-    expect(get(store).origin.selectedUid).toBe(4);
+    expect(get(store).origin.selectedCandidateId).toBe(candidateId(4));
     expect(get(store).origin.landRoute?.distanceMeters).toBe(999);
   });
 
@@ -1492,7 +1499,7 @@ describe('trip store', () => {
     const map = { marker: failing, candidates: failing, land: failing, canal: failing, network: failing, focusedNetwork: failing, hireBases: failing, fitNetwork: failing, onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: vi.fn(), destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ map });
     await expect(store.setEndpointCoordinate('origin', place('origin'))).resolves.toBeUndefined();
-    expect(get(store).origin.selectedUid).toBe(2);
+    expect(get(store).origin.selectedCandidateId).toBe(candidateId(2));
     expect(get(store).origin.transferWarning).toMatch(/map failed/);
   });
 
@@ -1542,19 +1549,22 @@ describe('trip store', () => {
     const clearLand = vi.fn();
     const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand, destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ map });
-    expect(get(store).origin.selectedUid).toBeNull();
-    expect(get(store).destination.selectedUid).toBeNull();
+    expect(get(store).origin.selectedCandidateId).toBeNull();
+    expect(get(store).destination.selectedCandidateId).toBeNull();
+    expect(get(store).origin.selectedHandle).toBeNull();
+    expect(get(store).destination.selectedHandle).toBeNull();
     await store.setEndpointCoordinate('destination', place('destination', 53));
-    await store.selectCandidate('destination', 3);
+    await store.selectCandidate('destination', candidateId(3));
     expect(clearLand).toHaveBeenCalledWith('destination');
-    expect(get(store).destination.selectedUid).toBe(3);
+    expect(get(store).destination.selectedCandidateId).toBe(candidateId(3));
+    expect(get(store).destination.selectedHandle).toEqual(candidateHandle(3));
   });
 
   it('turns a land-overlay clear failure into a warning without losing endpoint state', async () => {
     const map = { marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), onMapClick: vi.fn(), onHireBaseSelect: vi.fn(() => vi.fn()), clearLand: () => { throw new Error('clear failed'); }, destroy: vi.fn() } as unknown as MapView;
     const { store } = setup({ map });
     await store.setEndpointCoordinate('destination', place('destination', 53));
-    expect(get(store).destination.selectedUid).toBe(4);
+    expect(get(store).destination.selectedCandidateId).toBe(candidateId(4));
     expect(get(store).destination.transferWarning).toMatch(/clear failed/);
   });
 });

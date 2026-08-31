@@ -20,13 +20,12 @@ venv/
 htmlcov/
 
 # Large data extracts — never commit the full GB build (design §10)
-pound/data/*
-!pound/data/.gitkeep
+data/*
 # Curated, editable boat-hire enrichment input.
-!pound/data/boat-hire-enrichment.csv
+!data/boat-hire-enrichment.csv
 
 # Build artifacts — serialized graph outputs (design §4.4)
-pound/artifacts/
+artifacts/
 
 # editor
 .vscode/

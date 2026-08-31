@@ -5,8 +5,8 @@ import { createGoogleMapView, type MapFacade } from './map';
 
 function candidate(uid: number): CanalCandidate {
   return {
-    uid,
-    artifact_revision: 'rev',
+    candidate_id: `candidate-${uid}`,
+    handle: { edge: [uid, uid + 1], fraction: 0.5 },
     coordinate: { lat: 52 + uid, lon: -1 - uid },
     straight_line_distance_m: 10,
     display_name: `Candidate ${uid}`,
@@ -161,7 +161,7 @@ describe('Google map adapter', () => {
     const { view, facade, markers } = setup();
     view.marker('origin', { lat: 51, lon: -1 });
     view.marker('origin', { lat: 52, lon: -2 });
-    view.candidates('origin', [candidate(1), candidate(2)]);
+    view.candidates('origin', [candidate(1), candidate(2)], 'candidate-2');
     view.candidates('origin', [candidate(3)]);
 
     expect(markers[0].map).toBeNull();

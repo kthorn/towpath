@@ -17,7 +17,7 @@ Platform requests. The ordinary `npm test` suite never collects it, and
   described in the repository README and keep the artifact outside version
   control.
 - The curated boat-hire enrichment CSV used for the display overlay. Keep the
-  CSV tracked at `pound/data/boat-hire-enrichment.csv` or provide an equivalent
+  CSV tracked at `data/boat-hire-enrichment.csv` or provide an equivalent
   existing file through `POUND_BOAT_HIRE_ENRICHMENT_PATH`.
 - Chromium for Playwright: `npx playwright install chromium`.
 
@@ -28,8 +28,8 @@ GOOGLE_MAPS_SMOKE=1 \
 VITE_GOOGLE_MAPS_API_KEY='restricted-browser-key' \
 VITE_GOOGLE_MAP_ID='project-map-id' \
 VITE_TRANSFER_MODE='WALK' \
-POUND_ARTIFACT_PATH='pound/artifacts/england.pkl' \
-POUND_BOAT_HIRE_ENRICHMENT_PATH='pound/data/boat-hire-enrichment.csv' \
+POUND_ARTIFACT_PATH='artifacts/england.pkl' \
+POUND_BOAT_HIRE_ENRICHMENT_PATH='data/boat-hire-enrichment.csv' \
 npm run test:smoke
 ```
 

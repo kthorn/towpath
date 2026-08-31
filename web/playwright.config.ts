@@ -13,7 +13,7 @@ export default defineConfig({
   use: { baseURL: 'http://127.0.0.1:4173', trace: 'retain-on-failure' },
   webServer: runLiveSmoke ? [
     {
-      command: 'uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000',
+      command: 'uv run uvicorn pound_web.app:app --host 127.0.0.1 --port 8000',
       cwd: '..',
       env: { ...process.env },
       url: 'http://127.0.0.1:8000/api/health',

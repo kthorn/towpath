@@ -591,14 +591,14 @@ export function createGoogleMapView(
         placeMarkers[slot] = facade.createMarker({ map, position: toGoogleLatLng(coordinate), title: slot, zIndex: 5 });
       }
     },
-    candidates(slot, candidates: CanalCandidate[], selectedUid?: number) {
+    candidates(slot, candidates: CanalCandidate[], selectedCandidateId?: string) {
       removeMarkers(candidateMarkers[slot]);
       for (const candidate of candidates) {
         candidateMarkers[slot].push(
           facade.createMarker({
             map,
             position: toGoogleLatLng(candidate.coordinate),
-            title: candidate.uid === selectedUid ? `${candidate.display_name} (selected)` : candidate.display_name,
+            title: candidate.candidate_id === selectedCandidateId ? `${candidate.display_name} (selected)` : candidate.display_name,
           }),
         );
       }

@@ -20,9 +20,13 @@ FROM python:3.14-slim AS runtime
 COPY --from=ghcr.io/astral-sh/uv:0.8.22 /uv /usr/local/bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-COPY pound/ pound/
-RUN test -f pound/artifacts/england.pkl
-RUN uv sync --locked --no-dev --no-editable
+COPY packages/pound-core/ packages/pound-core/
+COPY packages/pound-web/ packages/pound-web/
+RUN uv sync --package pound-web --no-dev --frozen
+RUN .venv/bin/python -c "from importlib.util import find_spec; assert all(find_spec(name) is None for name in ('pound_build', 'requests', 'flask', 'osmium')); import pound, pound_web"
+COPY artifacts/ /app/artifacts/
+COPY data/ /app/data/
+RUN test -f /app/artifacts/england.pkl
 COPY --from=web-builder /build/web/dist /app/web/dist
 
 RUN useradd --create-home --uid 10001 pound \
@@ -30,8 +34,9 @@ RUN useradd --create-home --uid 10001 pound \
 USER pound
 
 ENV PATH="/app/.venv/bin:${PATH}" \
+    POUND_ARTIFACT_PATH=/app/artifacts/england.pkl \
     POUND_STATIC_DIR=/app/web/dist \
-    POUND_BOAT_HIRE_ENRICHMENT_PATH=/app/pound/data/boat-hire-enrichment.csv
+    POUND_BOAT_HIRE_ENRICHMENT_PATH=/app/data/boat-hire-enrichment.csv
 EXPOSE 8000
 
-CMD ["uvicorn", "pound.web.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "pound_web.app:app", "--host", "0.0.0.0", "--port", "8000"]

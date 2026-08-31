@@ -39,7 +39,7 @@ jobs:
           sudo apt-get install -y osmium-tool
           command -v osmium
       - name: Install Python dependencies
-        run: uv sync --locked --extra dev --extra bulk
+        run: uv sync --locked --all-packages --extra bulk
       - name: Test Python
         run: UV_NO_SYNC=1 uv run pytest --run-bulk
       - name: Lint Python

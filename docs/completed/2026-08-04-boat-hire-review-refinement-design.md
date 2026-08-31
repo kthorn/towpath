@@ -43,7 +43,7 @@ patterns present in the reviewed feedback.
 
 The existing England routing artifact is the source of truth for network
 membership. The generator loads a graph path supplied by a new `--graph`
-argument, defaulting to `pound/artifacts/england.pkl`, validates it with the
+argument, defaulting to `artifacts/england.pkl`, validates it with the
 existing graph loader, and builds the existing `GraphSpatialIndex`.
 
 A catalog geometry is retained when its metric distance to any
