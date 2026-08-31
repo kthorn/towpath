@@ -12,8 +12,22 @@ from scripts.benchmark_compact_artifact import _route_cases_from_legacy, benchma
 
 def _write_artifact(path, revision: str, *, length_m: float = 100.0) -> None:
     graph = nx.Graph()
-    graph.add_node(1, lat=51.0, lon=-1.0, movable_bridge_ids=())
-    graph.add_node(2, lat=51.001, lon=-1.001, movable_bridge_ids=())
+    graph.add_node(
+        1,
+        lat=51.0,
+        lon=-1.0,
+        movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
+    )
+    graph.add_node(
+        2,
+        lat=51.001,
+        lon=-1.001,
+        movable_bridge_ids=(),
+        turning_point=False,
+        turning_max_length_m=None,
+    )
     graph.add_edge(
         1,
         2,

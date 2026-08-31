@@ -428,6 +428,7 @@ def select_boat_hire_reachability(
 
     distances: dict[int, float] = {}
     queue: list[tuple[float, int]] = []
+    sources: set[int] = set()
     source_edges: list[tuple[tuple[int, int], float, dict[str, Any]]] = []
     for anchor in anchors:
         handle: Any = anchor.handle
@@ -447,6 +448,7 @@ def select_boat_hire_reachability(
                 continue
             if cost < distances.get(endpoint, math.inf):
                 distances[endpoint] = cost
+                sources.add(endpoint)
                 heappush(queue, (cost, endpoint))
 
     while queue:
@@ -476,6 +478,37 @@ def select_boat_hire_reachability(
             if edge[0] in distances and edge[1] in distances and edge_is_eligible(graph.edges[edge])
         )
     )
+    overlay = graph.edge_subgraph(full_edge_keys).copy()
+    eligible_degree = {
+        node: sum(edge_is_eligible(graph.edges[node, neighbor]) for neighbor in graph[node])
+        for node in overlay
+    }
+    protected = sources | {
+        node
+        for node, data in overlay.nodes(data=True)
+        if (
+            data.get("turning_point", False)
+            and (
+                boat_length_m is None
+                or data.get("turning_max_length_m") is None
+                or boat_length_m <= data["turning_max_length_m"]
+            )
+        )
+        or eligible_degree[node] >= 3
+    }
+    leaves = [node for node in overlay if overlay.degree[node] <= 1 and node not in protected]
+    while leaves:
+        node = leaves.pop()
+        if node not in overlay or node in protected or overlay.degree[node] > 1:
+            continue
+        neighbors = list(overlay.neighbors(node))
+        overlay.remove_node(node)
+        leaves.extend(
+            neighbor
+            for neighbor in neighbors
+            if neighbor in overlay and neighbor not in protected and overlay.degree[neighbor] <= 1
+        )
+    full_edge_keys = tuple(sorted(_canonical_edge(edge) for edge in overlay.edges))
     full_edges = set(full_edge_keys)
     clipped_lines = tuple(
         clipped
