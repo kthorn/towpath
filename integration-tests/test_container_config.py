@@ -16,6 +16,8 @@ def test_container_configuration_stages_only_runtime_packages_and_data():
     assert 'node-version: "24"' in workflow
     assert 'python-version: "3.14"' in workflow
     assert 'UV_PYTHON: "3.14"' in workflow
+    assert "uv sync --locked --all-packages --extra bulk" in workflow
+    assert "uv sync --locked --extra dev --extra bulk" not in workflow
     gitignore = (ROOT / ".gitignore").read_text().splitlines()
     wheel = tomllib.loads((ROOT / "packages" / "pound-core" / "pyproject.toml").read_text())[
         "tool"
