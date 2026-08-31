@@ -23,6 +23,7 @@ COPY pyproject.toml uv.lock ./
 COPY packages/pound-core/ packages/pound-core/
 COPY packages/pound-web/ packages/pound-web/
 RUN uv sync --package pound-web --no-dev --frozen
+RUN .venv/bin/python -c "from importlib.util import find_spec; assert all(find_spec(name) is None for name in ('pound_build', 'requests', 'flask', 'osmium')); import pound, pound_web"
 COPY artifacts/ /app/artifacts/
 COPY data/ /app/data/
 RUN test -f /app/artifacts/england.pkl

@@ -48,14 +48,14 @@ if it is absent, use [Graph-artifact redeploy](#graph-artifact-redeploy). Source
 checks and inputs are required here, not for configuration-only releases:
 
 ```bash
-uv sync --extra dev --extra bulk
+uv sync --all-packages --extra bulk
 uv run pytest
 uv run ruff check .
 (cd web && npm ci && npm run check && npm test -- --run)
 test -f "$ARTIFACT"
 git check-ignore -q "$ARTIFACT"
-EXPECTED_REVISION="$(uv run python -c '
-from pound.graph.artifact import load_artifact
+EXPECTED_REVISION="$(uv run --package pound-core python -c '
+from pound.artifact import load_artifact
 print(load_artifact("artifacts/england.pkl").metadata["artifact_revision"])
 ')"
 printf 'Deploying artifact revision: %s\n' "$EXPECTED_REVISION"
@@ -91,8 +91,8 @@ mkdir -p "$(dirname "$ARTIFACT")"
 cp "$NEW_ARTIFACT" "$ARTIFACT"
 test -f "$ARTIFACT"
 git check-ignore -q "$ARTIFACT"
-EXPECTED_REVISION="$(uv run python -c '
-from pound.graph.artifact import load_artifact
+EXPECTED_REVISION="$(uv run --package pound-core python -c '
+from pound.artifact import load_artifact
 print(load_artifact("artifacts/england.pkl").metadata["artifact_revision"])
 ')"
 printf 'Deploying artifact revision: %s\n' "$EXPECTED_REVISION"

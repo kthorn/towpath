@@ -6,12 +6,12 @@
 
 ## Build, Test, and Development Commands
 
-- `uv sync --extra dev` installs the package and development tools.
+- `uv sync` installs the workspace and development tools.
 - `uv run pytest` runs the default test suite without live-network or bulk-ingest cases.
 - `uv run pytest --run-network` includes tests that call the Overpass API.
-- `uv sync --extra bulk && uv run pytest --run-bulk` installs `pyosmium` and enables bulk tests; `osmium-tool` must also be installed separately.
+- `uv sync --all-packages --extra bulk && uv run pytest --run-bulk` installs `pyosmium` and enables bulk tests; `osmium-tool` must also be installed separately. For build-only work, use `uv sync --package pound-build --extra bulk`.
 - `uv run ruff check .` checks formatting-independent style, imports, and common Python errors.
-- `uv run pound-ingest build oxford --out artifacts/oxford.pkl` builds a small local artifact for manual testing.
+- `uv run --package pound-build python -m pound_build.ingest.cli build oxford --out artifacts/oxford.pkl` builds a small local artifact for manual testing.
 
 ## Coding Style & Naming Conventions
 

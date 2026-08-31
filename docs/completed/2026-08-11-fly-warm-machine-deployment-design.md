@@ -1,7 +1,9 @@
 # Fly.io Warm-Machine Deployment Design
 
-> **Status:** validated in production
+> **Status:** historical production record
 > **Scope:** publish the existing graph-only Towpath web application for a few US Pacific users
+>
+> **Historical note:** The paths, imports, and commands below record the pre-workspace deployment. They are not an actionable deployment procedure; use the current [Fly redeployment runbook](../fly-runbook.md).
 
 ## Goal
 

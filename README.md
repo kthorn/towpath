@@ -8,7 +8,7 @@ See `pound-engine-design.md` for the full design brief.
 ## Development
 
 ```bash
-uv sync --extra dev
+uv sync
 uv run pytest
 uv run ruff check .
 ```
@@ -18,12 +18,12 @@ uv run ruff check .
 Generate the ranked local review file, then serve it for human decisions:
 
 ```bash
-uv sync --extra dev
-uv run pound-boat-review generate \
+uv sync --package pound-build
+uv run --package pound-build python -m pound_build.review.cli generate \
   --catalog artifacts/england-catalog.pkl \
   --graph artifacts/england.pkl \
   --out artifacts/boat-hire-review.json
-uv run pound-boat-review serve \
+uv run --package pound-build python -m pound_build.review.cli serve \
   --review artifacts/boat-hire-review.json
 ```
 
@@ -41,7 +41,7 @@ network-dependent Oxford/Overpass path is only a legacy ingest scaffold and is
 not the recommended way to start the application.
 
 ```bash
-uv sync --extra dev
+uv sync
 ```
 
 Point the application at an existing England artifact with an absolute path,
@@ -269,9 +269,9 @@ potentially billable; its exact prerequisites and command are in
 - Shapely and pyproj are core dependencies used to normalize POI geometry,
   measure corridor distances in British National Grid coordinates, and build
   runtime spatial indexes. They are installed by `uv sync`.
-- `osmium-tool` (system CLI) for `pound-ingest build england` — install via
+- `osmium-tool` (system CLI) for the England build — install via
   apt/brew/conda. The `pyosmium` Python package is separate and pulled by the
-  `bulk` extra: `uv sync --extra bulk`. The base `uv sync` works without it.
+  `bulk` extra: `uv sync --package pound-build --extra bulk`. The base `uv sync` works without it.
 
 ## Legacy regional ingest scaffold (Oxford)
 
@@ -284,15 +284,15 @@ build below for the application.
 Fetch the Oxford extract and print the summarize() report (network required):
 
 ```bash
-uv run pound-ingest oxford
+uv run --package pound-build python -m pound_build.ingest.cli oxford
 # or, also writing the features IR:
-uv run pound-ingest oxford --out data/oxford_canal_waterways.json
+uv run --package pound-build python -m pound_build.ingest.cli oxford --out data/oxford_canal_waterways.json
 ```
 
 ### Build the legacy Oxford artifact
 
 ```bash
-uv run pound-ingest build oxford --out artifacts/oxford.pkl
+uv run --package pound-build python -m pound_build.ingest.cli build oxford --out artifacts/oxford.pkl
 ```
 
 Produces a small pickled NetworkX graph for ingest testing only. It does not
@@ -312,8 +312,8 @@ CLI does not download 1.5 GB itself):
 ```bash
 curl -L -o data/england.osm.pbf \
   https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf
-uv sync --extra bulk
-uv run pound-ingest build england --out artifacts/england.pkl
+uv sync --package pound-build --extra bulk
+uv run --package pound-build python -m pound_build.ingest.cli build england --out artifacts/england.pkl
 ```
 
 If the PBF is missing the build prints the URL and exits non-zero. The build
@@ -350,7 +350,7 @@ source.
 tolerance to *measure* how fragmented the network really is, then dial up:
 
 ```bash
-uv run pound-ingest build england --out /tmp/eng.pkl --tolerance-m 1
+uv run --package pound-build python -m pound_build.ingest.cli build england --out /tmp/eng.pkl --tolerance-m 1
 # read component_count / component_sizes from the report:
 #   thousands => most 'gaps' are real OSM-edit curation; add join overrides.
 #   ~ a dozen  => the fragmentation is plausibly genuine (derelict arms,
@@ -376,7 +376,7 @@ artifact. Build it only when catalog marker layers are needed:
 ```bash
 catalog_tmp=$(mktemp -d)
 trap 'rm -rf "$catalog_tmp"' EXIT
-uv run pound-ingest catalog england \
+uv run --package pound-build python -m pound_build.ingest.cli catalog england \
   --pbf data/england.osm.pbf \
   --out "$catalog_tmp/england-catalog.pkl" \
   --profile
@@ -386,7 +386,7 @@ Catalog artifacts use serialized contract version `2` and carry the exact
 attribution value `© OpenStreetMap contributors`. Catalog revisions identify
 individual builds and remain independent from routing artifact revisions.
 Catalogs built with an older or missing schema version are rejected at startup
-and must be rebuilt with `pound-ingest`; they are not migrated in place.
+and must be rebuilt with the current build CLI; they are not migrated in place.
 
 A successful real-England build produced **185,029 records**, an
 **85,378,417-byte** artifact, in **200.49 s wall time**, with **2,534,084 KiB

@@ -7,9 +7,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from pound.artifact import load_artifact
-from pound.catalog.artifact import load_catalog
-from pound.graph.spatial import GraphSpatialIndex
+from pound.artifact import load_artifact  # pyright: ignore[reportMissingImports]
+from pound.catalog.artifact import load_catalog  # pyright: ignore[reportMissingImports]
+from pound.graph.spatial import GraphSpatialIndex  # pyright: ignore[reportMissingImports]
 
 from pound_build.review.ranking import build_document, filter_catalog_to_network
 from pound_build.review.store import ReviewFileError, load_document, write_document

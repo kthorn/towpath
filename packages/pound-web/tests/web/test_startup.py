@@ -7,9 +7,15 @@ import networkx as nx
 import pytest  # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
 from fastapi.testclient import TestClient  # pyright: ignore[reportMissingImports]
-from pound.artifact import InvalidArtifactError, load_artifact
-from pound.catalog.spatial import CatalogSpatialIndex
-from pound.graph.spatial import GraphSpatialIndex, PoiSpatialIndex
+from pound.artifact import (  # pyright: ignore[reportMissingImports]
+    InvalidArtifactError,
+    load_artifact,
+)
+from pound.catalog.spatial import CatalogSpatialIndex  # pyright: ignore[reportMissingImports]
+from pound.graph.spatial import (  # pyright: ignore[reportMissingImports]
+    GraphSpatialIndex,
+    PoiSpatialIndex,
+)
 from pound_web.app import _load_web_artifact, create_app
 from pound_web.config import WebSettings
 from pound_web.places import (
@@ -180,6 +186,24 @@ def test_startup_rejects_missing_or_falsey_revision(tmp_path: Path, revision: st
 
     with pytest.raises(RuntimeError, match=rf"{artifact}.*artifact revision"):
         _load_web_artifact(_settings(artifact, tmp_path / "missing-static"))
+
+
+def test_startup_rejects_nonempty_artifact_without_candidate_eligible_edges(tmp_path: Path):
+    artifact = tmp_path / "no-candidates.pkl"
+    graph = nx.Graph()
+    graph.add_node(1, lat=51.0, lon=-1.0, movable_bridge_ids=())
+    graph.add_node(2, lat=51.0, lon=-0.99, movable_bridge_ids=())
+    graph.add_edge(
+        1,
+        2,
+        geometry=[(51.0, -1.0), (51.0, -0.99)],
+        candidate_eligible=False,
+    )
+    save_artifact(graph, [], artifact, artifact_metadata("no-candidates"))
+
+    with pytest.raises(RuntimeError, match="candidate-eligible"):
+        with TestClient(create_app(_settings(artifact, tmp_path / "missing-static"))):
+            pass
 
 
 def test_startup_attaches_artifact_state_and_loads_once(tmp_path: Path):

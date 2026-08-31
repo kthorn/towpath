@@ -3,7 +3,7 @@ import copy
 import networkx as nx
 import pytest  # pyright: ignore[reportMissingImports]
 from pound.artifact import RuntimeArtifact
-from pound.models import WayDimensions
+from pound.models import AccessCaveat, WayDimensions
 from pound.route.cost import CRUISE_KMH, DEFAULT_MOVABLE_BRIDGE_DELAY_MIN, LOCK_MINUTES
 from pound.route.plan import plan_projected_route
 from pound.route.project import project_handle
@@ -151,6 +151,29 @@ def test_infrastructure_handles_allow_only_edge_endpoints():
     assert response.route.total_locks == 1
     with pytest.raises(ValueError, match="interior"):
         plan_projected_route(_constraints((1, 2), 0.5, (1, 2), 1), artifact=artifact)
+
+
+def test_partial_edge_surfaces_access_and_tunnel_warnings():
+    graph = _graph()
+    _edge(graph, 1, 2, length_m=1_000, way_id=12)
+    graph.edges[1, 2]["access_caveats"] = (AccessCaveat(12, "boat", "discouraged", "discouraged"),)
+    graph.edges[1, 2]["tunnel_restrictions"] = ((12, "height", "3.0"),)
+
+    response = plan_projected_route(
+        _constraints((1, 2), 0.2, (1, 2), 0.8), artifact=_artifact(graph)
+    )
+
+    assert response.route.access_segments[0].model_dump() == {
+        "osm_way_id": 12,
+        "kind": "discouraged",
+        "tag": "boat",
+        "value": "discouraged",
+    }
+    assert (
+        "Route uses 1 segment(s) tagged boat=discouraged; verify local access."
+        in response.route.warnings
+    )
+    assert 'tunnel way 12: unmodeled restriction height="3.0"' in response.route.warnings
 
 
 def test_partial_length_and_time_are_proportional_to_source_length():

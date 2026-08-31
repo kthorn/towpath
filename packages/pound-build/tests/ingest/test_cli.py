@@ -424,7 +424,7 @@ def test_build_england_stream_failure_reports_failed_phase_and_does_not_write(
     assert writes == []
 
 
-def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_path, monkeypatch):
+def test_build_writes_compact_components_without_signature_introspection(tmp_path, monkeypatch):
     events = []
     lock_calls = []
     features = _sample_features()
@@ -466,19 +466,25 @@ def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_pa
             or {"derelict_edges": 0, "self_loops": 0, "poi_duplicate_identities": 0}
         ),
     )
-    monkeypatch.setattr(
-        cli,
-        "_prepare_build_artifact",
-        lambda actual_graph, pois, gazetteer, metadata: (
-            events.append(("prepare", actual_graph, pois, gazetteer, metadata))
-            or "prepared-artifact"
-        ),
-    )
-    monkeypatch.setattr(
-        cli,
-        "write_artifact",
-        lambda artifact, out: events.append(("write", artifact, out)),
-    )
+
+    def prepare_artifact(actual_graph, pois, gazetteer, metadata):
+        events.append(("prepare", actual_graph, pois, gazetteer, metadata))
+        return type(
+            "PreparedArtifact",
+            (),
+            {"pois": (), "gazetteer": gazetteer, "metadata": metadata},
+        )()
+
+    class Writer:
+        @property
+        def __signature__(self):
+            raise AssertionError("CLI must not inspect the writer signature")
+
+        def __call__(self, *args):
+            events.append(("write", *args))
+
+    monkeypatch.setattr(cli, "_prepare_build_artifact", prepare_artifact)
+    monkeypatch.setattr(cli, "write_artifact", Writer())
 
     rc = cli._build_from_features(features, type("Args", (), {"out": tmp_path / "x.pkl"})())
 
@@ -494,7 +500,14 @@ def test_build_attaches_pois_before_validation_and_saves_strict_signature(tmp_pa
         "validation",
         "poi_summary",
     }
-    assert events[3][1:] == ("prepared-artifact", tmp_path / "x.pkl")
+    written_graph, written_pois, written_gazetteer, written_metadata, output_path = events[3][1:]
+    assert written_graph is not graph
+    assert written_graph.nodes == graph.nodes
+    assert written_graph.edges == graph.edges
+    assert written_pois == ()
+    assert written_gazetteer == {}
+    assert written_metadata is events[2][4]
+    assert output_path == tmp_path / "x.pkl"
 
 
 def test_build_does_not_save_when_poi_identity_validation_is_fatal(tmp_path, monkeypatch):
@@ -558,7 +571,15 @@ def test_build_releases_feature_ir_before_poi_attachment(tmp_path, monkeypatch):
         "validate_graph",
         lambda *_args: {"derelict_edges": 0, "self_loops": 0, "poi_duplicate_identities": 0},
     )
-    monkeypatch.setattr(cli, "_prepare_build_artifact", lambda *_args: "artifact")
+    monkeypatch.setattr(
+        cli,
+        "_prepare_build_artifact",
+        lambda *_args: type(
+            "PreparedArtifact",
+            (),
+            {"pois": (), "gazetteer": _args[2], "metadata": _args[3]},
+        )(),
+    )
     monkeypatch.setattr(cli, "write_artifact", lambda *_args: None)
 
     rc = cli.main(["build", "oxford", "--out", str(tmp_path / "graph.pkl")])

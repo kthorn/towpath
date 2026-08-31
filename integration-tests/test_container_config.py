@@ -27,7 +27,18 @@ def test_container_configuration_stages_only_runtime_packages_and_data():
     assert "COPY pound/ pound/" not in dockerfile
     assert "pound.web.app" not in dockerfile
     assert "/app/pound/artifacts" not in dockerfile
+    runtime_import_proof = (
+        'RUN .venv/bin/python -c "from importlib.util import find_spec; '
+        "assert all(find_spec(name) is None for name in "
+        "('pound_build', 'requests', 'flask', 'osmium')); import pound, pound_web\""
+    )
     assert "RUN uv sync --package pound-web --no-dev --frozen" in dockerfile
+    assert runtime_import_proof in dockerfile
+    assert (
+        dockerfile.index("RUN uv sync --package pound-web --no-dev --frozen")
+        < dockerfile.index(runtime_import_proof)
+        < dockerfile.index("COPY artifacts/ /app/artifacts/")
+    )
     assert "COPY artifacts/ /app/artifacts/" in dockerfile
     assert "COPY data/ /app/data/" in dockerfile
     assert "RUN test -f /app/artifacts/england.pkl" in dockerfile

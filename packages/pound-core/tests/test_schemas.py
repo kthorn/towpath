@@ -15,6 +15,7 @@ from pound.schemas import (
     PlacesRequest,
     PlacesResponse,
     ProjectedRouteConstraints,
+    RouteAccessSegment,
     RouteDayGeometry,
     RouteLock,
     RouteResult,
@@ -170,6 +171,39 @@ def test_canal_candidates_response_accepts_empty_candidates():
     )
 
     assert response.candidates == []
+
+
+def test_route_result_json_round_trip_preserves_uid_free_access_segments():
+    route = RouteResult(
+        start="Oxford",
+        end="Heyford",
+        is_ring=False,
+        legs=[],
+        days=[],
+        total_km=1.25,
+        total_locks=0,
+        total_minutes=15,
+        amenities=[],
+        access_segments=[
+            RouteAccessSegment(
+                osm_way_id=42,
+                kind="discouraged",
+                tag="boat",
+                value="discouraged",
+            )
+        ],
+        graph_source_date="2026-08-30",
+    )
+
+    restored = RouteResult.model_validate_json(route.model_dump_json())
+
+    assert restored == route
+    assert restored.access_segments[0].model_dump() == {
+        "osm_way_id": 42,
+        "kind": "discouraged",
+        "tag": "boat",
+        "value": "discouraged",
+    }
 
 
 def test_canal_route_response_accepts_overlay_fields():

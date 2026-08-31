@@ -60,6 +60,8 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         app.state.settings = runtime_settings
         app.state.spatial_index = GraphSpatialIndex(artifact.graph)
         app.state.candidate_index = app.state.spatial_index.candidate_index
+        if artifact.graph.number_of_edges() and not app.state.candidate_index.eligible_edge_keys:
+            raise RuntimeError("Routing artifact has edges but no candidate-eligible edges.")
         app.state.poi_spatial_index = PoiSpatialIndex(artifact.pois)
         seeds = load_boat_hire_seeds(runtime_settings.boat_hire_enrichment_path)
         app.state.boat_hire_anchors = snap_boat_hire_bases(app.state.spatial_index, seeds)
