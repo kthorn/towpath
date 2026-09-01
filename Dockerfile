@@ -27,6 +27,7 @@ RUN .venv/bin/python -c "from importlib.util import find_spec; assert all(find_s
 COPY artifacts/ /app/artifacts/
 COPY data/ /app/data/
 RUN test -f /app/artifacts/england.pkl
+RUN .venv/bin/python -c "from pathlib import Path; from pound.catalog.artifact import load_catalog; load_catalog(Path('/app/artifacts/england-catalog.pkl'))"
 COPY --from=web-builder /build/web/dist /app/web/dist
 
 RUN useradd --create-home --uid 10001 pound \

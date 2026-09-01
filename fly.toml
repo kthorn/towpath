@@ -15,6 +15,7 @@ wait_timeout = "10m"
 
 [env]
 POUND_ARTIFACT_PATH = "/app/artifacts/england.pkl"
+POUND_CATALOG_PATH = "/app/artifacts/england-catalog.pkl"
 
 [http_service]
 internal_port = 8000

@@ -382,7 +382,7 @@ uv run --package pound-build python -m pound_build.ingest.cli catalog england \
   --profile
 ```
 
-Catalog artifacts use serialized contract version `2` and carry the exact
+Catalog artifacts use serialized contract version `3` and carry the exact
 attribution value `© OpenStreetMap contributors`. Catalog revisions identify
 individual builds and remain independent from routing artifact revisions.
 Catalogs built with an older or missing schema version are rejected at startup

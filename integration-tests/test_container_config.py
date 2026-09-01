@@ -9,6 +9,7 @@ def test_container_configuration_stages_only_runtime_packages_and_data():
     dockerfile = (ROOT / "Dockerfile").read_text()
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
     smoke_readme = (ROOT / "web" / "tests" / "smoke" / "README.md").read_text()
+    deploy_runbook = (ROOT / "docs" / "fly-runbook.md").read_text()
     dockerignore = (ROOT / ".dockerignore").read_text().splitlines()
 
     assert "FROM node:24-alpine AS web-builder" in dockerfile
@@ -45,12 +46,18 @@ def test_container_configuration_stages_only_runtime_packages_and_data():
     assert "COPY data/ /app/data/" in dockerfile
     assert "RUN test -f /app/artifacts/england.pkl" in dockerfile
     assert (
+        'RUN .venv/bin/python -c "from pathlib import Path; '
+        "from pound.catalog.artifact import load_catalog; "
+        "load_catalog(Path('/app/artifacts/england-catalog.pkl'))\""
+    ) in dockerfile
+    assert (
         'RUN test -n "$VITE_GOOGLE_MAPS_API_KEY" \\\n'
         '    && test -n "$VITE_GOOGLE_MAP_ID" \\\n'
         "    && npm run build"
     ) in dockerfile
     assert "artifacts/*" in dockerignore
     assert "!artifacts/england.pkl" in dockerignore
+    assert "!artifacts/england-catalog.pkl" in dockerignore
     data_rules = [rule for rule in dockerignore if rule.lstrip("!").startswith("data")]
     assert data_rules == ["data/*", "!data/boat-hire-enrichment.csv"]
     assert "pound/artifacts" not in dockerignore
@@ -66,6 +73,8 @@ def test_container_configuration_stages_only_runtime_packages_and_data():
     assert "/app/pound/artifacts" not in smoke_readme
     assert "POUND_ARTIFACT_PATH='artifacts/england.pkl'" in smoke_readme
     assert "POUND_BOAT_HIRE_ENRICHMENT_PATH='data/boat-hire-enrichment.csv'" in smoke_readme
+    assert "CATALOG_ARTIFACT=artifacts/england-catalog.pkl" in deploy_runbook
+    assert 'load_catalog(Path("artifacts/england-catalog.pkl"))' in deploy_runbook
     assert "artifacts/" in gitignore
     assert "data/*" in gitignore
     assert ".env*" in dockerignore
@@ -85,7 +94,10 @@ def test_fly_configuration_keeps_the_single_machine_warm():
     assert fly["primary_region"] == "sjc"
     assert fly["build"] == {"dockerfile": "Dockerfile"}
     assert fly["deploy"] == {"strategy": "rolling", "wait_timeout": "10m"}
-    assert fly["env"] == {"POUND_ARTIFACT_PATH": "/app/artifacts/england.pkl"}
+    assert fly["env"] == {
+        "POUND_ARTIFACT_PATH": "/app/artifacts/england.pkl",
+        "POUND_CATALOG_PATH": "/app/artifacts/england-catalog.pkl",
+    }
     assert fly["http_service"] == {
         "internal_port": 8000,
         "force_https": True,
