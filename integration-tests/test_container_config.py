@@ -114,4 +114,4 @@ def test_fly_configuration_keeps_the_single_machine_warm():
             }
         ],
     }
-    assert fly["vm"] == [{"cpu_kind": "shared", "cpus": 4, "memory": "8gb"}]
+    assert fly["vm"] == [{"cpu_kind": "shared", "cpus": 2, "memory": "4gb"}]
