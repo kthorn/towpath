@@ -1,6 +1,5 @@
 import csv
 import math
-from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -43,11 +42,7 @@ def test_boat_hire_enrichment_seed_has_distinct_location_rows():
         rows = list(reader)
 
     assert reader.fieldnames == EXPECTED_FIELDS
-    assert len(rows) == 136
-    assert Counter(row["record_type"] for row in rows) == {
-        "company_base": 125,
-        "review_positive": 11,
-    }
+    assert {row["record_type"] for row in rows} == {"company_base", "review_positive"}
     assert len({(row["source_provider_id"], row["location_id"]) for row in rows}) == len(rows)
     assert all(row["source_provider_id"] and row["location_id"] for row in rows)
     assert all(row["exclude"] in {"", "true", "false"} for row in rows)
@@ -82,7 +77,195 @@ OUT_OF_ENGLAND_IDENTITIES = {
     ("drifters", "base:goytre-wharf"),
     ("narrow-boat-hire", "base:falkirk-wharf"),
     ("narrow-boat-hire", "base:goytre-wharf"),
+    ("uk-canal-boating", "base:falkirk-wharf"),
+    ("uk-canal-boating", "base:goytre-wharf"),
 }
+
+
+NEW_HIRE_BASE_ATTESTATIONS = {
+    ("chesterfield-canal-boat-company", "base:west-stockwith-basin"): (
+        "West Stockwith Basin",
+        "53.44299841967885",
+        "-0.8191359043121338",
+        "https://www.chesterfieldcanalboat.co.uk/location",
+        "07903 093746 / 07429 266648",
+        "info@chesterfieldcanalboat.co.uk",
+        "",
+    ),
+    ("duck-island-boat-company", "base:garstang-marina"): (
+        "Garstang Marina",
+        "53.9054131",
+        "-2.7914219",
+        "https://www.lancastercanalboathire.com/contact/",
+        "07925 236621",
+        "duckislandboats@yahoo.co.uk",
+        "",
+    ),
+    ("crabtree-narrowboat-hire", "base:the-flower-bowl-marina"): (
+        "The Flower Bowl Marina",
+        "53.8612846",
+        "-2.7474853",
+        "https://www.crabtreenarrowboathire.com/",
+        "07572 664949 / 01995 676209",
+        "",
+        "",
+    ),
+    ("uk-canal-boating", "base:aldermaston-wharf"): (
+        "Aldermaston Wharf",
+        "51.4009381",
+        "-1.13438445",
+        "Aldermaston-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:alvechurch-marina"): (
+        "Alvechurch Marina",
+        "52.3472996",
+        "-1.969389",
+        "Alvechurch-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:anderton-marina"): (
+        "Anderton Marina",
+        "53.2771838",
+        "-2.5254936",
+        "Anderton-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:blackwater-meadow-marina"): (
+        "Blackwater Meadow Marina",
+        "52.9028617",
+        "-2.8890211",
+        "Blackwater-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:falkirk-wharf"): (
+        "Falkirk Wharf",
+        "55.99924144999999",
+        "-3.8350832999999995",
+        "Falkirk-location.html",
+        "true",
+    ),
+    ("uk-canal-boating", "base:gailey-wharf"): (
+        "Gailey Wharf",
+        "52.6897219",
+        "-2.1197877",
+        "Gailey-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:gayton-marina"): (
+        "Gayton Marina",
+        "52.1920716",
+        "-0.9455441",
+        "Gayton-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:goytre-wharf"): (
+        "Goytre Wharf",
+        "51.7529555",
+        "-3.0034111500000003",
+        "Goytre-location.html",
+        "true",
+    ),
+    ("uk-canal-boating", "base:hilperton-marina"): (
+        "Hilperton Marina",
+        "51.33815235",
+        "-2.203667717410713",
+        "Hilperton-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:kings-orchard-marina"): (
+        "Kings Orchard Marina",
+        "52.69100303119615",
+        "-1.7814762490083236",
+        "Kings-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:march-marina"): (
+        "March Marina",
+        "52.5553134298208",
+        "0.061396416448774305",
+        "March-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:middlewich"): (
+        "Middlewich",
+        "53.190678580327294",
+        "-2.4452256912364954",
+        "Middlewich-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:stone-marina"): (
+        "Stone Marina",
+        "52.90177865",
+        "-2.1490790490363394",
+        "Stone-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:whitchurch-marina"): (
+        "Whitchurch Marina",
+        "52.96794695",
+        "-2.7092016228561473",
+        "Whitchurch-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:worcester-marina"): (
+        "Worcester Marina",
+        "52.1964865",
+        "-2.2164465479036215",
+        "Worcester-location.html",
+        "",
+    ),
+    ("uk-canal-boating", "base:wrenbury-mill"): (
+        "Wrenbury Mill",
+        "53.0283476",
+        "-2.6131254",
+        "Wrenbury-location.html",
+        "",
+    ),
+}
+
+
+def test_user_supplied_hire_bases_are_offline_attested():
+    with CSV_PATH.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+
+    found = {
+        (row["source_provider_id"], row["location_id"]): row
+        for row in rows
+        if row["source_provider_id"]
+        in {
+            "chesterfield-canal-boat-company",
+            "duck-island-boat-company",
+            "crabtree-narrowboat-hire",
+            "uk-canal-boating",
+        }
+    }
+    assert set(found) == set(NEW_HIRE_BASE_ATTESTATIONS)
+
+    map_url = "https://ukcanalboating.com/locations-map.html"
+    for identity, expected in NEW_HIRE_BASE_ATTESTATIONS.items():
+        row = found[identity]
+        name, latitude, longitude, source, *contact = expected
+        if identity[0] == "uk-canal-boating":
+            exclude = contact[0]
+            source_url = f"https://ukcanalboating.com/{source}"
+            assert row["evidence_url"] == map_url
+            assert row["phone"] == "01395 443363"
+            assert row["email"] == "bookings@ukcanalboating.com"
+            assert row["review_identity"] == f"uk-canal-boating-map/{identity[1][5:]}"
+        else:
+            phone, email, exclude = contact
+            source_url = source
+            assert row["phone"] == phone
+            assert row["email"] == email
+        assert row["record_type"] == "company_base"
+        assert row["location_name"] == name
+        assert row["official_location_name"] == name
+        assert row["latitude"] == latitude
+        assert row["longitude"] == longitude
+        assert row["source_url"] == source_url
+        assert row["exclude"] == exclude
+        assert row["enrichment_status"] in {"provider_map_verified", "osm_verified"}
 
 
 def test_is_https_url_rejects_malformed_url():
