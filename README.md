@@ -384,21 +384,21 @@ individual builds and remain independent from routing artifact revisions.
 Catalogs built with an older or missing schema version are rejected at startup
 and must be rebuilt with the current build CLI; they are not migrated in place.
 
-The 2026-09-01 Great Britain build produced **218,443 records**, a
-**101,046,545-byte** catalog, in **168.09 s wall time**, with **2,969,332 KiB
+The 2026-09-02 Great Britain build produced **218,443 records**, a
+**101,046,536-byte** catalog, in **167.91 s wall time**, with **2,968,328 KiB
 peak RSS**. For this source generation, the recorded regression gates are:
 218,443 records, artifact size <= **110,000,000 bytes**, build wall time <=
 **300 s**, and build peak RSS <= **3,200,000 KiB**. A source refresh requires a
 new inventory review and baseline rather than forcing the old record count.
 
 A fresh nationwide startup/index-load measurement used that catalog and the
-Great Britain routing artifact (**1,158,197 nodes**, **1,156,875 edges**, and
+compact Great Britain routing artifact (**37,927 nodes**, **36,248 edges**, and
 **631,184 POIs**), with actual `GraphSpatialIndex` plus `CatalogSpatialIndex`
-construction and all **136** curated boat-hire seeds. The benchmark reported
-**84,249.529 ms** (**84.250 s**) of in-process startup/index-load time.
-`/usr/bin/time` reported **88.94 s** wall time and **5,831,648 KiB** maximum RSS.
+construction and all **153** curated boat-hire seeds. The benchmark reported
+**115,510.038 ms** (**115.510 s**) of in-process startup/index-load time, while
+`/usr/bin/time` measured **2,033,208 KiB** maximum RSS.
 The startup gates are <= **130 s measured inside the process** and <=
-**6,500,000 KiB** peak RSS. Startup is a one-time cost on the measured host, not
+**4,615,019 KiB** peak RSS. Startup is a one-time cost on the measured host, not
 a per-query cost.
 
 Run the reproducible nationwide places benchmark with the required curated
@@ -420,17 +420,17 @@ builds `GraphSpatialIndex`, `CatalogSpatialIndex`, and `PlacesIndex`, warms
 every request, and times only `PlacesIndex.query(request, stats=stats)`. Its
 fixed cases cover locality/no-policy, route+day, waterway, the densest
 predefined viewport within the **100,000-candidate** work budget, and nearby
-point, line, and multi-target requests. The 2026-09-01 Great Britain run produced:
+point, line, and multi-target requests. The 2026-09-02 Great Britain run produced:
 
 | Case | Viewport/target | Candidate work | Outcome / result count | p50 ms | p95 ms | Max ms |
 | --- | --- | ---: | --- | ---: | ---: | ---: |
-| densest predefined | London | 34,765 | result_limit_exceeded / — | 18.479 | 19.797 | 20.011 |
-| locality/no-policy | Oxford | 1,260 | result_limit_exceeded / — | 18.266 | 19.599 | 19.840 |
-| nearby-line | LineString | 91 | ok / 42 | 0.627 | 0.636 | 0.638 |
-| nearby-multi-target | Point + LineString | 108 | ok / 47 | 0.737 | 0.754 | 0.754 |
-| nearby-point | Point | 17 | ok / 5 | 0.084 | 0.088 | 0.089 |
-| route+day | Milton Keynes | 731 | ok / 73 | 9.448 | 12.164 | 12.384 |
-| waterway | Milton Keynes | 731 | ok / 33 | 1.300 | 1.407 | 1.426 |
+| densest predefined | London | 34,765 | result_limit_exceeded / — | 18.894 | 19.249 | 19.311 |
+| locality/no-policy | Oxford | 1,260 | result_limit_exceeded / — | 26.445 | 27.739 | 27.839 |
+| nearby-line | LineString | 91 | ok / 42 | 0.876 | 1.086 | 1.108 |
+| nearby-multi-target | Point + LineString | 108 | ok / 47 | 0.678 | 0.760 | 0.778 |
+| nearby-point | Point | 17 | ok / 5 | 0.081 | 0.084 | 0.084 |
+| route+day | Milton Keynes | 731 | ok / 73 | 9.599 | 9.935 | 9.969 |
+| waterway | Milton Keynes | 731 | ok / 33 | 1.869 | 2.549 | 2.686 |
 
 `candidate_work` comes from the `PlacesQueryStats` instance populated by the
 same query that produced each row. `result_limit_exceeded` is the complete
@@ -439,7 +439,7 @@ p50/p95/max values are a host-specific observed regression baseline, not a
 product SLA or hard latency gate. Record them for comparisons and rerun the
 benchmark on a deployment host before drawing performance conclusions. The
 hard acceptance gates remain startup/RSS plus bounded candidate-work and
-complete-result behavior. The benchmark process reported **5,831,648 KiB** RSS;
+complete-result behavior. The benchmark process reported **2,033,208 KiB** RSS;
 RSS and query timing are host-specific. Its JSON is sorted and records
 candidate work, outcome/result count, p50, p95, max, and RSS.
 
