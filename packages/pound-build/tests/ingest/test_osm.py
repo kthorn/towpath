@@ -376,8 +376,8 @@ def test_bulk_poi_candidates_match_overpass_after_source_fields_are_excluded():
     )
 
 
-def test_read_england_applies_prune_then_filter_chain(monkeypatch, tmp_path):
-    """read_england wraps read_pbf output with prune -> filter_navigable_ways.
+def test_read_great_britain_applies_prune_then_filter_chain(monkeypatch, tmp_path):
+    """read_great_britain wraps read_pbf output with prune -> filter_navigable_ways.
     read_pbf itself is unchanged. We monkeypatch run_tags_filter and read_pbf
     to avoid the osmium CLI and the PBF-format-despite-XML-content issue."""
     from pound_build.ingest import osm as _osm
@@ -420,7 +420,7 @@ def test_read_england_applies_prune_then_filter_chain(monkeypatch, tmp_path):
     monkeypatch.setattr(_osm, "prune_non_navigable_infra", spy_prune)
     monkeypatch.setattr(_osm, "filter_navigable_ways", spy_filter)
 
-    out = _osm.read_england(stub_pbf)
+    out = _osm.read_great_britain(stub_pbf)
     # chain functions were called in the required order
     assert len(called_prune) == 1
     assert len(called_filter) == 1
@@ -430,7 +430,7 @@ def test_read_england_applies_prune_then_filter_chain(monkeypatch, tmp_path):
     monkeypatch.setattr(
         _osm, "read_waterway_features", lambda *_args, **_kwargs: fixture_features.model_copy()
     )
-    out = _osm.read_england_waterways(stub_pbf, BuildProfiler())
+    out = _osm.read_great_britain_waterways(stub_pbf, BuildProfiler())
     assert len(called_prune) == 2
     assert len(called_filter) == 2
     assert call_order == ["prune", "filter", "prune", "filter"]

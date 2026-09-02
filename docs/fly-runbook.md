@@ -19,8 +19,8 @@ Use the `fly.dev` hostname, not Fly's shared IPv4 address. There is no custom do
 ```bash
 APP=towpath-4772e4a8
 DOMAIN=https://towpath-4772e4a8.fly.dev
-ARTIFACT=artifacts/england.pkl
-CATALOG_ARTIFACT=artifacts/england-catalog.pkl
+ARTIFACT=artifacts/great-britain.pkl
+CATALOG_ARTIFACT=artifacts/great-britain-catalog.pkl
 ```
 
 Run commands from the repository root in a clean, isolated deployment worktree.
@@ -62,8 +62,8 @@ EXPECTED_REVISION="$(uv run --package pound-core python -c '
 from pathlib import Path
 from pound.artifact import load_artifact
 from pound.catalog.artifact import load_catalog
-load_catalog(Path("artifacts/england-catalog.pkl"))
-print(load_artifact("artifacts/england.pkl").metadata["artifact_revision"])
+load_catalog(Path("artifacts/great-britain-catalog.pkl"))
+print(load_artifact("artifacts/great-britain.pkl").metadata["artifact_revision"])
 ')"
 printf 'Deploying artifact revision: %s\n' "$EXPECTED_REVISION"
 : "${VITE_GOOGLE_MAPS_API_KEY:?set the restricted browser key}"
@@ -93,14 +93,14 @@ Use this path after rebuilding the routing graph. Copy the selected generated gr
 into the ignored artifact location, then use the full source procedure:
 
 ```bash
-: "${NEW_ARTIFACT:?set the generated england.pkl path}"
+: "${NEW_ARTIFACT:?set the generated great-britain.pkl path}"
 mkdir -p "$(dirname "$ARTIFACT")"
 cp "$NEW_ARTIFACT" "$ARTIFACT"
 test -f "$ARTIFACT"
 git check-ignore -q "$ARTIFACT"
 EXPECTED_REVISION="$(uv run --package pound-core python -c '
 from pound.artifact import load_artifact
-print(load_artifact("artifacts/england.pkl").metadata["artifact_revision"])
+print(load_artifact("artifacts/great-britain.pkl").metadata["artifact_revision"])
 ')"
 printf 'Deploying artifact revision: %s\n' "$EXPECTED_REVISION"
 ```
@@ -115,14 +115,14 @@ into the ignored artifact location, validate it with the runtime loader, then us
 full source procedure:
 
 ```bash
-: "${NEW_CATALOG_ARTIFACT:?set the generated england-catalog.pkl path}"
+: "${NEW_CATALOG_ARTIFACT:?set the generated great-britain-catalog.pkl path}"
 mkdir -p "$(dirname "$CATALOG_ARTIFACT")"
 cp "$NEW_CATALOG_ARTIFACT" "$CATALOG_ARTIFACT"
 git check-ignore -q "$CATALOG_ARTIFACT"
 uv run --package pound-core python -c '
 from pathlib import Path
 from pound.catalog.artifact import load_catalog
-load_catalog(Path("artifacts/england-catalog.pkl"))
+load_catalog(Path("artifacts/great-britain-catalog.pkl"))
 '
 ```
 
@@ -221,6 +221,6 @@ or early health response.
   database, and no autoscaler.
 - Do not use the shared IPv4 as an endpoint. The canonical public address is
   `https://towpath-4772e4a8.fly.dev`.
-- Do not commit `artifacts/england.pkl`, `artifacts/england-catalog.pkl`, browser
+- Do not commit `artifacts/great-britain.pkl`, `artifacts/great-britain-catalog.pkl`, browser
   configuration values, or credentials.
 - This runbook does not add CI, a custom domain, a second region, or scale-to-zero.

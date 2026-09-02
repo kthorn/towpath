@@ -16,7 +16,7 @@ from pound.artifact import load_artifact
 from pound.graph.spatial import CandidateSpatialIndex
 from pound.route.resolve import resolve_coord
 
-_DEFAULT_ARTIFACT = Path("artifacts/england.pkl")
+_DEFAULT_ARTIFACT = Path("artifacts/great-britain.pkl")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -30,7 +30,7 @@ from pound.route.plan import plan_projected_route
 from pound.route.resolve import resolve_place
 from pound.schemas import ProjectedRouteConstraints
 
-_DEFAULT_ARTIFACT = Path("artifacts/england.pkl")
+_DEFAULT_ARTIFACT = Path("artifacts/great-britain.pkl")
 
 
 def _finite_nonnegative(value: str) -> float:

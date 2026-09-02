@@ -12,8 +12,8 @@ def test_run_tags_filter_splits_argv(monkeypatch, tmp_path):
 
     monkeypatch.setattr("subprocess.run", fake_run)
 
-    in_pbf = tmp_path / "england.osm.pbf"
-    out_pbf = tmp_path / "england_waterways.osm.pbf"
+    in_pbf = tmp_path / "great-britain.osm.pbf"
+    out_pbf = tmp_path / "great-britain_waterways.osm.pbf"
     in_pbf.touch()
 
     run_tags_filter(in_pbf, out_pbf)

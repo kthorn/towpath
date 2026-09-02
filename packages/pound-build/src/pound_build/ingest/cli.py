@@ -3,7 +3,7 @@
 Usage:
     pound-ingest oxford [--out data/oxford_canal_waterways.json]
     pound-ingest build oxford  --out <path>
-    pound-ingest build england --out <path> [--pbf PATH]
+    pound-ingest build great-britain --out <path> [--pbf PATH]
 """
 
 import argparse
@@ -35,8 +35,8 @@ from pound_build.graph.locks import attach_locks
 from pound_build.graph.pois import PoiAttachmentIndex, PoiBuildAccumulator, attach_pois
 from pound_build.ingest.diagnostics import PoiDiagnostics
 from pound_build.ingest.osm import (
-    prepare_england_pbf,
-    read_england_waterways,
+    prepare_great_britain_pbf,
+    read_great_britain_waterways,
     stream_area_pois,
     stream_linear_pois,
 )
@@ -45,10 +45,7 @@ from pound_build.ingest.profile import BuildProfiler
 from pound_build.ingest.summarize import summarize, summarize_pois
 from pound_build.validate.connectivity import validate_graph
 
-_GEOFABRIK_ENGLAND_URL = (
-    "https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf"
-)
-_ENGLAND_EXPECTED_GIB = 1.5
+_GEOFABRIK_GREAT_BRITAIN_URL = "https://download.geofabrik.de/europe/great-britain-latest.osm.pbf"
 _POI_BATCH_SIZE = 1024
 
 
@@ -108,7 +105,7 @@ def _run_catalog_tags_filter(in_pbf: Path, out_pbf: Path) -> None:
 def _cmd_catalog(args):
     pbf = Path(args.pbf)
     if not pbf.is_file():
-        print(f"Missing original England PBF at {pbf}.")
+        print(f"Missing original Great Britain PBF at {pbf}.")
         raise SystemExit(2)
 
     profiler = BuildProfiler(enabled=args.profile)
@@ -274,10 +271,12 @@ def _complete_build(
     return 0
 
 
-def _build_england_multipass(pbf_path: Path, args, profiler: BuildProfiler | None = None) -> int:
+def _build_great_britain_multipass(
+    pbf_path: Path, args, profiler: BuildProfiler | None = None
+) -> int:
     profiler = profiler or BuildProfiler()
-    filtered = prepare_england_pbf(pbf_path, profiler)
-    features = read_england_waterways(filtered, profiler)
+    filtered = prepare_great_britain_pbf(pbf_path, profiler)
+    features = read_great_britain_waterways(filtered, profiler)
     graph, lock_report = _build_graph_phases(features, profiler)
     source = features.source
     fetched_at = features.fetched_at
@@ -321,7 +320,7 @@ def _build_england_multipass(pbf_path: Path, args, profiler: BuildProfiler | Non
 def _resolve_pbf(args) -> Path:
     if args.pbf:
         return Path(args.pbf)
-    return Path(os.environ.get("POUND_PBF_PATH", "data/england.osm.pbf"))
+    return Path(os.environ.get("POUND_PBF_PATH", "data/great-britain.osm.pbf"))
 
 
 def _cmd_build(args) -> int:
@@ -332,13 +331,12 @@ def _cmd_build(args) -> int:
     pbf = _resolve_pbf(args)
     if not pbf.exists():
         print(
-            f"Missing England extract at {pbf}.\n"
-            f"Download manually from:\n  {_GEOFABRIK_ENGLAND_URL}\n"
-            f"Expected size ~{_ENGLAND_EXPECTED_GIB} GiB.\n"
+            f"Missing Great Britain extract at {pbf}.\n"
+            f"Download manually from:\n  {_GEOFABRIK_GREAT_BRITAIN_URL}\n"
             f"Set POUND_PBF_PATH or pass --pbf PATH."
         )
         raise SystemExit(2)
-    return _build_england_multipass(pbf, args, profiler)
+    return _build_great_britain_multipass(pbf, args, profiler)
 
 
 def _register_oxford(sub):
@@ -349,9 +347,9 @@ def _register_oxford(sub):
 
 def _register_build(sub):
     b = sub.add_parser("build", help="ingest, build, validate, and save a pickled artifact")
-    b.add_argument("region", choices=["oxford", "england"])
+    b.add_argument("region", choices=["oxford", "great-britain"])
     b.add_argument("--out", required=True)
-    b.add_argument("--pbf", default=None, help="England PBF path (else POUND_PBF_PATH)")
+    b.add_argument("--pbf", default=None, help="Great Britain PBF path (else POUND_PBF_PATH)")
     b.add_argument("--profile", action="store_true", help="emit build phase JSON Lines to stderr")
     b.set_defaults(func=_cmd_build)
 
@@ -359,13 +357,15 @@ def _register_build(sub):
 def _register_catalog(sub):
     catalog = sub.add_parser("catalog", help="build an independent OSM place catalog")
     catalog_sub = catalog.add_subparsers(dest="region", required=True)
-    england = catalog_sub.add_parser("england", help="read an original England PBF")
-    england.add_argument("--out", required=True)
-    england.add_argument("--pbf", required=True, help="original England PBF path")
-    england.add_argument(
+    great_britain = catalog_sub.add_parser(
+        "great-britain", help="read an original Great Britain PBF"
+    )
+    great_britain.add_argument("--out", required=True)
+    great_britain.add_argument("--pbf", required=True, help="original Great Britain PBF path")
+    great_britain.add_argument(
         "--profile", action="store_true", help="emit build phase JSON Lines to stderr"
     )
-    england.set_defaults(func=_cmd_catalog)
+    great_britain.set_defaults(func=_cmd_catalog)
 
 
 def main(argv=None) -> int:

@@ -75,7 +75,7 @@ def test_build_profile_reports_failure_before_reraising(monkeypatch):
     }
 
 
-def test_read_england_profiles_ingest_phases_and_internal_pbf_counts(tmp_path, monkeypatch):
+def test_read_great_britain_profiles_ingest_phases_and_internal_pbf_counts(tmp_path, monkeypatch):
     source = tmp_path / "region.osm.pbf"
     source.write_bytes(b"source")
     features = WaterwayFeatures(
@@ -90,6 +90,7 @@ def test_read_england_profiles_ingest_phases_and_internal_pbf_counts(tmp_path, m
         filtered.write_bytes(b"filtered")
 
     def fake_read(_filtered, *, profile_counts=None):
+        assert profile_counts is not None
         profile_counts.update(
             ways=2,
             nodes=3,
@@ -105,7 +106,7 @@ def test_read_england_profiles_ingest_phases_and_internal_pbf_counts(tmp_path, m
     monkeypatch.setattr(osm, "filter_navigable_ways", lambda value: value)
     stream = io.StringIO()
 
-    result = osm.read_england(source, profiler=BuildProfiler(enabled=True, stream=stream))
+    result = osm.read_great_britain(source, profiler=BuildProfiler(enabled=True, stream=stream))
 
     records = [json.loads(line) for line in stream.getvalue().splitlines()]
     assert result is features
