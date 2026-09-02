@@ -329,6 +329,29 @@ describe('Google map adapter', () => {
     expect(facade.fitBounds).toHaveBeenCalledWith(expect.anything(), [{ lat: 51, lng: -1 }]);
   });
 
+  it('lets a hire-base popup select either journey endpoint', () => {
+    const { view, markerListeners, infoWindow } = setup();
+    const select = vi.fn();
+    const register = (view as typeof view & {
+      onHireBaseEndpointSelect?: (
+        callback: (slot: 'origin' | 'destination', base: BoatHireBase) => void,
+      ) => () => void;
+    }).onHireBaseEndpointSelect;
+    expect(register).toBeTypeOf('function');
+    if (!register) return;
+    register(select);
+    const base = hireBase();
+    view.hireBases([base], null);
+
+    markerListeners.find(({ event }) => event === 'click')?.callback({} as never);
+    const content = vi.mocked(infoWindow.setContent).mock.calls.at(-1)?.[0] as HTMLElement;
+    content.querySelector<HTMLButtonElement>('button[data-endpoint="origin"]')?.click();
+    content.querySelector<HTMLButtonElement>('button[data-endpoint="destination"]')?.click();
+
+    expect(select).toHaveBeenNthCalledWith(1, 'origin', base);
+    expect(select).toHaveBeenNthCalledWith(2, 'destination', base);
+  });
+
   it('renders hire-base markers with hover labels and operator/base popups', () => {
     const { view, element, facade, markers, markerListeners, infoWindow } = setup();
     view.hireBases([hireBase()], null);
