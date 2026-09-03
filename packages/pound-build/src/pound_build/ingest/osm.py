@@ -4,7 +4,7 @@ Mirrors overpass.parse's contract: populates the same WaterwayFeatures IR via
 the same pure filters functions. Unlike the Overpass reader, this fills
 `node_ids` (pyosmium gives way-node refs), which lets build_graph's node-ref
 authority unify ways at shared OSM junction nodes. Used by `pound-ingest build
-england`.
+great-britain`.
 
 `osmium` is an optional dependency (the `bulk` extra); tests needing it are
 gated by the `bulk` pytest marker. `osmium-tool` is a system CLI prereq.
@@ -109,7 +109,7 @@ def run_tags_filter(in_pbf: Path, out_pbf: Path) -> None:
     out_pbf = Path(out_pbf)
     out_pbf.parent.mkdir(parents=True, exist_ok=True)
     exprs = [line for line in TAGS_FILTER_EXPR.splitlines() if line.strip()]
-    # --overwrite: the filtered PBF is a cache rebuilt on every `build england`
+    # --overwrite: rebuild the filtered PBF on every `build great-britain`
     # re-run (the D.3 curation loop). Without it osmium refuses to clobber the
     # stale file from the previous run, breaking idempotency.
     subprocess.run(
@@ -532,8 +532,8 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
     )
 
 
-def prepare_england_pbf(pbf_path: Path, profiler: BuildProfiler) -> Path:
-    """Create the one immutable filtered PBF consumed by all England passes."""
+def prepare_great_britain_pbf(pbf_path: Path, profiler: BuildProfiler) -> Path:
+    """Create the immutable filtered PBF consumed by all Great Britain passes."""
     pbf_path = Path(pbf_path)
     base = pbf_path.name.split(".")[0]
     filtered = pbf_path.parent / (base + "_waterways.osm.pbf")
@@ -547,8 +547,8 @@ def prepare_england_pbf(pbf_path: Path, profiler: BuildProfiler) -> Path:
     return filtered
 
 
-def read_england_waterways(filtered_pbf: Path, profiler: BuildProfiler) -> WaterwayFeatures:
-    """Read, prune, and navigability-filter England graph inputs in one profiled phase."""
+def read_great_britain_waterways(filtered_pbf: Path, profiler: BuildProfiler) -> WaterwayFeatures:
+    """Read, prune, and navigability-filter Great Britain graph inputs."""
     counts = {}
     with profiler.phase("waterway_processing", counts=lambda: counts):
         features = read_waterway_features(filtered_pbf, profile_counts=counts)
@@ -559,19 +559,19 @@ def read_england_waterways(filtered_pbf: Path, profiler: BuildProfiler) -> Water
     return features
 
 
-def read_england(
+def read_great_britain(
     pbf_path: Path | None = None, *, profiler: BuildProfiler | None = None
 ) -> WaterwayFeatures:
     """Tags-filter then read, then prune infra nodes on non-navigable ways
     and filter navigable ways. pbf_path defaults to POUND_PBF_PATH env or
-    data/england.osm.pbf. Filtered output lands beside it as
-    england_waterways.osm.pbf (gitignored).
+    data/great-britain.osm.pbf. Filtered output lands beside it as
+    great-britain_waterways.osm.pbf (gitignored).
 
     Ordering: prune BEFORE filter. prune needs boat=no ways present to decide
     "all incidents non-navigable"; see the spec's load-bearing ordering note.
     """
     if pbf_path is None:
-        pbf_path = Path(os.environ.get("POUND_PBF_PATH", "data/england.osm.pbf"))
+        pbf_path = Path(os.environ.get("POUND_PBF_PATH", "data/great-britain.osm.pbf"))
     pbf_path = Path(pbf_path)
     profiler = profiler or BuildProfiler()
     base = pbf_path.name.split(".")[0]

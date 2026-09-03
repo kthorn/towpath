@@ -1,5 +1,6 @@
 import csv
 import math
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -42,7 +43,11 @@ def test_boat_hire_enrichment_seed_has_distinct_location_rows():
         rows = list(reader)
 
     assert reader.fieldnames == EXPECTED_FIELDS
-    assert {row["record_type"] for row in rows} == {"company_base", "review_positive"}
+    assert len(rows) == 155
+    assert Counter(row["record_type"] for row in rows) == {
+        "company_base": 144,
+        "review_positive": 11,
+    }
     assert len({(row["source_provider_id"], row["location_id"]) for row in rows}) == len(rows)
     assert all(row["source_provider_id"] and row["location_id"] for row in rows)
     assert all(row["exclude"] in {"", "true", "false"} for row in rows)
@@ -60,26 +65,53 @@ def _is_https_url(value: str) -> bool:
     return parsed.scheme == "https" and bool(parsed.netloc)
 
 
-OUT_OF_ENGLAND_IDENTITIES = {
-    ("anglo-welsh", "base:trevor"),
-    ("black-prince", "base:chirk-north-wales"),
-    ("black-prince", "base:falkirk-scotland"),
-    ("marine-cruises", "base:falkirk-marina"),
-    ("cambrian-cruisers", "base:ty-newydd-pencelli"),
-    ("beacon-park-boats", "base:llangattock"),
-    ("canal-holidays", "base:10"),
-    ("canal-holidays", "base:20"),
-    ("canal-holidays", "base:23"),
-    ("canal-holidays", "base:58"),
-    ("drifters", "base:canal-boat-holiday-destinations-from-trevor-basin"),
-    ("drifters", "base:chirk-marina"),
-    ("drifters", "base:falkirk-wheel"),
-    ("drifters", "base:goytre-wharf"),
-    ("narrow-boat-hire", "base:falkirk-wharf"),
-    ("narrow-boat-hire", "base:goytre-wharf"),
+REMAINING_EXCLUDED_IDENTITIES = {
     ("uk-canal-boating", "base:falkirk-wharf"),
     ("uk-canal-boating", "base:goytre-wharf"),
 }
+
+GREAT_BRITAIN_BASE_ATTESTATIONS = {
+    ("anglo-welsh", "base:trevor"): ("52.972641", "-3.087449"),
+    ("black-prince", "base:chirk-north-wales"): ("52.9493597", "-3.0651849"),
+    ("black-prince", "base:falkirk-scotland"): ("56.000902", "-3.842258"),
+    ("canal-holidays", "base:10"): ("56.000301", "-3.843051"),
+    ("canal-holidays", "base:20"): ("52.972641", "-3.087449"),
+    ("canal-holidays", "base:23"): ("52.9408908241765", "-3.06816140271166"),
+    ("canal-holidays", "base:58"): ("51.752885", "-2.997168"),
+    ("drifters", "base:canal-boat-holiday-destinations-from-trevor-basin"): (
+        "52.972564",
+        "-3.087063",
+    ),
+    ("drifters", "base:chirk-marina"): ("52.949275", "-3.065087"),
+    ("drifters", "base:falkirk-wheel"): ("56.000902", "-3.842258"),
+    ("drifters", "base:goytre-wharf"): ("51.752679", "-2.997552"),
+    ("narrow-boat-hire", "base:falkirk-wharf"): ("55.99924145", "-3.8350833"),
+    ("narrow-boat-hire", "base:goytre-wharf"): ("51.752679", "-2.997552"),
+    ("marine-cruises", "base:falkirk-marina"): ("56.000301", "-3.841953"),
+    ("cambrian-cruisers", "base:ty-newydd-pencelli"): ("51.9245689", "-3.3283138"),
+    ("beacon-park-boats", "base:llangattock"): ("51.8459884", "-3.1510292"),
+}
+
+
+def test_scotland_and_wales_bases_are_offline_attested():
+    with CSV_PATH.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+
+    found = {
+        (row["source_provider_id"], row["location_id"]): (
+            row["latitude"],
+            row["longitude"],
+        )
+        for row in rows
+        if (row["source_provider_id"], row["location_id"]) in GREAT_BRITAIN_BASE_ATTESTATIONS
+    }
+    assert found == GREAT_BRITAIN_BASE_ATTESTATIONS
+    assert all(
+        row["exclude"] != "true"
+        and any(_is_https_url(row[field]) for field in ("osm_url", "evidence_url"))
+        for row in rows
+        if (row["source_provider_id"], row["location_id"]) in GREAT_BRITAIN_BASE_ATTESTATIONS
+    )
 
 
 NEW_HIRE_BASE_ATTESTATIONS = {
@@ -309,6 +341,34 @@ DRIFTERS_MAP_ATTESTATIONS = {
         "52.232557",
         "-1.078218",
     ),
+    ("drifters", "base:canal-boat-holiday-destinations-from-trevor-basin"): (
+        "946",
+        "Trevor",
+        "https://www.drifters.co.uk/bases/canal-boat-holiday-destinations-from-trevor-basin",
+        "52.972564",
+        "-3.087063",
+    ),
+    ("drifters", "base:chirk-marina"): (
+        "981",
+        "Chirk",
+        "https://www.drifters.co.uk/bases/chirk-marina",
+        "52.949275",
+        "-3.065087",
+    ),
+    ("drifters", "base:falkirk-wheel"): (
+        "1463",
+        "Falkirk",
+        "https://www.drifters.co.uk/bases/falkirk",
+        "56.000902",
+        "-3.842258",
+    ),
+    ("drifters", "base:goytre-wharf"): (
+        "1392",
+        "Goytre",
+        "https://www.drifters.co.uk/bases/goytre",
+        "51.752679",
+        "-2.997552",
+    ),
     ("drifters", "base:lower-heyford"): (
         "645",
         "Lower Heyford",
@@ -438,6 +498,14 @@ DRIFTERS_MAP_ATTESTATIONS = {
 }
 
 DRIFTERS_MAP_APPROVED_ALIASES = {
+    ("drifters", "base:falkirk-wheel"): (
+        "https://www.drifters.co.uk/bases/falkirk-wheel/",
+        "https://www.drifters.co.uk/bases/falkirk",
+    ),
+    ("drifters", "base:goytre-wharf"): (
+        "https://www.drifters.co.uk/bases/goytre-wharf/",
+        "https://www.drifters.co.uk/bases/goytre",
+    ),
     ("drifters", "base:barnoldswick-boatyard"): (
         "https://www.drifters.co.uk/bases/barnoldswick-boatyard/",
         "https://www.drifters.co.uk/bases/barnoldswick",
@@ -597,11 +665,11 @@ def test_nonexcluded_rows_are_coordinate_and_evidence_ready():
     excluded = {
         (row["source_provider_id"], row["location_id"]) for row in rows if row["exclude"] == "true"
     }
-    if excluded != OUT_OF_ENGLAND_IDENTITIES:
+    if excluded != REMAINING_EXCLUDED_IDENTITIES:
         problems.append(
             "excluded-identity mismatch: "
-            f"unexpected={sorted(excluded - OUT_OF_ENGLAND_IDENTITIES)!r} "
-            f"missing={sorted(OUT_OF_ENGLAND_IDENTITIES - excluded)!r}"
+            f"unexpected={sorted(excluded - REMAINING_EXCLUDED_IDENTITIES)!r} "
+            f"missing={sorted(REMAINING_EXCLUDED_IDENTITIES - excluded)!r}"
         )
     active_rows = [row for row in rows if row["exclude"] != "true"]
     if not active_rows:
@@ -651,7 +719,7 @@ OURBOATS_BASE_ATTESTATIONS = {
         "56.000301",
         "-3.841953",
         "https://marinecruises.co.uk/falkirk-marina.htm",
-        "true",
+        "",
     ),
     ("chas-hardern-boats", "base:beeston-castle-wharf"): (
         "53.135",
@@ -669,13 +737,13 @@ OURBOATS_BASE_ATTESTATIONS = {
         "51.9245689",
         "-3.3283138",
         "https://www.cambriancruisers.co.uk/contact",
-        "true",
+        "",
     ),
     ("beacon-park-boats", "base:llangattock"): (
-        "",
-        "",
+        "51.8459884",
+        "-3.1510292",
         "https://beaconparkboats.com/contact",
-        "true",
+        "",
     ),
     ("norbury-wharf", "base:norbury-junction"): (
         "52.8029796",
@@ -773,7 +841,7 @@ CANAL_HOLIDAYS_BASE_62_ATTESTATION = {
 CANAL_HOLIDAYS_BASE_62_NOTES = (
     "Canal Holidays official map BaseId 62 supplies this base coordinate; "
     "source URL is an exact BaseId match.",
-    "User-approved one-base startup snap exception: the current England artifact "
+    "User-approved one-base startup snap exception: the current Great Britain artifact "
     "measures 250.968 m; this identity is permitted up to 251 m.",
 )
 

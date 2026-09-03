@@ -76,6 +76,19 @@ def test_cli_rejects_unknown_region(monkeypatch):
         raise AssertionError("expected SystemExit for unknown region")
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["build", "england", "--out", "england.pkl"],
+        ["catalog", "england", "--pbf", "england.osm.pbf", "--out", "catalog.pkl"],
+    ],
+)
+def test_england_region_aliases_are_removed(argv, capsys):
+    with pytest.raises(SystemExit):
+        cli.main(argv)
+    assert "invalid choice: 'england'" in capsys.readouterr().err
+
+
 def test_build_subcommand_writes_artifact(tmp_path: Path, monkeypatch):
     try:
         raw = json.loads(Path(oxford_fixture_path()).read_text())
@@ -124,13 +137,13 @@ def test_build_profile_emits_completed_phases_as_json_lines(tmp_path: Path, monk
     assert all(record["peak_rss_bytes"] > 0 for record in records)
 
 
-def test_catalog_england_writes_independent_artifact_and_json_summary(tmp_path, capsys):
+def test_catalog_great_britain_writes_independent_artifact_and_json_summary(tmp_path, capsys):
     out = tmp_path / "catalog.pkl"
     assert (
         cli.main(
             [
                 "catalog",
-                "england",
+                "great-britain",
                 "--pbf",
                 str(Path("packages/pound-core/tests/fixtures/tiny_bulk.osm")),
                 "--out",
@@ -164,10 +177,10 @@ def test_catalog_england_writes_independent_artifact_and_json_summary(tmp_path, 
     assert artifact.metadata["attribution"] == "© OpenStreetMap contributors"
 
 
-def test_catalog_england_filters_pbf_in_unique_temp_file_without_mutating_source(
+def test_catalog_great_britain_filters_pbf_in_unique_temp_file_without_mutating_source(
     tmp_path, monkeypatch
 ):
-    source = tmp_path / "england.osm.pbf"
+    source = tmp_path / "great-britain.osm.pbf"
     source.write_bytes(b"original")
     out = tmp_path / "catalog.pkl"
     commands = []
@@ -188,7 +201,7 @@ def test_catalog_england_filters_pbf_in_unique_temp_file_without_mutating_source
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(cli, "read_catalog", fake_read_catalog)
 
-    assert cli.main(["catalog", "england", "--pbf", str(source), "--out", str(out)]) == 0
+    assert cli.main(["catalog", "great-britain", "--pbf", str(source), "--out", str(out)]) == 0
 
     assert source.read_bytes() == b"original"
     assert len(commands) == 1
@@ -199,8 +212,8 @@ def test_catalog_england_filters_pbf_in_unique_temp_file_without_mutating_source
     assert not read_paths[0].exists()
 
 
-def test_catalog_england_cleans_temp_filter_on_failure(tmp_path, monkeypatch):
-    source = tmp_path / "england.osm.pbf"
+def test_catalog_great_britain_cleans_temp_filter_on_failure(tmp_path, monkeypatch):
+    source = tmp_path / "great-britain.osm.pbf"
     source.write_bytes(b"original")
     filtered_paths = []
 
@@ -216,7 +229,7 @@ def test_catalog_england_cleans_temp_filter_on_failure(tmp_path, monkeypatch):
         cli.main(
             [
                 "catalog",
-                "england",
+                "great-britain",
                 "--pbf",
                 str(source),
                 "--out",
@@ -228,13 +241,13 @@ def test_catalog_england_cleans_temp_filter_on_failure(tmp_path, monkeypatch):
     assert filtered_paths and not filtered_paths[0].parent.exists()
 
 
-def test_catalog_england_profile_reports_reader_and_serialization_phases(tmp_path, capsys):
+def test_catalog_great_britain_profile_reports_reader_and_serialization_phases(tmp_path, capsys):
     out = tmp_path / "catalog.pkl"
     assert (
         cli.main(
             [
                 "catalog",
-                "england",
+                "great-britain",
                 "--pbf",
                 str(Path("packages/pound-core/tests/fixtures/tiny_bulk.osm")),
                 "--out",
@@ -255,12 +268,12 @@ def test_catalog_england_profile_reports_reader_and_serialization_phases(tmp_pat
     assert records[-1]["counts"]["output_bytes"] == out.stat().st_size
 
 
-def test_catalog_england_requires_original_pbf(tmp_path, capsys):
+def test_catalog_great_britain_requires_original_pbf(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc_info:
         cli.main(
             [
                 "catalog",
-                "england",
+                "great-britain",
                 "--pbf",
                 str(tmp_path / "missing.osm.pbf"),
                 "--out",
@@ -271,21 +284,20 @@ def test_catalog_england_requires_original_pbf(tmp_path, capsys):
     assert "original" in capsys.readouterr().out.lower()
 
 
-def test_build_england_missing_pbf_prints_url_and_exits(capsys, monkeypatch, tmp_path):
+def test_build_great_britain_missing_pbf_prints_url_and_exits(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("POUND_PBF_PATH", str(tmp_path / "missing.osm.pbf"))
     try:
-        cli.main(["build", "england", "--out", str(tmp_path / "england.pkl")])
+        cli.main(["build", "great-britain", "--out", str(tmp_path / "great-britain.pkl")])
     except SystemExit as exc:
         assert exc.code != 0
     else:
         raise AssertionError("expected SystemExit for missing PBF")
     out = capsys.readouterr().out
     assert "geofabrik" in out.lower()
-    assert "england" in out.lower()
-    assert "1.5" in out  # expected size hint in GB
+    assert "great britain" in out.lower()
 
 
-def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
+def test_build_great_britain_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
     # Fake the three pyosmium passes with an Oxford-shaped fixture.
     try:
         raw = json.loads(Path(oxford_fixture_path()).read_text())
@@ -294,17 +306,17 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
         raise RuntimeError(f"Failed to load Oxford fixture: {e}") from e
     fake_feats = fake_feats.model_copy(update={"source": "geofabrik", "bbox": None})
 
-    monkeypatch.setenv("POUND_PBF_PATH", str(tmp_path / "england.osm.pbf"))
-    Path(tmp_path / "england.osm.pbf").write_bytes(b"")  # dummy so the guard passes
+    monkeypatch.setenv("POUND_PBF_PATH", str(tmp_path / "great-britain.osm.pbf"))
+    Path(tmp_path / "great-britain.osm.pbf").write_bytes(b"")  # dummy so the guard passes
     candidates = list(fake_feats.poi_candidates)
     graph_features = fake_feats.model_copy(update={"poi_candidates": []})
-    filtered = tmp_path / "england_waterways.osm.pbf"
+    filtered = tmp_path / "great-britain_waterways.osm.pbf"
     filtered.write_bytes(b"filtered")
     seen_paths = []
-    monkeypatch.setattr(cli, "prepare_england_pbf", lambda _pbf, _profiler: filtered)
+    monkeypatch.setattr(cli, "prepare_great_britain_pbf", lambda _pbf, _profiler: filtered)
     monkeypatch.setattr(
         cli,
-        "read_england_waterways",
+        "read_great_britain_waterways",
         lambda path, _profiler: seen_paths.append(path) or graph_features,
     )
 
@@ -330,11 +342,11 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
         return real_accumulator(index, **options)
 
     monkeypatch.setattr(cli, "PoiBuildAccumulator", bounded_accumulator)
-    out = tmp_path / "england.pkl"
+    out = tmp_path / "great-britain.pkl"
     rc = cli.main(
         [
             "build",
-            "england",
+            "great-britain",
             "--out",
             str(out),
         ]
@@ -348,11 +360,11 @@ def test_build_england_writes_artifact_and_passes_gate(monkeypatch, tmp_path):
     assert accumulator_options == [{"retain_rejected_winners": False}]
 
 
-def test_build_england_profile_reports_multi_pass_phase_order(monkeypatch, tmp_path, capsys):
+def test_build_great_britain_profile_reports_multi_pass_phase_order(monkeypatch, tmp_path, capsys):
     features = _sample_features().model_copy(update={"source": "geofabrik", "bbox": None})
-    source = tmp_path / "england.osm.pbf"
+    source = tmp_path / "great-britain.osm.pbf"
     source.write_bytes(b"source")
-    filtered = tmp_path / "england_waterways.osm.pbf"
+    filtered = tmp_path / "great-britain_waterways.osm.pbf"
     filtered.write_bytes(b"filtered")
 
     def prepare(_pbf, profiler):
@@ -363,13 +375,21 @@ def test_build_england_profile_reports_multi_pass_phase_order(monkeypatch, tmp_p
         with profiler.phase("waterway_processing"):
             return features
 
-    monkeypatch.setattr(cli, "prepare_england_pbf", prepare)
-    monkeypatch.setattr(cli, "read_england_waterways", read_waterways)
+    monkeypatch.setattr(cli, "prepare_great_britain_pbf", prepare)
+    monkeypatch.setattr(cli, "read_great_britain_waterways", read_waterways)
     monkeypatch.setattr(cli, "stream_linear_pois", lambda *_args: None)
     monkeypatch.setattr(cli, "stream_area_pois", lambda *_args: None)
 
     rc = cli.main(
-        ["build", "england", "--pbf", str(source), "--out", str(tmp_path / "out.pkl"), "--profile"]
+        [
+            "build",
+            "great-britain",
+            "--pbf",
+            str(source),
+            "--out",
+            str(tmp_path / "out.pkl"),
+            "--profile",
+        ]
     )
 
     records = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
@@ -387,16 +407,16 @@ def test_build_england_profile_reports_multi_pass_phase_order(monkeypatch, tmp_p
     ]
 
 
-def test_build_england_stream_failure_reports_failed_phase_and_does_not_write(
+def test_build_great_britain_stream_failure_reports_failed_phase_and_does_not_write(
     monkeypatch, tmp_path, capsys
 ):
     features = _sample_features().model_copy(update={"source": "geofabrik", "bbox": None})
-    source = tmp_path / "england.osm.pbf"
+    source = tmp_path / "great-britain.osm.pbf"
     source.write_bytes(b"source")
-    filtered = tmp_path / "england_waterways.osm.pbf"
+    filtered = tmp_path / "great-britain_waterways.osm.pbf"
     filtered.write_bytes(b"filtered")
-    monkeypatch.setattr(cli, "prepare_england_pbf", lambda _pbf, _profiler: filtered)
-    monkeypatch.setattr(cli, "read_england_waterways", lambda _path, _profiler: features)
+    monkeypatch.setattr(cli, "prepare_great_britain_pbf", lambda _pbf, _profiler: filtered)
+    monkeypatch.setattr(cli, "read_great_britain_waterways", lambda _path, _profiler: features)
     monkeypatch.setattr(
         cli,
         "stream_linear_pois",
@@ -409,7 +429,7 @@ def test_build_england_stream_failure_reports_failed_phase_and_does_not_write(
         cli.main(
             [
                 "build",
-                "england",
+                "great-britain",
                 "--pbf",
                 str(source),
                 "--out",

@@ -28,5 +28,5 @@ web/.env*
 .pi/subagents
 scripts/local
 artifacts/*
-!artifacts/england.pkl
-!artifacts/england-catalog.pkl
+!artifacts/great-britain.pkl
+!artifacts/great-britain-catalog.pkl

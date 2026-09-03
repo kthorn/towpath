@@ -20,8 +20,8 @@ Generate the ranked local review file, then serve it for human decisions:
 ```bash
 uv sync --package pound-build
 uv run --package pound-build python -m pound_build.review.cli generate \
-  --catalog artifacts/england-catalog.pkl \
-  --graph artifacts/england.pkl \
+  --catalog artifacts/great-britain-catalog.pkl \
+  --graph artifacts/great-britain.pkl \
   --out artifacts/boat-hire-review.json
 uv run --package pound-build python -m pound_build.review.cli serve \
   --review artifacts/boat-hire-review.json
@@ -36,7 +36,7 @@ fallback when that happens.
 
 ## Map prototype: local development
 
-Install Python dependencies. Map development uses a full England artifact; the
+Install Python dependencies. Map development uses a full Great Britain artifact; the
 network-dependent Oxford/Overpass path is only a legacy ingest scaffold and is
 not the recommended way to start the application.
 
@@ -44,8 +44,8 @@ not the recommended way to start the application.
 uv sync
 ```
 
-Point the application at an existing England artifact with an absolute path,
-or build a current one from the England PBF as described under **Bulk ingest**.
+Point the application at an existing Great Britain artifact with an absolute path,
+or build a current one from the Great Britain PBF as described under **Bulk ingest**.
 The artifact must have been built with a version of Pound that writes
 `artifact_revision`; the web application intentionally rejects older,
 revisionless artifacts. Rebuild a revisionless artifact once rather than
@@ -56,7 +56,7 @@ when Uvicorn starts the application, so exporting or prefixing the environment
 variables works without an application factory flag:
 
 ```bash
-POUND_ARTIFACT_PATH=/absolute/path/to/artifacts/england.pkl \
+POUND_ARTIFACT_PATH=/absolute/path/to/artifacts/great-britain.pkl \
 POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/data/boat-hire-enrichment.csv \
 POUND_STATIC_DIR=web/dist \
 uv run uvicorn pound_web.app:app --host 127.0.0.1 --port 8000 --reload
@@ -120,7 +120,7 @@ Open `http://127.0.0.1:5173`. Vite proxies `/api` to FastAPI on port 8000.
 public client configuration, not runtime secrets. Never use a server secret as
 the browser key.
 
-Use the England artifact for routine local UI work, including the Bletchley Park
+Use the Great Britain artifact for routine local UI work, including the Bletchley Park
 scenario below. Keep generated artifacts outside version control.
 
 ### Runtime settings and artifact compatibility
@@ -199,13 +199,25 @@ docker build -t pound-map \
   --build-arg VITE_TRANSFER_MODE='WALK' .
 ```
 
-The image includes the versioned curated boat-hire CSV and sets its required
-`POUND_BOAT_HIRE_ENRICHMENT_PATH`. Rebuild the image to deploy CSV changes;
-keep the routing artifact as a separate read-only mount:
+Stage `artifacts/great-britain.pkl` and `artifacts/great-britain-catalog.pkl`
+before `docker build`; the Dockerfile requires and includes both artifacts. The
+image also includes the versioned curated boat-hire CSV and sets its required
+`POUND_BOAT_HIRE_ENRICHMENT_PATH`. Rebuild the image to deploy artifact or CSV
+changes. Run the baked graph directly:
 
 ```bash
 docker run --rm -p 8000:8000 \
-  -v "$PWD/artifacts/england.pkl:/app/artifacts/england.pkl:ro" \
+  -e POUND_ARTIFACT_PATH=/app/artifacts/great-britain.pkl \
+  -e POUND_CATALOG_PATH=/app/artifacts/great-britain-catalog.pkl \
+  pound-map
+```
+
+A read-only mount can optionally override the baked graph at runtime:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e POUND_ARTIFACT_PATH=/data/great-britain.pkl \
+  -v "$PWD/artifacts/great-britain.pkl:/data/great-britain.pkl:ro" \
   pound-map
 ```
 
@@ -214,7 +226,7 @@ Open `http://127.0.0.1:8000`. Runtime environment variables cannot replace the
 
 ### Manual Bletchley acceptance check
 
-With a full England artifact, search the origin for **Bletchley Park** and the
+With a full Great Britain artifact, search the origin for **Bletchley Park** and the
 destination for **Black Prince Holidays, Stoke Hammond**. Confirm that ranked
 canal candidates appear at both ends, choose a non-recommended destination
 candidate, plan the route, and check that both land-transfer lines and the canal
@@ -269,7 +281,7 @@ potentially billable; its exact prerequisites and command are in
 - Shapely and pyproj are core dependencies used to normalize POI geometry,
   measure corridor distances in British National Grid coordinates, and build
   runtime spatial indexes. They are installed by `uv sync`.
-- `osmium-tool` (system CLI) for the England build — install via
+- `osmium-tool` (system CLI) for the Great Britain build — install via
   apt/brew/conda. The `pyosmium` Python package is separate and pulled by the
   `bulk` extra: `uv sync --package pound-build --extra bulk`. The base `uv sync` works without it.
 
@@ -278,7 +290,7 @@ potentially billable; its exact prerequisites and command are in
 The Overpass reader is retained as **legacy scaffolding** for narrow ingest
 experiments and network tests on the Oxford Canal. Do not use it to prepare the
 map application's normal development artifact. The public Overpass endpoint may
-rate-limit or reject this request (including HTTP 406); use the bulk England
+rate-limit or reject this request (including HTTP 406); use the bulk Great Britain
 build below for the application.
 
 Fetch the Oxford extract and print the summarize() report (network required):
@@ -296,7 +308,7 @@ uv run --package pound-build python -m pound_build.ingest.cli build oxford --out
 ```
 
 Produces a small pickled NetworkX graph for ingest testing only. It does not
-cover the England-wide product workflow.
+cover the Great Britain-wide product workflow.
 
 Network tests are skipped by default; run them explicitly:
 
@@ -304,25 +316,24 @@ Network tests are skipped by default; run them explicitly:
 uv run pytest --run-network
 ```
 
-## Bulk ingest (`build england`)
+## Bulk ingest (`build great-britain`)
 
-The full bulk path needs the Geofabrik England extract (manual download; the
-CLI does not download 1.5 GB itself):
+The full bulk path needs the Geofabrik Great Britain extract (manual download; the
+CLI does not download the roughly 2 GB source itself). This extract covers England,
+Scotland, and Wales, but not Northern Ireland:
 
 ```bash
-curl -L -o data/england.osm.pbf \
-  https://download.geofabrik.de/europe/united-kingdom/england-latest.osm.pbf
+curl -L -o data/great-britain.osm.pbf \
+  https://download.geofabrik.de/europe/great-britain-latest.osm.pbf
 uv sync --package pound-build --extra bulk
-uv run --package pound-build python -m pound_build.ingest.cli build england --out artifacts/england.pkl
+uv run --package pound-build python -m pound_build.ingest.cli build great-britain --out artifacts/great-britain.pkl
 ```
 
 If the PBF is missing the build prints the URL and exits non-zero. The build
-hard-fails on `derelict_edges>0`, `self_loops>0`, or
-`tolerance_snaps_unresolved` above `--max-unresolved-snaps` (default `0`,
-forcing manual curation via `data/overrides.json` before a real England
-artifact is trusted). Advisory keys (`edges_missing_dims`,
-`ambiguous_place_names`, gazetteer discrepancy, and **component_count /
-component_sizes**) are reported but never fail the build.
+hard-fails on `derelict_edges > 0`, `self_loops > 0`, or
+`poi_duplicate_identities > 0`. Other validation fields—including component
+sizes, missing dimensions, zero-length edges, orphan locks, gazetteer counts,
+and ambiguous place names—are reported for review but do not fail the build.
 
 The build also attaches a deliberately bounded set of OSM points of interest:
 
@@ -346,21 +357,6 @@ there is no legacy fallback or in-place migration. Pickle artifacts are trusted
 local build products only: never load a pickle obtained from an untrusted
 source.
 
-**Tuning connectivity against real data:** start with a deliberately low
-tolerance to *measure* how fragmented the network really is, then dial up:
-
-```bash
-uv run --package pound-build python -m pound_build.ingest.cli build england --out /tmp/eng.pkl --tolerance-m 1
-# read component_count / component_sizes from the report:
-#   thousands => most 'gaps' are real OSM-edit curation; add join overrides.
-#   ~ a dozen  => the fragmentation is plausibly genuine (derelict arms,
-#                separate basins); most 'gaps' are correct as-is.
-```
-
-The report is the authority, not the threshold — `--tolerance-m` is the
-exploration dial; `data/overrides.json` is where confirmed joins and
-suppressed false snaps land.
-
 Bulk tests are skipped by default; run them explicitly:
 
 ```bash
@@ -369,16 +365,16 @@ uv run pytest --run-bulk
 
 ### Separate OSM place catalog
 
-The place catalog is an independent artifact built from the **original England
+The place catalog is an independent artifact built from the **original Great Britain
 PBF**, not from the filtered waterway build and not from the routing graph
 artifact. Build it only when catalog marker layers are needed:
 
 ```bash
 catalog_tmp=$(mktemp -d)
 trap 'rm -rf "$catalog_tmp"' EXIT
-uv run --package pound-build python -m pound_build.ingest.cli catalog england \
-  --pbf data/england.osm.pbf \
-  --out "$catalog_tmp/england-catalog.pkl" \
+uv run --package pound-build python -m pound_build.ingest.cli catalog great-britain \
+  --pbf data/great-britain.osm.pbf \
+  --out "$catalog_tmp/great-britain-catalog.pkl" \
   --profile
 ```
 
@@ -388,26 +384,22 @@ individual builds and remain independent from routing artifact revisions.
 Catalogs built with an older or missing schema version are rejected at startup
 and must be rebuilt with the current build CLI; they are not migrated in place.
 
-A successful real-England build produced **185,029 records**, an
-**85,378,417-byte** artifact, in **200.49 s wall time**, with **2,534,084 KiB
-peak RSS**. The explicit build gates are: exactly 185,029 records for the same
-source/filter (a source refresh requires a new inventory review), artifact size
-<= **100,000,000 bytes**, build wall time <= **300 s**, and build peak RSS <=
-**3,000,000 KiB**. The real build baseline passes all four build gates. The
-benchmark run rebuilt the catalog from `data/england.osm.pbf`
-into a temporary artifact; `/usr/bin/time` measured **211.32 s** wall time and
-**2,527,792 KiB** peak RSS, also passing the build gates.
+The 2026-09-02 Great Britain build produced **218,443 records**, a
+**101,046,536-byte** catalog, in **167.91 s wall time**, with **2,968,328 KiB
+peak RSS**. For this source generation, the recorded regression gates are:
+218,443 records, artifact size <= **110,000,000 bytes**, build wall time <=
+**300 s**, and build peak RSS <= **3,200,000 KiB**. A source refresh requires a
+new inventory review and baseline rather than forcing the old record count.
 
-A fresh nationwide startup/index-load measurement used the validated
-**176,977-record** England catalog and the deployed England routing artifact
-(**691,564 nodes**, **691,117 edges**, and **523,636 POIs**), with actual
-`GraphSpatialIndex` plus `CatalogSpatialIndex` construction and the curated
-boat-hire seed load. The benchmark reported **98,426.135 ms** (**98.426 s**)
-of in-process startup/index-load time. `/usr/bin/time` reported **103.46 s**
-wall time, **97.71 s** user time, **6.24 s** system time, and **4,220,848 KiB**
-maximum RSS. The hard startup gates remain <= **130 s measured inside the
-process** and <= **4,615,019 KiB** peak RSS; this run passes both. Startup is a
-one-time cost on the measured host, not a per-query cost.
+A fresh nationwide startup/index-load measurement used that catalog and the
+compact Great Britain routing artifact (**37,927 nodes**, **36,248 edges**, and
+**631,184 POIs**), with actual `GraphSpatialIndex` plus `CatalogSpatialIndex`
+construction and all **153** curated boat-hire seeds. The benchmark reported
+**115,510.038 ms** (**115.510 s**) of in-process startup/index-load time, while
+`/usr/bin/time` measured **2,033,208 KiB** maximum RSS.
+The startup gates are <= **130 s measured inside the process** and <=
+**4,615,019 KiB** peak RSS. Startup is a one-time cost on the measured host, not
+a per-query cost.
 
 Run the reproducible nationwide places benchmark with the required curated
 CSV (keep output outside version control):
@@ -417,8 +409,8 @@ benchmark_json=$(mktemp)
 time_log=$(mktemp)
 trap 'rm -f "$benchmark_json" "$time_log"' EXIT
 /usr/bin/time -v uv run python scripts/catalog_query_benchmark.py \
-  --catalog-artifact "$catalog_tmp/england-catalog.pkl" \
-  --routing-artifact artifacts/england.pkl \
+  --catalog-artifact "$catalog_tmp/great-britain-catalog.pkl" \
+  --routing-artifact artifacts/great-britain.pkl \
   --boat-hire-enrichment data/boat-hire-enrichment.csv \
   --warmups 2 --iterations 5 >"$benchmark_json" 2>"$time_log"
 ```
@@ -428,17 +420,17 @@ builds `GraphSpatialIndex`, `CatalogSpatialIndex`, and `PlacesIndex`, warms
 every request, and times only `PlacesIndex.query(request, stats=stats)`. Its
 fixed cases cover locality/no-policy, route+day, waterway, the densest
 predefined viewport within the **100,000-candidate** work budget, and nearby
-point, line, and multi-target requests. The current England run produced:
+point, line, and multi-target requests. The 2026-09-02 Great Britain run produced:
 
 | Case | Viewport/target | Candidate work | Outcome / result count | p50 ms | p95 ms | Max ms |
 | --- | --- | ---: | --- | ---: | ---: | ---: |
-| densest predefined | London | 34,565 | result_limit_exceeded / — | 43.805 | 60.062 | 62.411 |
-| locality/no-policy | Oxford | 1,227 | result_limit_exceeded / — | 23.573 | 24.770 | 24.893 |
-| nearby-line | LineString | 91 | ok / 42 | 0.963 | 1.254 | 1.311 |
-| nearby-multi-target | Point + LineString | 108 | ok / 47 | 1.085 | 1.738 | 1.823 |
-| nearby-point | Point | 17 | ok / 5 | 0.103 | 0.106 | 0.107 |
-| route+day | Milton Keynes | 736 | ok / 73 | 12.692 | 14.527 | 14.822 |
-| waterway | Milton Keynes | 736 | ok / 39 | 2.207 | 3.388 | 3.394 |
+| densest predefined | London | 34,765 | result_limit_exceeded / — | 18.894 | 19.249 | 19.311 |
+| locality/no-policy | Oxford | 1,260 | result_limit_exceeded / — | 26.445 | 27.739 | 27.839 |
+| nearby-line | LineString | 91 | ok / 42 | 0.876 | 1.086 | 1.108 |
+| nearby-multi-target | Point + LineString | 108 | ok / 47 | 0.678 | 0.760 | 0.778 |
+| nearby-point | Point | 17 | ok / 5 | 0.081 | 0.084 | 0.084 |
+| route+day | Milton Keynes | 731 | ok / 73 | 9.599 | 9.935 | 9.969 |
+| waterway | Milton Keynes | 731 | ok / 33 | 1.869 | 2.549 | 2.686 |
 
 `candidate_work` comes from the `PlacesQueryStats` instance populated by the
 same query that produced each row. `result_limit_exceeded` is the complete
@@ -447,7 +439,7 @@ p50/p95/max values are a host-specific observed regression baseline, not a
 product SLA or hard latency gate. Record them for comparisons and rerun the
 benchmark on a deployment host before drawing performance conclusions. The
 hard acceptance gates remain startup/RSS plus bounded candidate-work and
-complete-result behavior. The benchmark process reported **4,220,848 KiB** RSS;
+complete-result behavior. The benchmark process reported **2,033,208 KiB** RSS;
 RSS and query timing are host-specific. Its JSON is sorted and records
 candidate work, outcome/result count, p50, p95, max, and RSS.
 
@@ -460,9 +452,9 @@ Configure the optional catalog alongside the routing artifact when starting
 FastAPI:
 
 ```bash
-POUND_ARTIFACT_PATH=/absolute/path/to/artifacts/england.pkl \
+POUND_ARTIFACT_PATH=/absolute/path/to/artifacts/great-britain.pkl \
 POUND_BOAT_HIRE_ENRICHMENT_PATH=/absolute/path/to/data/boat-hire-enrichment.csv \
-POUND_CATALOG_PATH=/absolute/path/to/england-catalog.pkl \
+POUND_CATALOG_PATH=/absolute/path/to/great-britain-catalog.pkl \
 POUND_STATIC_DIR=web/dist \
 uv run uvicorn pound_web.app:app --host 127.0.0.1 --port 8000
 ```
@@ -480,7 +472,7 @@ Minimal, eyeballing-only surface over the loaded artifact:
 ```bash
 uv run pound-plan Oxford Banbury --days 3
 # override the artifact:
-uv run pound-plan Oxford Banbury --days 3 --artifact artifacts/england.pkl
+uv run pound-plan Oxford Banbury --days 3 --artifact artifacts/great-britain.pkl
 # boat constraints:
 uv run pound-plan Oxford Banbury --days 3 --boat-beam 2.0 --boat-draft 0.8
 # disable movable-bridge delay for a what-if route comparison:
@@ -541,7 +533,7 @@ Resolve a coordinate to the nearest canal-network node uid + distance:
 ```bash
 uv run pound-locate --lat 51.75 --lon -1.26
 # override the artifact:
-uv run pound-locate --lat 51.75 --lon -1.26 --artifact artifacts/england.pkl
+uv run pound-locate --lat 51.75 --lon -1.26 --artifact artifacts/great-britain.pkl
 # fail if the nearest canal is farther than N metres (for scripting):
 uv run pound-locate --lat 51.75 --lon -1.26 --max-distance-m 200
 ```

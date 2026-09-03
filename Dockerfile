@@ -26,8 +26,8 @@ RUN uv sync --package pound-web --no-dev --frozen
 RUN .venv/bin/python -c "from importlib.util import find_spec; assert all(find_spec(name) is None for name in ('pound_build', 'requests', 'flask', 'osmium')); import pound, pound_web"
 COPY artifacts/ /app/artifacts/
 COPY data/ /app/data/
-RUN test -f /app/artifacts/england.pkl
-RUN .venv/bin/python -c "from pathlib import Path; from pound.catalog.artifact import load_catalog; load_catalog(Path('/app/artifacts/england-catalog.pkl'))"
+RUN test -f /app/artifacts/great-britain.pkl
+RUN .venv/bin/python -c "from pathlib import Path; from pound.catalog.artifact import load_catalog; load_catalog(Path('/app/artifacts/great-britain-catalog.pkl'))"
 COPY --from=web-builder /build/web/dist /app/web/dist
 
 RUN useradd --create-home --uid 10001 pound \
@@ -35,7 +35,7 @@ RUN useradd --create-home --uid 10001 pound \
 USER pound
 
 ENV PATH="/app/.venv/bin:${PATH}" \
-    POUND_ARTIFACT_PATH=/app/artifacts/england.pkl \
+    POUND_ARTIFACT_PATH=/app/artifacts/great-britain.pkl \
     POUND_STATIC_DIR=/app/web/dist \
     POUND_BOAT_HIRE_ENRICHMENT_PATH=/app/data/boat-hire-enrichment.csv
 EXPOSE 8000

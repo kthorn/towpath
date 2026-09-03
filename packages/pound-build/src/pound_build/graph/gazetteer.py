@@ -1,7 +1,7 @@
 """Build-time comprehensive place gazetteer + node-name attachment (design §4).
 
 `build_gazetteer` extracts EVERY `place=*` node in the extract (~30k for
-England) into {name -> node_key}. Duplicate place names are real (multiple
+Great Britain) into {name -> node_key}. Duplicate place names are real (multiple
 "Newton"s); a colliding name maps to a *list* of candidate node keys, surfaced
 by `ambiguous_place_names` for curation and errored on lookup by the resolver
 (PR2). `attach_node_names` writes a `name` node attribute onto every waterway

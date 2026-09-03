@@ -44,11 +44,11 @@ def test_container_configuration_stages_only_runtime_packages_and_data():
     )
     assert "COPY artifacts/ /app/artifacts/" in dockerfile
     assert "COPY data/ /app/data/" in dockerfile
-    assert "RUN test -f /app/artifacts/england.pkl" in dockerfile
+    assert "RUN test -f /app/artifacts/great-britain.pkl" in dockerfile
     assert (
         'RUN .venv/bin/python -c "from pathlib import Path; '
         "from pound.catalog.artifact import load_catalog; "
-        "load_catalog(Path('/app/artifacts/england-catalog.pkl'))\""
+        "load_catalog(Path('/app/artifacts/great-britain-catalog.pkl'))\""
     ) in dockerfile
     assert (
         'RUN test -n "$VITE_GOOGLE_MAPS_API_KEY" \\\n'
@@ -56,25 +56,25 @@ def test_container_configuration_stages_only_runtime_packages_and_data():
         "    && npm run build"
     ) in dockerfile
     assert "artifacts/*" in dockerignore
-    assert "!artifacts/england.pkl" in dockerignore
-    assert "!artifacts/england-catalog.pkl" in dockerignore
+    assert "!artifacts/great-britain.pkl" in dockerignore
+    assert "!artifacts/great-britain-catalog.pkl" in dockerignore
     data_rules = [rule for rule in dockerignore if rule.lstrip("!").startswith("data")]
     assert data_rules == ["data/*", "!data/boat-hire-enrichment.csv"]
     assert "pound/artifacts" not in dockerignore
     assert "pound/data" not in dockerignore
     assert (
         'ENV PATH="/app/.venv/bin:${PATH}" \\\n'
-        "    POUND_ARTIFACT_PATH=/app/artifacts/england.pkl \\\n"
+        "    POUND_ARTIFACT_PATH=/app/artifacts/great-britain.pkl \\\n"
         "    POUND_STATIC_DIR=/app/web/dist \\\n"
         "    POUND_BOAT_HIRE_ENRICHMENT_PATH=/app/data/boat-hire-enrichment.csv"
     ) in dockerfile
     assert 'CMD ["uvicorn", "pound_web.app:app"' in dockerfile
     assert "pound.web.app" not in smoke_readme
     assert "/app/pound/artifacts" not in smoke_readme
-    assert "POUND_ARTIFACT_PATH='artifacts/england.pkl'" in smoke_readme
+    assert "POUND_ARTIFACT_PATH='artifacts/great-britain.pkl'" in smoke_readme
     assert "POUND_BOAT_HIRE_ENRICHMENT_PATH='data/boat-hire-enrichment.csv'" in smoke_readme
-    assert "CATALOG_ARTIFACT=artifacts/england-catalog.pkl" in deploy_runbook
-    assert 'load_catalog(Path("artifacts/england-catalog.pkl"))' in deploy_runbook
+    assert "CATALOG_ARTIFACT=artifacts/great-britain-catalog.pkl" in deploy_runbook
+    assert 'load_catalog(Path("artifacts/great-britain-catalog.pkl"))' in deploy_runbook
     assert "artifacts/" in gitignore
     assert "data/*" in gitignore
     assert ".env*" in dockerignore
@@ -95,8 +95,8 @@ def test_fly_configuration_keeps_the_single_machine_warm():
     assert fly["build"] == {"dockerfile": "Dockerfile"}
     assert fly["deploy"] == {"strategy": "rolling", "wait_timeout": "10m"}
     assert fly["env"] == {
-        "POUND_ARTIFACT_PATH": "/app/artifacts/england.pkl",
-        "POUND_CATALOG_PATH": "/app/artifacts/england-catalog.pkl",
+        "POUND_ARTIFACT_PATH": "/app/artifacts/great-britain.pkl",
+        "POUND_CATALOG_PATH": "/app/artifacts/great-britain-catalog.pkl",
     }
     assert fly["http_service"] == {
         "internal_port": 8000,

@@ -14,8 +14,8 @@ strategy = "rolling"
 wait_timeout = "10m"
 
 [env]
-POUND_ARTIFACT_PATH = "/app/artifacts/england.pkl"
-POUND_CATALOG_PATH = "/app/artifacts/england-catalog.pkl"
+POUND_ARTIFACT_PATH = "/app/artifacts/great-britain.pkl"
+POUND_CATALOG_PATH = "/app/artifacts/great-britain-catalog.pkl"
 
 [http_service]
 internal_port = 8000
