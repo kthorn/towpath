@@ -56,6 +56,9 @@ export interface MapView {
   focusedNetwork(lines: GeoJSONLineString[]): void;
   hireBases(bases: BoatHireBase[], selectedIdentity: string | null): void;
   onHireBaseSelect(callback: (identity: string | null) => void): () => void;
+  onHireBaseEndpointSelect?(
+    callback: (slot: EndpointSlot, base: BoatHireBase) => void,
+  ): () => void;
   fitNetwork(): void;
   places(places: PlaceResponse[]): void;
   pois(pois: RoutePoi[]): void;

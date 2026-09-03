@@ -199,12 +199,25 @@ function addInfoField(documentRef: Document, root: HTMLElement, label: string, v
   root.append(row);
 }
 
-function hireBaseInfoContent(documentRef: Document, base: BoatHireBase, close: () => void): HTMLElement {
+function hireBaseInfoContent(
+  documentRef: Document,
+  base: BoatHireBase,
+  close: () => void,
+  selectEndpoint: (slot: EndpointSlot, base: BoatHireBase) => void,
+): HTMLElement {
   const root = documentRef.createElement('article');
   root.className = 'pound-info-window';
   addCloseButton(documentRef, root, close);
   addInfoField(documentRef, root, 'Operator', base.operator);
   addInfoField(documentRef, root, 'Base', base.name);
+  for (const [slot, label] of [['origin', 'Set as origin'], ['destination', 'Set as destination']] as const) {
+    const button = documentRef.createElement('button');
+    button.type = 'button';
+    button.dataset.endpoint = slot;
+    button.textContent = label;
+    button.addEventListener('click', () => { selectEndpoint(slot, base); close(); });
+    root.append(button);
+  }
   return root;
 }
 
@@ -378,6 +391,9 @@ export function createGoogleMapView(
   const hireBaseMarkerListeners: RemovableListener[] = [];
   const hireBaseCoordinates: GoogleLatLngLiteral[] = [];
   const hireBaseSelectionSubscribers = new Set<(identity: string | null) => void>();
+  const hireBaseEndpointSelectionSubscribers = new Set<
+    (slot: EndpointSlot, base: BoatHireBase) => void
+  >();
   let hireBaseRecords: BoatHireBase[] = [];
   let hireBaseSelectedIdentity: string | null = null;
   const hireBaseContents: HTMLElement[] = [];
@@ -551,7 +567,9 @@ export function createGoogleMapView(
       hireBaseSelectedIdentity = base.identity;
       updateHireBaseSelectionStyles();
       for (const subscriber of hireBaseSelectionSubscribers) subscriber(base.identity);
-      openInfoWindow(hireBaseInfoContent(documentRef, base, closeInfoWindow), marker);
+      openInfoWindow(hireBaseInfoContent(documentRef, base, closeInfoWindow, (slot, selectedBase) => {
+        for (const subscriber of hireBaseEndpointSelectionSubscribers) subscriber(slot, selectedBase);
+      }), marker);
     });
     hireBaseMarkerListeners.push(enter, leave, click);
     markerListeners.push(enter, leave, click);
@@ -756,6 +774,10 @@ export function createGoogleMapView(
       hireBaseSelectionSubscribers.add(callback);
       return () => hireBaseSelectionSubscribers.delete(callback);
     },
+    onHireBaseEndpointSelect(callback) {
+      hireBaseEndpointSelectionSubscribers.add(callback);
+      return () => hireBaseEndpointSelectionSubscribers.delete(callback);
+    },
     onViewportIdle(callback) {
       const listener = map.addListener('idle', () => {
         const bounds = facade.getBounds(map);
@@ -784,6 +806,7 @@ export function createGoogleMapView(
       lockMarkerListeners.length = 0;
       hireBaseMarkerListeners.length = 0;
       hireBaseSelectionSubscribers.clear();
+      hireBaseEndpointSelectionSubscribers.clear();
       removeListeners(infoWindowListeners);
       closeInfoWindow();
       removeTooltips();

@@ -16,6 +16,7 @@ import type {
 	SelectedPlace,
 } from "../lib/google/contracts";
 import type { TripState, TripStore } from "../lib/stores/trip";
+import type { BoatHireBase } from "../lib/types";
 
 function storedSettings(): unknown {
 	try {
@@ -169,8 +170,13 @@ function setup(
 	const hireBaseSelect = {
 		callback: (_identity: string | null) => {},
 	};
+	const hireBaseEndpointSelect = {
+		callback: (_slot: EndpointSlot, _base: BoatHireBase) => {},
+	};
 	const removeHireBaseSelect = vi.fn();
-	const map: MapView = {
+	const map: MapView & {
+		onHireBaseEndpointSelect: (callback: typeof hireBaseEndpointSelect.callback) => () => void;
+	} = {
 		marker: vi.fn(),
 		candidates: vi.fn(),
 		land: vi.fn(),
@@ -196,6 +202,10 @@ function setup(
 			hireBaseSelect.callback = callback;
 			return removeHireBaseSelect;
 		}),
+		onHireBaseEndpointSelect: vi.fn((callback) => {
+			hireBaseEndpointSelect.callback = callback;
+			return vi.fn();
+		}),
 		onViewportIdle: vi.fn(() => vi.fn()),
 	};
 	const dependencies: AppDependencies = {
@@ -219,6 +229,7 @@ function setup(
 		map,
 		mapClick,
 		hireBaseSelect,
+		hireBaseEndpointSelect,
 		removeHireBaseSelect,
 		calls,
 	};
@@ -383,6 +394,32 @@ describe("trip planning interface", () => {
 
 		expect(store.selectHireBase).toHaveBeenNthCalledWith(1, "base-one");
 		expect(store.selectHireBase).toHaveBeenNthCalledWith(2, null);
+	});
+
+	it("selects a hire base as either endpoint", async () => {
+		const { dependencies, hireBaseEndpointSelect, calls } = setup();
+		render(App, { props: { dependencies } });
+		await vi.waitFor(() => expect(dependencies.loadMapView).toHaveBeenCalled());
+		const base: BoatHireBase = {
+			identity: "canal-holidays/base-one",
+			operator: "Canal Holidays",
+			name: "Base One",
+			coordinate: { lat: 51, lon: -1 },
+		};
+
+		hireBaseEndpointSelect.callback("origin", base);
+		hireBaseEndpointSelect.callback("destination", base);
+
+		expect(calls).toEqual([
+			{
+				slot: "origin",
+				place: { name: "Base One", address: "Canal Holidays", coordinate: base.coordinate },
+			},
+			{
+				slot: "destination",
+				place: { name: "Base One", address: "Canal Holidays", coordinate: base.coordinate },
+			},
+		]);
 	});
 
 	it("shows candidate recommendation, metrics, unavailable reasons, and confirmation", async () => {
