@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import './app.css';
+  import AttractionPanel from './component/AttractionPanel.svelte';
   import BoatConstraints from './component/BoatConstraints.svelte';
   import BoatSettings from './component/BoatSettings.svelte';
   import EndpointPanel from './component/EndpointPanel.svelte';
@@ -8,7 +9,7 @@
   import RouteLayers from './component/RouteLayers.svelte';
   import TripSummary from './component/TripSummary.svelte';
   import type { AppDependencies } from './lib/app';
-  import type { EndpointSlot } from './lib/google/contracts';
+  import type { EndpointSlot, MapView } from './lib/google/contracts';
   import { createNavigation, type AppRoute } from './lib/navigation';
   import { parseSchedule } from './lib/schedule';
   import { createBoatSettingsStore, type SettingsSaveResult } from './lib/stores/boat-settings';
@@ -19,6 +20,18 @@
   let active = $state<EndpointSlot>('origin');
   let plannerSession = $state({ days: 7 as string | number, hours: 6 as string | number });
   let searchKey = $state(0);
+  let mapView: MapView | undefined;
+  let hasAttractionPreview = false;
+  function clearAttractionPreview() {
+    if (!hasAttractionPreview) return;
+    hasAttractionPreview = false;
+    for (const slot of ['origin', 'destination'] as const) {
+      mapView?.clearLand(slot);
+      const route = $store[slot].landRoute;
+      if (route) mapView?.land(slot, route);
+    }
+  }
+  onDestroy(() => dependencies.placeDiscovery?.destroy());
   let routeError = $state('');
   let submissionGeneration = 0;
   const networkRequest = $derived.by(() => {
@@ -73,6 +86,7 @@
     submissionGeneration += 1;
     routeError = '';
     dependencies.store.reset();
+    dependencies.placeDiscovery?.cancel();
     plannerSession = { days: 7, hours: 6 };
     searchKey += 1;
   }
@@ -114,7 +128,7 @@
           address: base.operator,
           coordinate: base.coordinate,
         })}
-        onready={(view) => store.setMapView(view)}
+        onready={(view) => { mapView = view; store.setMapView(view); }}
       />
     {#if $store.networkLoading && !$store.hasNetworkOverlay}
       <p class="network-status" role="status">Loading canal network overlay…</p>
@@ -128,6 +142,11 @@
     {/if}
 	</div>
     <div class="planner-column">
+      {#if dependencies.placeDiscovery}
+        <AttractionPanel controller={dependencies.placeDiscovery}
+          onPreview={(routes) => { hasAttractionPreview = true; mapView?.land('origin', routes.outward); mapView?.land('destination', routes.return); }}
+          onClearPreview={clearAttractionPreview} />
+      {/if}
 		{#key searchKey}
 			<EndpointPanel slot="origin" endpoint={$store.origin} {store} search={dependencies.placeSearch} />
 			<EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} />

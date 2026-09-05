@@ -1090,3 +1090,50 @@ describe("trip planning interface", () => {
 		expect(screen.queryByRole("status")).not.toBeInTheDocument();
 	});
 });
+
+describe('attraction discovery integration', () => {
+  it('mounts discovery separately from endpoints and cancels it on reset', async () => {
+    const { dependencies, store } = setup();
+    const state = writable({ status: 'idle', options: [], selected: null, access: [], error: '' });
+    const discovery = {
+      subscribe: state.subscribe, search: vi.fn(), searchGoogle: vi.fn(), select: vi.fn(),
+      selectManual: vi.fn(), cancel: vi.fn(), destroy: vi.fn(), walkingRoutes: vi.fn(),
+    };
+    render(App, { props: { dependencies: { ...dependencies, placeDiscovery: discovery } } });
+    expect(screen.getByRole('heading', { name: 'Visit an attraction' })).toBeVisible();
+    expect(store.setEndpointCoordinate).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Reset trip' }));
+    expect(discovery.cancel).toHaveBeenCalledOnce();
+  });
+});
+
+it('restores endpoint walking overlays when an attraction preview is cleared', async () => {
+  const { dependencies, map } = setup();
+  const selected = { option_ref: 'osm:node:1', name: 'Museum', locality: null,
+    coordinate: { lat: 51, lon: -1 }, source: 'osm' as const };
+  const access = { candidate: { candidate_id: 'access-1', display_name: 'Wharf',
+      coordinate: { lat: 51, lon: -1 }, straight_line_distance_m: 5,
+      handle: { edge: [1, 2] as [number, number], fraction: 0.5 } },
+    outward: { available: true as const, durationSeconds: 60, distanceMeters: 50 },
+    return: { available: true as const, durationSeconds: 90, distanceMeters: 60 }, complete: true };
+  const state = writable<import('../lib/places/controller').PlaceState>({
+    status: 'ready', options: [], selected, access: [access], error: '' });
+  const discovery = {
+    subscribe: state.subscribe, search: vi.fn(), searchGoogle: vi.fn(), select: vi.fn(),
+    selectManual: vi.fn(), destroy: vi.fn(),
+    cancel: vi.fn(async () => state.set({ status: 'cancelled', options: [], selected: null, access: [], error: '' })),
+    walkingRoutes: vi.fn(async () => ({
+      outward: { path: [{ lat: 51, lon: -1 }, { lat: 52, lon: -1 }], durationSeconds: 60, distanceMeters: 50 },
+      return: { path: [{ lat: 52, lon: -1 }, { lat: 51, lon: -1 }], durationSeconds: 90, distanceMeters: 60 },
+    })),
+  };
+  render(App, { props: { dependencies: { ...dependencies, placeDiscovery: discovery } } });
+  await waitFor(() => expect(map.onMapClick).toHaveBeenCalled());
+  await fireEvent.click(screen.getByLabelText('I understand canal access and mooring are unconfirmed'));
+  await fireEvent.click(screen.getByRole('button', { name: 'Preview walk' }));
+  await waitFor(() => expect(map.land).toHaveBeenCalledWith('origin', expect.objectContaining({ durationSeconds: 60 })));
+  vi.mocked(map.land).mockClear();
+  await fireEvent.click(screen.getByRole('button', { name: 'Clear attraction' }));
+  await waitFor(() => expect(map.land).toHaveBeenCalledWith('origin', endpoint('Bletchley Park', 1).landRoute));
+  expect(map.land).toHaveBeenCalledWith('destination', endpoint('Canal Base', 2).landRoute);
+});

@@ -18,6 +18,7 @@ from pound.artifact import (  # pyright: ignore[reportMissingImports]
     load_artifact,
 )
 from pound.catalog.artifact import load_catalog  # pyright: ignore[reportMissingImports]
+from pound.catalog.resolve import PlaceNameIndex
 from pound.catalog.spatial import CatalogSpatialIndex  # pyright: ignore[reportMissingImports]
 from pound.graph.spatial import (  # pyright: ignore[reportMissingImports]
     GraphSpatialIndex,
@@ -30,6 +31,8 @@ from pound_web.api import clear_network_geometry_caches
 from pound_web.api import router as api_router
 from pound_web.boat_hire import load_boat_hire_seeds, snap_boat_hire_bases
 from pound_web.config import WebSettings
+from pound_web.place_api import router as place_router
+from pound_web.place_sessions import PlaceSessionError, PlaceSessions
 from pound_web.places import MAX_PLACES_RESULTS, PlacesIndex
 
 
@@ -69,6 +72,8 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         app.state.boat_hire_anchors = snap_boat_hire_bases(app.state.spatial_index, seeds)
         app.state.network_unavailable = not app.state.boat_hire_anchors
 
+        app.state.place_sessions = PlaceSessions()
+        app.state.place_name_index = None
         app.state.catalog = None
         app.state.catalog_spatial_index = None
         app.state.catalog_error = None
@@ -78,6 +83,9 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
             try:
                 catalog = load_catalog(runtime_settings.catalog_path)
                 app.state.catalog = catalog
+                app.state.place_name_index = PlaceNameIndex(
+                    catalog.places, catalog.metadata["catalog_revision"]
+                )
                 app.state.catalog_spatial_index = CatalogSpatialIndex(
                     catalog.places, app.state.spatial_index
                 )
@@ -100,6 +108,24 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
 
     application = FastAPI(lifespan=lifespan)
     application.include_router(api_router)
+    application.include_router(place_router)
+
+    @application.exception_handler(PlaceSessionError)
+    async def place_session_error(request: Request, exc: PlaceSessionError):
+        return JSONResponse(
+            status_code=exc.status,
+            content={
+                "detail": {"code": exc.code, "message": exc.code.replace("_", " "), "fields": []}
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.middleware("http")
+    async def private_place_responses(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/place-sessions"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     @application.exception_handler(RequestValidationError)
     async def places_request_validation_error(
