@@ -551,3 +551,24 @@ separate place catalog are derived artifacts and inherit ODbL share-alike and
 attribution requirements. Google Maps attribution does not replace OSM
 attribution. Google Places content is not stored or displayed in the catalog;
 see the URL-only policy under **Google Maps safety and operations**.
+
+## Optional Pi agent runtime
+
+Issue #79 provides a separately installed TypeScript adapter in
+[`packages/towpath-agent`](packages/towpath-agent/README.md). It reuses Book Explorer's
+restricted Pi session pattern and includes an offline Bletchley trip fixture. It is not yet
+an HTTP service or a live trip-planning assistant; #20 owns that integration.
+
+With Node 24.15 or newer:
+
+```bash
+cd packages/towpath-agent
+npm ci
+npm test
+npm run demo
+```
+
+The existing Python website does not load or start this package. Model calls belong in a future
+optional application agent service; Pound core and deterministic routing/catalog handlers remain
+network-free. See the [runtime design](docs/completed/2026-09-05-pi-agent-runtime-design.md)
+for the session, credential, and deployment boundaries.
