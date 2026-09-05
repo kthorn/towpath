@@ -110,6 +110,7 @@ def test_extract_dimensions_first_alias_wins():
         ({"waterway": "lock_gate"}, NodeKind.LOCK_GATE),
         ({"lock": "yes"}, NodeKind.LOCK),
         ({"waterway": "lock"}, NodeKind.LOCK),
+        ({"waterway": "turning_point"}, NodeKind.TURNING_POINT),
         ({"bridge:movable": "swing"}, NodeKind.MOVABLE_BRIDGE),
         ({"bridge": "movable"}, NodeKind.MOVABLE_BRIDGE),
         ({"mooring": "yes"}, NodeKind.MOORING),

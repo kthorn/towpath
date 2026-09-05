@@ -32,6 +32,7 @@ class NodeKind(StrEnum):
     MOORING = "mooring"
     MARINA = "marina"  # forward-compat; amenities/marinas are design step 5, not this plan
     PLACE = "place"
+    TURNING_POINT = "turning_point"
     OTHER = "other"
 
 

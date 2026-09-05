@@ -14,6 +14,9 @@ from pound.web.places import (
 )
 
 MAX_NETWORK_TRAVEL_MINUTES = 10_080
+MAX_ROUND_TRIP_WORK = 100_000
+MAX_ROUND_TRIP_ROUTES = 1_000
+MAX_ROUND_TRIP_VERTICES = 200_000
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,9 @@ class WebSettings:
     catalog_max_route_vertices: int = MAX_CATALOG_ROUTE_COORDINATES
     catalog_query_work_budget: int = MAX_PLACES_QUERY_WORK
     places_max_targets: int = MAX_PLACES_TARGETS
+    round_trip_max_work: int = MAX_ROUND_TRIP_WORK
+    round_trip_max_routes: int = MAX_ROUND_TRIP_ROUTES
+    round_trip_max_vertices: int = MAX_ROUND_TRIP_VERTICES
 
     def __post_init__(self) -> None:
         if self.candidate_pool_size <= 0:
@@ -66,6 +72,18 @@ class WebSettings:
             )
         if not 0 < self.places_max_targets <= MAX_PLACES_TARGETS:
             raise ValueError(f"places_max_targets must be from 1 through {MAX_PLACES_TARGETS}")
+        if not 0 < self.round_trip_max_work <= MAX_ROUND_TRIP_WORK:
+            raise ValueError(
+                f"round_trip_max_work must be from 1 through {MAX_ROUND_TRIP_WORK}"
+            )
+        if not 0 < self.round_trip_max_routes <= MAX_ROUND_TRIP_ROUTES:
+            raise ValueError(
+                f"round_trip_max_routes must be from 1 through {MAX_ROUND_TRIP_ROUTES}"
+            )
+        if not 0 < self.round_trip_max_vertices <= MAX_ROUND_TRIP_VERTICES:
+            raise ValueError(
+                f"round_trip_max_vertices must be from 1 through {MAX_ROUND_TRIP_VERTICES}"
+            )
 
     @classmethod
     def from_env(cls) -> "WebSettings":
@@ -102,4 +120,13 @@ class WebSettings:
                 os.environ.get("POUND_CATALOG_QUERY_WORK_BUDGET", "100000")
             ),
             places_max_targets=int(os.environ.get("POUND_PLACES_MAX_TARGETS", "64")),
+            round_trip_max_work=int(
+                os.environ.get("POUND_ROUND_TRIP_MAX_WORK", str(MAX_ROUND_TRIP_WORK))
+            ),
+            round_trip_max_routes=int(
+                os.environ.get("POUND_ROUND_TRIP_MAX_ROUTES", str(MAX_ROUND_TRIP_ROUTES))
+            ),
+            round_trip_max_vertices=int(
+                os.environ.get("POUND_ROUND_TRIP_MAX_VERTICES", str(MAX_ROUND_TRIP_VERTICES))
+            ),
         )

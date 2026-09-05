@@ -94,6 +94,28 @@ const route = {
 	},
 };
 
+const outAndBackRoute = (routeId: string, displayName: string) => ({
+	journey_type: "out_and_back" as const,
+	artifact_revision: "r1",
+	request_id: "request-1",
+	route_id: routeId,
+	branch_choices: [{ junction_uid: 10, next_uid: 11 }],
+	turnaround: {
+		turnaround_id: `turn-${routeId}`,
+		kind: "junction" as const,
+		node_uid: 11,
+		coordinate: { lat: 51, lon: -1 },
+		display_name: displayName,
+		eligibility_basis: "junction_assumption" as const,
+		sources: [],
+		turning_limits: {},
+	},
+	outbound_distance_km: 10,
+	selection_basis: "furthest_reachable" as const,
+	budget: { available_minutes: 720, used_minutes: 420, remaining_minutes: 300, days_used: 1 },
+	journey: route,
+});
+
 function setup(
 	overrides: {
 		unavailable?: boolean;
@@ -101,6 +123,7 @@ function setup(
 		sameNode?: boolean;
 		networkError?: string;
 		hasNetworkOverlay?: boolean;
+		journeyMode?: "point_to_point" | "out_and_back";
 	} = {},
 ) {
 	const state: TripState = {
@@ -131,6 +154,12 @@ function setup(
 		places: { enabledKinds: [], places: [], loading: false, error: null },
 		placesStatus: "unknown",
 		placesResultLimitExceeded: false,
+		journeyMode: overrides.journeyMode ?? "point_to_point",
+		outAndBackRoutes: [],
+		outAndBackRejections: [],
+		outAndBackRequestId: null,
+		defaultOutAndBackRouteId: null,
+		selectedOutAndBackRouteId: null,
 	};
 	const inner = writable(state);
 	const calls: Array<{
@@ -142,9 +171,12 @@ function setup(
 		setEndpointCoordinate: vi.fn(async (slot, place) => {
 			calls.push({ slot, place });
 		}),
+		clearEndpoint: vi.fn(),
 		selectCandidate: vi.fn(async () => {}),
 		confirmGeometricFallback: vi.fn(),
 		planCanalRoute: vi.fn(async () => route),
+		setJourneyMode: vi.fn(),
+		selectBranchRoute: vi.fn(),
 		togglePoiKind: vi.fn(),
 		selectDay: vi.fn(),
 		refreshRoutePois: vi.fn(async () => {}),
@@ -222,6 +254,35 @@ describe("trip planning interface", () => {
 			),
 		);
 		expect(screen.queryByText("Settings saved.")).not.toBeInTheDocument();
+	});
+
+	it("offers point-to-point and out-and-back modes", async () => {
+		const { dependencies, store } = setup();
+		render(App, { props: { dependencies } });
+		await fireEvent.click(screen.getByRole("radio", { name: /out-and-back/i }));
+		expect(store.setJourneyMode).toHaveBeenCalledWith("out_and_back");
+	});
+
+	it("labels the optional out-and-back waypoint and renders distinct alternatives", async () => {
+		const first = outAndBackRoute("route-1", "Canal junction");
+		const second = outAndBackRoute("route-2", "Canal junction");
+		const fixture = setup({ journeyMode: "out_and_back" });
+		const inner = writable({
+			...get(fixture.store),
+			canalRoute: first.journey,
+			outAndBackRoutes: [first, second],
+			defaultOutAndBackRouteId: first.route_id,
+			selectedOutAndBackRouteId: first.route_id,
+		});
+		const store = { ...fixture.store, subscribe: inner.subscribe };
+		render(App, { props: { dependencies: { ...fixture.dependencies, store } } });
+
+		expect(screen.getByLabelText(/search visit on the way/i)).toBeVisible();
+		await fireEvent.click(screen.getByRole("button", { name: "Clear visit on the way" }));
+		expect(store.clearEndpoint).toHaveBeenCalledWith("destination");
+		expect(screen.getAllByRole("button", { name: /canal junction/i })).toHaveLength(2);
+		fireEvent.click(screen.getAllByRole("button", { name: /canal junction/i })[1]);
+		expect(store.selectBranchRoute).toHaveBeenCalledWith("route-2");
 	});
 
 	it("preserves schedule inputs while visiting settings and marks the active page", async () => {
@@ -465,7 +526,7 @@ describe("trip planning interface", () => {
 			target: { value: "" },
 		});
 		await Promise.resolve();
-		expect(store.setNetworkRequest).not.toHaveBeenCalled();
+		expect(store.setNetworkRequest).toHaveBeenCalledWith(null);
 		await fireEvent.input(screen.getByLabelText(/^days/i), {
 			target: { value: "4" },
 		});

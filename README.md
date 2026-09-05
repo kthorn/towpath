@@ -68,6 +68,41 @@ Confirm that the backend loaded the artifact and reports its routing status:
 curl http://127.0.0.1:8000/api/health
 ```
 
+### Out-and-back journeys
+
+Choose **Out and back** in the planner, set the origin and day budget, and optionally
+choose a place to visit on the way. Pound returns one complete journey per feasible
+combination of branch choices, turning at the furthest winding hole or canal junction
+along that combination and retracing the path to the origin. The furthest route is
+shown by default; the alternatives list preserves different paths to the same turning point.
+Canal junctions are assumed to permit turning, subject to known restrictions.
+
+Rebuild the routing artifact with this version to include the turnaround index. Builds
+retain OSM `waterway=turning_point` nodes and derive junctions offline. Old artifacts still
+support point-to-point routing but return `turnarounds_unavailable` for out-and-back requests.
+Build diagnostics are retained in `graph.graph["turnaround_report"]`.
+
+The API accepts artifact-bound node handles returned by canal endpoint discovery:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/turnaround-candidates \
+  -H 'content-type: application/json' \
+  -d '{"artifact_revision":"YOUR_REVISION","start_uid":123,"days":3,"hours_per_day":6}'
+```
+
+The response includes `default_route_id` and complete `routes`, each with branch choices,
+turnaround metadata, budget usage, and `journey` geometry/day plans. To replay one exact
+alternative, send the same constraints plus its `route_id` and the collection's `request_id`
+to `POST /api/out-and-back-route`. Omitting both selection fields returns the default.
+A supplied `waypoint_uid` must be visited before turning. All costs include the return trip;
+`is_ring` is false because these journeys retrace the outbound path.
+
+Complete branch enumeration is bounded. `POUND_ROUND_TRIP_MAX_WORK` (default 100000),
+`POUND_ROUND_TRIP_MAX_ROUTES` (1000), and `POUND_ROUND_TRIP_MAX_VERTICES` (200000) can be
+lowered to restrict requests. Limit exhaustion returns `candidate_search_limit`, never a
+truncated list presented as complete. See the
+[design specification](docs/completed/2026-09-05-turnaround-out-and-back-design.md).
+
 ### Places API
 
 The unified places endpoint is `POST /api/places`. It is available only when

@@ -59,7 +59,10 @@ def plan_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> RouteRes
 
 def plan_canal_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> CanalRouteResponse:
     """Plan a route and retain its traversed geometry for web clients."""
-    computed = _compute_route(constraints, graph=graph)
+    return _route_response(_compute_route(constraints, graph=graph), graph)
+
+
+def _route_response(computed: _ComputedRoute, graph: nx.Graph) -> CanalRouteResponse:
     day_geometries = []
     for day, (start, end) in enumerate(computed.day_ranges, start=1):
         points = _path_geometry(computed.path[start : end + 1], graph)
@@ -145,10 +148,8 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
 
     start_name = _name_attr(start)
 
-    unknown_edges: list[str] = []
-
     def weight(u, v, d):
-        eligible, unknown = is_eligible(
+        eligible, _ = is_eligible(
             constraints.boat_length_m,
             constraints.boat_beam_m,
             constraints.boat_draft_m,
@@ -157,8 +158,6 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
         )
         if not eligible:
             return None
-        if unknown:
-            unknown_edges.append(str(d["osm_way_id"]))
         return _traversal_time_min(graph, u, v, d, bridge_delay_min)
 
     try:
@@ -174,6 +173,36 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
             f"(graph is not connected between these nodes)"
         ) from None
 
+    return _render_path(path, constraints, graph=graph)
+
+
+def _render_path(
+    path: list[int],
+    constraints: ResolvedConstraints,
+    *,
+    graph: nx.Graph,
+    day_ranges: list[tuple[int, int]] | None = None,
+) -> _ComputedRoute:
+    """Render a traversed path once, retaining repeated edges and infrastructure."""
+    bridge_delay_min = resolve_movable_bridge_delay(constraints.movable_bridge_delay_min)
+
+    def _name_attr(uid):
+        node = graph.nodes[uid]
+        return node.get("name") or f"{node['lat']},{node['lon']}"
+
+    start_name = _name_attr(path[0])
+    end = path[-1]
+    unknown_edges = {
+        str(graph.edges[u, v]["osm_way_id"])
+        for u, v in zip(path, path[1:], strict=False)
+        if is_eligible(
+            constraints.boat_length_m,
+            constraints.boat_beam_m,
+            constraints.boat_draft_m,
+            constraints.boat_height_m,
+            graph.edges[u, v]["dimensions"],
+        )[1]
+    }
     access_segments = _access_segments(path, graph)
 
     legs: list[RouteLeg] = []
@@ -202,8 +231,17 @@ def _compute_route(constraints: ResolvedConstraints, *, graph: nx.Graph) -> _Com
     warnings.extend(_access_warnings(access_segments))
     warnings.extend(_tunnel_warnings(path, graph, access_segments))
 
-    day_ranges = _day_path_ranges(legs, constraints.hours_per_day, constraints.days)
-    days = _chunk_days(legs, constraints.hours_per_day, constraints.days)
+    if day_ranges is None:
+        day_ranges = _day_path_ranges(legs, constraints.hours_per_day, constraints.days)
+    days = [
+        DayPlan(
+            day=index,
+            legs=legs[start:stop],
+            end_near=legs[stop - 1].to_place,
+            cruising_minutes=sum(leg.est_minutes for leg in legs[start:stop]),
+        )
+        for index, (start, stop) in enumerate(day_ranges, start=1)
+    ]
     budget = constraints.hours_per_day * 60
     if any(day.cruising_minutes > budget for day in days):
         warnings.append("one or more days exceed hours_per_day budget")

@@ -37,6 +37,10 @@ def test_build_query_requests_both_movable_bridge_tag_forms():
     assert 'way["bridge"="movable"]' in query
 
 
+def test_build_query_requests_mapped_turning_points():
+    assert 'node["waterway"="turning_point"]' in build_query(OXFORD_BBOX)
+
+
 def test_build_query_uses_explicit_poi_and_pedestrian_clauses():
     q = build_query(OXFORD_BBOX)
     for clause in (
@@ -119,6 +123,24 @@ def test_parse_keeps_lock_gate_and_lock_nodes():
 def test_parse_keeps_mooring_node():
     feats = parse(load_fixture()["elements"], OXFORD_BBOX)
     assert any(n.kind == NodeKind.MOORING for n in feats.nodes)
+
+
+def test_parse_keeps_mapped_turning_point_node_and_source_tags():
+    features = parse(
+        [
+            {
+                "type": "node",
+                "id": 9090,
+                "lat": 51.75,
+                "lon": -1.26,
+                "tags": {"waterway": "turning_point", "name": "Basin", "maxlength": "18"},
+            }
+        ],
+        OXFORD_BBOX,
+    )
+    node = features.nodes[0]
+    assert node.kind == NodeKind.TURNING_POINT
+    assert node.tags["maxlength"] == "18"
 
 
 def test_parse_excludes_amenity_pub_node():

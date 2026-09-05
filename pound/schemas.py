@@ -471,3 +471,98 @@ class CanalRouteResponse(BaseModel):
     geometry: GeoJSONLineString
     day_geometries: list[RouteDayGeometry] = Field(default_factory=list)
     locks: list[RouteLock] = Field(default_factory=list)
+
+
+class Turnaround(BaseModel):
+    """A source-backed winding hole or a junction assumed to permit turning."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    turnaround_id: str = Field(min_length=1)
+    kind: Literal["winding_hole", "junction"]
+    node_uid: int = Field(ge=0)
+    coordinate: Coordinate
+    display_name: str
+    eligibility_basis: Literal["mapped_winding_hole", "junction_assumption"]
+    sources: list[dict] = Field(default_factory=list)
+    turning_limits: dict[str, FiniteFloat | bool] = Field(default_factory=dict)
+
+
+class TurnaroundCandidatesRequest(BaseModel):
+    """Finite constraints shared by manual and conversational out-and-back clients."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    artifact_revision: str = Field(min_length=1)
+    start_uid: int = Field(ge=0)
+    waypoint_uid: int | None = Field(ge=0, default=None)
+    days: int = Field(gt=0)
+    hours_per_day: FiniteFloat = Field(gt=0, default=6.0)
+    movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
+    boat_length_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_beam_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_draft_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_height_m: FiniteFloat | None = Field(gt=0, default=None)
+
+    @model_validator(mode="after")
+    def finite_total_budget(self):
+        try:
+            finite = math.isfinite(self.days * self.hours_per_day * 60)
+        except OverflowError:
+            finite = False
+        if not finite:
+            raise ValueError("total day/time budget must be finite")
+        return self
+
+
+class OutAndBackRouteRequest(TurnaroundCandidatesRequest):
+    route_id: str | None = Field(min_length=1, default=None)
+    request_id: str | None = Field(min_length=1, default=None)
+
+    @model_validator(mode="after")
+    def require_selection_pair(self):
+        if (self.route_id is None) != (self.request_id is None):
+            raise ValueError("route_id and request_id must be supplied together")
+        return self
+
+
+class BranchChoice(BaseModel):
+    junction_uid: int
+    next_uid: int
+    junction_name: str
+    continuation_name: str
+
+
+class JourneyBudget(BaseModel):
+    available_minutes: float
+    used_minutes: float
+    remaining_minutes: float
+    days_used: int
+
+
+class TurnaroundRejection(BaseModel):
+    turnaround_id: str | None = None
+    code: str
+    message: str
+    fields: list[str] = Field(default_factory=list)
+
+
+class OutAndBackRoute(BaseModel):
+    journey_type: Literal["out_and_back"] = "out_and_back"
+    artifact_revision: str
+    request_id: str
+    route_id: str
+    branch_choices: list[BranchChoice]
+    turnaround: Turnaround
+    outbound_distance_km: float
+    selection_basis: Literal["furthest_reachable", "user_selected"] = "furthest_reachable"
+    budget: JourneyBudget
+    journey: CanalRouteResponse
+
+
+class TurnaroundCandidatesResponse(BaseModel):
+    artifact_revision: str
+    request_id: str
+    default_route_id: str
+    routes: list[OutAndBackRoute]
+    rejections: list[TurnaroundRejection] = Field(default_factory=list)

@@ -19,6 +19,7 @@ import type {
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
+  JourneyMode,
   PlaceResponse,
   PlacesRequest,
   PlacesResponse,
@@ -29,12 +30,17 @@ import type {
   MapBounds,
   RoutePoisRequest,
   RoutePoisResponse,
+  TurnaroundCandidatesRequest,
+  TurnaroundCandidatesResponse,
+  OutAndBackRoute,
+  TurnaroundRejection,
 } from '../types';
 
 interface PoundApi {
   canalCandidates(request: CanalCandidatesRequest): Promise<CanalCandidatesResponse>;
   canalNetwork(request: CanalNetworkRequest): Promise<CanalNetworkResponse>;
   canalRoute(request: CanalRouteRequest): Promise<CanalRouteResponse>;
+  turnaroundCandidates?: (request: TurnaroundCandidatesRequest) => Promise<TurnaroundCandidatesResponse>;
   routePois(request: RoutePoisRequest): Promise<RoutePoisResponse>;
   health?: () => Promise<HealthResponse>;
   places?: (request: PlacesRequest) => Promise<PlacesResponse>;
@@ -75,6 +81,12 @@ export interface TripState {
   places: PlacesLayerState;
   placesStatus: HealthResponse['places_status'] | 'unknown';
   placesResultLimitExceeded: boolean;
+  journeyMode?: JourneyMode;
+  outAndBackRoutes?: OutAndBackRoute[];
+  outAndBackRejections?: TurnaroundRejection[];
+  outAndBackRequestId?: string | null;
+  defaultOutAndBackRouteId?: string | null;
+  selectedOutAndBackRouteId?: string | null;
 }
 
 export type CanalConstraints = Omit<CanalRouteRequest, 'start_uid' | 'end_uid' | 'artifact_revision'>;
@@ -87,9 +99,12 @@ type SuccessfulNetwork = {
 
 export interface TripStore extends Readable<TripState> {
   setEndpointCoordinate(slot: EndpointSlot, place: SelectedPlace | LatLon): Promise<void>;
+  clearEndpoint(slot: EndpointSlot): void;
   selectCandidate(slot: EndpointSlot, uid: number): Promise<void>;
   confirmGeometricFallback(slot: EndpointSlot): void;
   planCanalRoute(constraints: CanalConstraints): Promise<CanalRouteResponse>;
+  setJourneyMode: (mode: JourneyMode) => void;
+  selectBranchRoute: (routeId: string) => void;
   togglePoiKind(kind: string): void;
   selectDay(day: number | null): void;
   refreshRoutePois(bounds: MapBounds): Promise<void>;
@@ -97,7 +112,7 @@ export interface TripStore extends Readable<TripState> {
   togglePlaceKinds(kinds: string[], policy: PlacesQueryPolicy): void;
   refreshPlaces(bounds: MapBounds): Promise<void>;
   reset(): void;
-  setNetworkRequest(request: CanalNetworkRequest): void;
+  setNetworkRequest(request: CanalNetworkRequest | null): void;
   setMapView(mapView: MapView | undefined): void;
 }
 
@@ -130,6 +145,8 @@ export function createTripStore(dependencies: {
     selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null, networkError: null, hasNetworkOverlay: false,
     places: { enabledKinds: [], places: [], loading: false, error: null },
     placesStatus: 'unknown', placesResultLimitExceeded: false,
+    journeyMode: 'point_to_point', outAndBackRoutes: [], outAndBackRejections: [],
+    outAndBackRequestId: null, defaultOutAndBackRouteId: null, selectedOutAndBackRouteId: null,
   };
   const inner = writable(initial);
   let state = initial;
@@ -140,6 +157,7 @@ export function createTripStore(dependencies: {
   let poiRequest = 0;
   let placesRequest = 0;
   let desiredNetworkRequest: CanalNetworkRequest | undefined;
+  let networkRequestKey: string | undefined;
   let desiredNetworkGeneration = 0;
   let mapAttachmentGeneration = mapView ? 1 : 0;
   let networkPaintedAttachmentGeneration: number | undefined;
@@ -249,9 +267,20 @@ export function createTripStore(dependencies: {
       loadNetwork();
     }, 100);
   };
-  const setNetworkRequest = (request: CanalNetworkRequest) => {
+  const setNetworkRequest = (request: CanalNetworkRequest | null) => {
+    const nextKey = request === null ? 'invalid' : JSON.stringify([
+      request.days, request.hours_per_day, request.boat_length_m, request.boat_beam_m,
+      request.boat_draft_m, request.boat_height_m, request.movable_bridge_delay_min,
+    ]);
+    if (nextKey === networkRequestKey) return;
+    networkRequestKey = nextKey;
+    if (request === null) {
+      invalidateCanalRoute('origin');
+      return;
+    }
     desiredNetworkRequest = request;
     desiredNetworkGeneration += 1;
+    invalidateCanalRoute('origin');
     scheduleNetworkRefresh();
   };
   const clearPlaces = () => {
@@ -280,7 +309,11 @@ export function createTripStore(dependencies: {
   };
   const invalidateCanalRoute = (slot: EndpointSlot) => {
     routeGeneration += 1;
-    inner.update((current) => ({ ...current, canalRoute: null, routeError: null, routing: false }));
+    inner.update((current) => ({
+      ...current, canalRoute: null, routeError: null, routing: false,
+      outAndBackRoutes: [], outAndBackRejections: [], outAndBackRequestId: null,
+      defaultOutAndBackRouteId: null, selectedOutAndBackRouteId: null,
+    }));
     clearRouteOverlays();
     mapCall(slot, () => mapView?.canal(null));
   };
@@ -354,6 +387,15 @@ export function createTripStore(dependencies: {
     if (selectedUid !== null) await loadLandRoute(slot, generation);
   }
 
+  function clearEndpoint(slot: EndpointSlot): void {
+    generations[slot] += 1;
+    invalidateCanalRoute(slot);
+    clearLand(slot);
+    updateEndpoint(slot, emptyEndpoint());
+    mapCall(slot, () => mapView?.marker(slot, null));
+    mapCall(slot, () => mapView?.candidates(slot, []));
+  }
+
   async function selectCandidate(slot: EndpointSlot, uid: number): Promise<void> {
     if (!state[slot].candidates.some(({ candidate }) => candidate.uid === uid)) {
       throw new Error(`Unknown ${slot} candidate UID ${uid}`);
@@ -376,7 +418,89 @@ export function createTripStore(dependencies: {
     if (state[slot].requiresManualConfirmation) updateEndpoint(slot, { confirmed: true });
   }
 
+  async function planOutAndBack(constraints: CanalConstraints): Promise<CanalRouteResponse> {
+    const { origin, destination } = state;
+    if (origin.selectedUid === null) throw new Error('Select an origin canal endpoint before routing');
+    if (origin.requiresManualConfirmation && !origin.confirmed) {
+      throw new Error('Confirm geometric fallback candidates before canal routing');
+    }
+    if (destination.place && destination.selectedUid === null) {
+      throw new Error('Select a canal waypoint or clear the optional visit-on-the-way field');
+    }
+    if (destination.selectedUid !== null &&
+        (destination.requiresManualConfirmation && !destination.confirmed)) {
+      throw new Error('Confirm geometric fallback candidates before canal routing');
+    }
+    if (!origin.artifactRevision ||
+        (destination.selectedUid !== null && origin.artifactRevision !== destination.artifactRevision)) {
+      throw new Error('Endpoint artifact revisions do not match');
+    }
+    if (!poundApi.turnaroundCandidates) throw new Error('Out-and-back routing is unavailable');
+    if (typeof constraints.days !== 'number' || !Number.isInteger(constraints.days) || constraints.days < 1) {
+      throw new Error('Days must be a whole number from 1 through 365.');
+    }
+    const hoursPerDay = constraints.hours_per_day ?? 6;
+    if (typeof hoursPerDay !== 'number' || !Number.isFinite(hoursPerDay) || hoursPerDay <= 0) {
+      throw new Error('Hours per day must be greater than 0.');
+    }
+    const request: TurnaroundCandidatesRequest = {
+      artifact_revision: origin.artifactRevision,
+      start_uid: origin.selectedUid,
+      waypoint_uid: destination.selectedUid,
+      ...constraints,
+      days: constraints.days,
+      hours_per_day: hoursPerDay,
+    };
+    const endpointGeneration = routeGeneration;
+    const requestSequence = ++routeRequest;
+    const hadCanalRoute = state.canalRoute !== null;
+    clearRouteOverlays();
+    inner.update((current) => ({
+      ...current, canalRoute: null, routing: true, routeError: null,
+      outAndBackRoutes: [], outAndBackRejections: [], outAndBackRequestId: null,
+      defaultOutAndBackRouteId: null, selectedOutAndBackRouteId: null,
+    }));
+    if (hadCanalRoute) mapCall('origin', () => mapView?.canal(null));
+    try {
+      const result = await poundApi.turnaroundCandidates(request);
+      if (endpointGeneration === routeGeneration && requestSequence === routeRequest) {
+        const selected = result.routes.find(({ route_id }) => route_id === result.default_route_id) ?? result.routes[0];
+        const defaultRouteId = result.default_route_id ?? selected?.route_id ?? null;
+        inner.update((current) => ({
+          ...current,
+          routing: false,
+          canalRoute: selected?.journey ?? null,
+          outAndBackRoutes: result.routes,
+          outAndBackRejections: result.rejections,
+          outAndBackRequestId: result.request_id,
+          defaultOutAndBackRouteId: defaultRouteId,
+          selectedOutAndBackRouteId: selected?.route_id ?? null,
+          routeError: selected || result.rejections.length === 0 ? null : result.rejections[0].message,
+        }));
+        if (selected) {
+          mapCall('origin', () => mapView?.canal(selected.journey.geometry));
+          mapCall('origin', () => mapView?.locks?.(selected.journey.locks ?? []));
+          if (state.enabledPoiKinds.length && lastViewportBounds) schedulePoiRefresh(lastViewportBounds);
+          if (state.places.enabledKinds.length && lastViewportBounds) schedulePlacesRefresh(lastViewportBounds);
+        }
+      }
+      const selected = result.routes.find(({ route_id }) => route_id === result.default_route_id) ?? result.routes[0];
+      if (!selected) throw new Error(result.rejections[0]?.message ?? 'No feasible out-and-back route found');
+      return selected.journey;
+    } catch (error) {
+      if (endpointGeneration === routeGeneration && requestSequence === routeRequest) {
+        const rejections = error instanceof PoundApiError ? error.rejections : [];
+        const detail = rejections.length
+          ? `${message(error)} ${rejections.map(({ message: rejectionMessage, fields }) => `${rejectionMessage}${fields.length ? ` (${fields.join(', ')})` : ''}`).join(' ')}`
+          : message(error);
+        inner.update((current) => ({ ...current, routing: false, routeError: detail, outAndBackRejections: rejections }));
+      }
+      throw error;
+    }
+  }
+
   async function planCanalRoute(constraints: CanalConstraints): Promise<CanalRouteResponse> {
+    if (state.journeyMode === 'out_and_back') return planOutAndBack(constraints);
     const { origin, destination } = state;
     if (origin.selectedUid === null || destination.selectedUid === null) {
       throw new Error('Select both canal endpoints before routing');
@@ -415,6 +539,23 @@ export function createTripStore(dependencies: {
       }
       throw error;
     }
+  }
+
+  function setJourneyMode(mode: JourneyMode): void {
+    if (state.journeyMode === mode) return;
+    invalidateCanalRoute('origin');
+    inner.update((current) => ({ ...current, journeyMode: mode }));
+  }
+
+  function selectBranchRoute(routeId: string): void {
+    const selected = (state.outAndBackRoutes ?? []).find(({ route_id }) => route_id === routeId);
+    if (!selected) throw new Error(`Unknown out-and-back route ${routeId}`);
+    clearRouteOverlays();
+    inner.update((current) => ({ ...current, canalRoute: selected.journey, selectedOutAndBackRouteId: routeId, routeError: null }));
+    mapCall('origin', () => mapView?.canal(selected.journey.geometry));
+    mapCall('origin', () => mapView?.locks?.(selected.journey.locks ?? []));
+    if (state.enabledPoiKinds.length && lastViewportBounds) schedulePoiRefresh(lastViewportBounds);
+    if (state.places.enabledKinds.length && lastViewportBounds) schedulePlacesRefresh(lastViewportBounds);
   }
 
   function selectedDayGeometry(day: number | null) {
@@ -628,9 +769,9 @@ export function createTripStore(dependencies: {
   if (poundApi.health) void placesHealth().catch(() => {});
 
   return {
-    subscribe: inner.subscribe, setEndpointCoordinate, selectCandidate, confirmGeometricFallback,
+    subscribe: inner.subscribe, setEndpointCoordinate, clearEndpoint, selectCandidate, confirmGeometricFallback,
     planCanalRoute, togglePoiKind, togglePlaceKind, togglePlaceKinds, selectDay, refreshRoutePois, refreshPlaces,
-    reset, setNetworkRequest,
+    reset, setNetworkRequest, setJourneyMode, selectBranchRoute,
     setMapView(value) {
       cancelScheduledPoiRefresh();
       viewportUnsubscribe?.();

@@ -39,6 +39,7 @@ w/disused:waterway
 w/abandoned:waterway
 w/lock=yes
 n/waterway=lock_gate,mooring
+n/waterway=turning_point
 n/lock=yes
 n/bridge:movable
 n/bridge=movable

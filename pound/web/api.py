@@ -12,17 +12,26 @@ from pound.ingest.pois import RETAINED_POI_KINDS
 from pound.route.candidates import nearest_coord_candidates, select_spaced_candidates
 from pound.route.cost import resolve_movable_bridge_delay
 from pound.route.plan import RouteUnavailableError, plan_canal_route
+from pound.route.round_trip import (
+    RoundTripError,
+    discover_round_trips,
+    plan_out_and_back,
+)
 from pound.schemas import (
     BoatHireBase,
     CanalCandidatesResponse,
     CanalNetworkResponse,
     CanalRouteResponse,
     Coordinate,
+    OutAndBackRoute,
+    OutAndBackRouteRequest,
     PlacesRequest,
     PlacesResponse,
     ResolvedConstraints,
     RoutePoisRequest,
     RoutePoisResponse,
+    TurnaroundCandidatesRequest,
+    TurnaroundCandidatesResponse,
 )
 from pound.web.boat_hire import select_boat_hire_reachability
 from pound.web.config import MAX_NETWORK_TRAVEL_MINUTES
@@ -78,11 +87,43 @@ class APIError(BaseModel):
     code: str
     message: str
     fields: list[str] = Field(default_factory=list)
+    rejections: list[object] | None = None
 
 
-def _error(status_code: int, *, code: str, message: str, fields: list[str] | None = None):
-    detail = APIError(code=code, message=message, fields=fields or [])
-    return HTTPException(status_code=status_code, detail=detail.model_dump())
+def _error(
+    status_code: int,
+    *,
+    code: str,
+    message: str,
+    fields: list[str] | None = None,
+    rejections: list[object] | None = None,
+):
+    detail = APIError(
+        code=code,
+        message=message,
+        fields=fields or [],
+        rejections=rejections,
+    )
+    return HTTPException(
+        status_code=status_code,
+        detail=detail.model_dump(exclude_none=True),
+    )
+
+
+def _round_trip_error(exc: RoundTripError) -> HTTPException:
+    """Translate a pure routing failure into the web API error envelope."""
+
+    rejections = [
+        rejection.model_dump() if hasattr(rejection, "model_dump") else rejection
+        for rejection in exc.rejections
+    ]
+    return _error(
+        exc.status,
+        code=exc.code,
+        message=exc.message,
+        fields=exc.fields,
+        rejections=rejections or None,
+    )
 
 
 @router.post("/canal-network", response_model=CanalNetworkResponse)
@@ -268,3 +309,58 @@ def canal_route(body: CanalRouteRequest, request: Request) -> CanalRouteResponse
         return plan_canal_route(constraints, graph=graph)
     except RouteUnavailableError as exc:
         raise _error(422, code="route_unavailable", message=str(exc)) from exc
+
+
+def _check_round_trip_revision(body: TurnaroundCandidatesRequest, request: Request) -> None:
+    if body.artifact_revision != request.app.state.artifact_revision:
+        raise _error(
+            409,
+            code="artifact_revision_mismatch",
+            message="The routing artifact has changed; refresh turnaround candidates.",
+            fields=["artifact_revision"],
+        )
+
+
+def _round_trip_limits(request: Request) -> dict[str, int]:
+    """Read optional bounded-search settings without coupling the API to config shape."""
+
+    settings = getattr(request.app.state, "settings", None)
+    limits = {
+        "max_work": getattr(settings, "round_trip_max_work", None),
+        "max_routes": getattr(settings, "round_trip_max_routes", None),
+        "max_vertices": getattr(settings, "round_trip_max_vertices", None),
+    }
+    return {name: value for name, value in limits.items() if value is not None}
+
+
+@router.post("/turnaround-candidates", response_model=TurnaroundCandidatesResponse)
+def turnaround_candidates(
+    body: TurnaroundCandidatesRequest,
+    request: Request,
+) -> TurnaroundCandidatesResponse:
+    """Enumerate complete feasible out-and-back route alternatives."""
+
+    _check_round_trip_revision(body, request)
+    try:
+        return discover_round_trips(
+            body,
+            graph=request.app.state.graph,
+            **_round_trip_limits(request),
+        )
+    except RoundTripError as exc:
+        raise _round_trip_error(exc) from exc
+
+
+@router.post("/out-and-back-route", response_model=OutAndBackRoute)
+def out_and_back_route(body: OutAndBackRouteRequest, request: Request) -> OutAndBackRoute:
+    """Return the default or exact selected out-and-back route."""
+
+    _check_round_trip_revision(body, request)
+    try:
+        return plan_out_and_back(
+            body,
+            graph=request.app.state.graph,
+            **_round_trip_limits(request),
+        )
+    except RoundTripError as exc:
+        raise _round_trip_error(exc) from exc

@@ -9,12 +9,14 @@
   import TripSummary from './component/TripSummary.svelte';
   import type { AppDependencies } from './lib/app';
   import type { EndpointSlot } from './lib/google/contracts';
+  import type { JourneyMode } from './lib/types';
   import { createNavigation, type AppRoute } from './lib/navigation';
   import { parseSchedule } from './lib/schedule';
   import { createBoatSettingsStore, type SettingsSaveResult } from './lib/stores/boat-settings';
 
   let { dependencies }: { dependencies: AppDependencies } = $props();
   const store = $derived(dependencies.store);
+  const journeyMode = $derived($store.journeyMode ?? 'point_to_point');
   const boatSettings = createBoatSettingsStore();
   let active = $state<EndpointSlot>('origin');
   let plannerSession = $state({ days: 7 as string | number, hours: 6 as string | number });
@@ -27,7 +29,7 @@
     }
   });
   $effect(() => {
-    if (networkRequest) store.setNetworkRequest(networkRequest);
+    store.setNetworkRequest(networkRequest);
   });
 
   const navigation = createNavigation();
@@ -59,6 +61,11 @@
     searchKey += 1;
   }
 
+  function changeJourneyMode(event: Event) {
+    if (!(event.currentTarget instanceof HTMLInputElement)) return;
+    store.setJourneyMode(event.currentTarget.value as JourneyMode);
+  }
+
   function handleNavClick(event: MouseEvent, route: AppRoute, ordinaryAction: () => void = () => navigation.navigate(route)) {
     if (!(event.currentTarget instanceof HTMLAnchorElement)) return;
     if (event.button !== 0) return;
@@ -85,7 +92,7 @@
       </p>
     {/if}
     <div class="map-column">
-      <fieldset class="map-target"><legend>Map click sets</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set destination from map</label></fieldset>
+		<fieldset class="map-target"><legend>Map click sets</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set {journeyMode === 'out_and_back' ? 'visit on the way' : 'destination'} from map</label></fieldset>
 		<MapCanvas load={dependencies.loadMapView} onclick={(coordinate) => dependencies.store.setEndpointCoordinate(active, coordinate)} onready={(view) => dependencies.store.setMapView(view)} />
     {#if $store.networkError}
       <p class="network-status" role="status">
@@ -96,12 +103,17 @@
     {/if}
 	</div>
     <div class="planner-column">
+		<fieldset class="journey-mode" aria-label="Journey mode">
+			<legend>Journey mode</legend>
+			<label><input type="radio" name="journey-mode" value="point_to_point" checked={journeyMode === 'point_to_point'} onchange={changeJourneyMode} /> Point to point</label>
+			<label><input type="radio" name="journey-mode" value="out_and_back" checked={journeyMode === 'out_and_back'} onchange={changeJourneyMode} /> Out-and-back</label>
+		</fieldset>
 		{#key searchKey}
 			<EndpointPanel slot="origin" endpoint={$store.origin} {store} search={dependencies.placeSearch} />
-			<EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} />
+			<EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} title={journeyMode === 'out_and_back' ? 'Visit on the way' : 'Destination'} optional={journeyMode === 'out_and_back'} />
 		{/key}
-      <BoatConstraints {store} settings={boatSettings} onReset={resetTrip} bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
-      <TripSummary state={$store} onDaySelect={store.selectDay} />
+      <BoatConstraints {store} settings={boatSettings} onReset={resetTrip} mode={journeyMode} bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
+      <TripSummary state={$store} {store} onDaySelect={store.selectDay} />
       <RouteLayers {store} />
     </div>
   </main>

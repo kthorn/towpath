@@ -270,8 +270,83 @@ export interface CanalRouteRequest {
   movable_bridge_delay_min?: number | null;
 }
 
+export type JourneyMode = 'point_to_point' | 'out_and_back';
+
+export interface TurnaroundSource {
+  [key: string]: unknown;
+}
+
+export interface TurnaroundLimits {
+  [key: string]: unknown;
+}
+
+export interface TurnaroundMetadata {
+  turnaround_id: string;
+  kind: 'winding_hole' | 'junction';
+  node_uid: number;
+  coordinate: LatLon;
+  display_name: string;
+  eligibility_basis: 'mapped_winding_hole' | 'junction_assumption';
+  sources: TurnaroundSource[];
+  turning_limits: TurnaroundLimits;
+}
+
+export interface OutAndBackBudget {
+  available_minutes: number;
+  used_minutes: number;
+  remaining_minutes: number;
+  days_used: number;
+}
+
+export interface OutAndBackRoute {
+  journey_type: 'out_and_back';
+  artifact_revision: string;
+  request_id: string;
+  route_id: string;
+  branch_choices: Array<{
+    junction_uid: number;
+    next_uid: number;
+    junction_name?: string | null;
+    continuation_name?: string | null;
+  }>;
+  turnaround: TurnaroundMetadata;
+  outbound_distance_km: number;
+  selection_basis: 'furthest_reachable' | 'user_selected';
+  budget: OutAndBackBudget;
+  journey: CanalRouteResponse;
+}
+
+export interface TurnaroundRejection {
+  turnaround_id?: string | null;
+  code: string;
+  message: string;
+  fields: string[];
+}
+
+export interface TurnaroundCandidatesRequest {
+  artifact_revision: string;
+  start_uid: number;
+  waypoint_uid: number | null;
+  days: number;
+  hours_per_day: number;
+  boat_length_m?: number | null;
+  boat_beam_m?: number | null;
+  boat_draft_m?: number | null;
+  boat_height_m?: number | null;
+  movable_bridge_delay_min?: number | null;
+}
+
+export interface TurnaroundCandidatesResponse {
+  artifact_revision: string;
+  request_id: string;
+  default_route_id: string;
+  routes: OutAndBackRoute[];
+  rejections: TurnaroundRejection[];
+}
+
 export interface PoundApiErrorDetail {
   code: string;
   message: string;
   fields: string[];
+  rejections?: TurnaroundRejection[];
 }

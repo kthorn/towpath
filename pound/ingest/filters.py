@@ -141,6 +141,8 @@ def classify_node(tags: dict[str, str] | None) -> NodeKind | None:
     """Classify a tagged node. None => not a network node we keep in this plan."""
     if not tags:
         return None
+    if tags.get("waterway") == "turning_point":
+        return NodeKind.TURNING_POINT
     if tags.get("waterway") == "lock_gate":
         return NodeKind.LOCK_GATE
     if tags.get("waterway") == "lock" or tags.get("lock") == "yes":

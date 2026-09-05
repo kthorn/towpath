@@ -148,6 +148,18 @@ main {
 	display: grid;
 	gap: 1rem;
 }
+.journey-mode {
+	margin: 0;
+	padding: 0.7rem 1rem;
+	border: 1px solid #dbe2dd;
+	border-radius: 12px;
+	background: #f2f6f3;
+	display: flex;
+	gap: 1rem;
+}
+.journey-mode legend {
+	font-weight: 700;
+}
 .endpoint,
 form,
 .summary {
@@ -277,6 +289,35 @@ button {
 }
 .days {
 	padding-left: 1.5rem;
+}
+.out-and-back-options {
+	margin-top: 1rem;
+	border-top: 1px solid #dbe2dd;
+	padding-top: 1rem;
+}
+.out-and-back-options h3 {
+	font-size: 0.95rem;
+	margin: 0 0 0.6rem;
+}
+.route-options {
+	display: grid;
+	gap: 0.5rem;
+}
+.route-options button {
+	display: grid;
+	gap: 0.25rem;
+	text-align: left;
+	background: #e8f4ef;
+	color: #173c30;
+	border: 1px solid #b8d4c8;
+}
+.route-options button.active {
+	border-color: #08745c;
+	box-shadow: inset 4px 0 #08745c;
+}
+.route-options span {
+	font-size: 0.8rem;
+	font-weight: 400;
 }
 .days li {
 	padding: 0.2rem;

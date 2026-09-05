@@ -6,6 +6,7 @@ import type {
   CanalNetworkRequest,
   CanalRouteResponse,
   HealthResponse,
+  TurnaroundCandidatesResponse,
   PlacesRequest,
   PlacesResponse,
   RoutePoisRequest,
@@ -75,6 +76,36 @@ const routeResponse: CanalRouteResponse = {
 };
 
 describe('createPoundApi', () => {
+  it('posts turnaround discovery constraints', async () => {
+    const response: TurnaroundCandidatesResponse = {
+      artifact_revision: 'artifact-123',
+      request_id: 'request-1',
+      default_route_id: 'route-1',
+      routes: [],
+      rejections: [],
+    };
+    const request = {
+      artifact_revision: 'artifact-123',
+      start_uid: 42,
+      waypoint_uid: null,
+      days: 3,
+      hours_per_day: 6,
+      boat_length_m: 17.5,
+      boat_beam_m: null,
+      boat_draft_m: null,
+      boat_height_m: null,
+      movable_bridge_delay_min: 0,
+    };
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    await expect(createPoundApi(fetchFn).turnaroundCandidates(request)).resolves.toEqual(response);
+    expect(fetchFn).toHaveBeenCalledWith('/api/turnaround-candidates', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
+    });
+  });
+
   it('posts coordinates and parses canal candidates', async () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify(candidatesResponse), {
@@ -165,6 +196,22 @@ describe('createPoundApi', () => {
       fields: ['artifact_revision'],
     });
     await expect(promise).rejects.toBeInstanceOf(PoundApiError);
+  });
+
+  it('preserves candidate rejection details in structured API errors', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      detail: {
+        code: 'no_feasible_turnaround', message: 'No feasible route.', fields: ['days'],
+        rejections: [{ code: 'budget_exceeded', message: 'Budget exceeded.', fields: ['days'], turnaround_id: 'fixture:end' }],
+      },
+    }), { status: 422, headers: { 'Content-Type': 'application/json' } }));
+
+    await expect(createPoundApi(fetchFn).turnaroundCandidates({
+      artifact_revision: 'r1', start_uid: 1, waypoint_uid: null, days: 1, hours_per_day: 6,
+    })).rejects.toMatchObject({
+      code: 'no_feasible_turnaround',
+      rejections: [{ code: 'budget_exceeded', fields: ['days'] }],
+    });
   });
 
   it('posts route POI queries and returns the typed response', async () => {

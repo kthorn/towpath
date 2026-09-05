@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from shapely.geometry import Point
 
 from pound.graph.pois import _edge_line_wgs84, _routing_eligible, _to_bng
+from pound.graph.turnarounds import validate_turnarounds
 from pound.ingest.filters import extract_access_caveats
 from pound.ingest.ir import AccessCaveat, PointOfInterest
 
@@ -205,6 +206,19 @@ def _validate_graph(graph: Any) -> nx.Graph:
                 _finite_coordinate(
                     f"graph edge {(u, v)} lock_points[{index}].lon", coordinate[1], -180, 180
                 )
+    if "turnarounds" in graph.graph:
+        try:
+            validate_turnarounds(graph)
+        except ValueError as exc:
+            raise _invalid("graph turnarounds", graph.graph.get("turnarounds"), str(exc)) from exc
+    if "turnaround_report" in graph.graph and not isinstance(
+        graph.graph["turnaround_report"], dict
+    ):
+        raise _invalid(
+            "graph turnaround_report",
+            graph.graph["turnaround_report"],
+            "expected a diagnostics mapping",
+        )
     return graph
 
 

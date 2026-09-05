@@ -9,12 +9,14 @@ import type {
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
+  OutAndBackRoute,
   HealthResponse,
   PlaceResponse,
   PlacesResponse,
   LatLon,
   MapBounds,
   RoutePoisResponse,
+  TurnaroundCandidatesResponse,
 } from '../types';
 import type { LandRoute, MapView, SelectedPlace, TransferResult, TransferRouter } from '../google/contracts';
 import { createTripStore } from './trip';
@@ -29,6 +31,17 @@ const response = (revision: string, uids: number[]): CanalCandidatesResponse => 
 });
 const land: LandRoute = { path: [{ lat: 1, lon: 2 }], durationSeconds: 20, distanceMeters: 30 };
 const canal: CanalRouteResponse = { route: { start: 'a', end: 'b', is_ring: false, legs: [], days: [], total_km: 1, total_locks: 0, total_minutes: 2, amenities: [], warnings: [], access_segments: [], graph_source_date: 'today' }, geometry: { type: 'LineString', coordinates: [[-1, 51], [-2, 52]] } };
+const outAndBack = (routeId: string, totalKm: number): OutAndBackRoute => ({
+  journey_type: 'out_and_back', artifact_revision: 'r1', request_id: 'request-1', route_id: routeId,
+  branch_choices: [{ junction_uid: 10, next_uid: 11 }],
+  turnaround: {
+    turnaround_id: `turn-${routeId}`, kind: 'junction', node_uid: 11, coordinate: { lat: 52, lon: -2 },
+    display_name: `Turn ${routeId}`, eligibility_basis: 'junction_assumption', sources: [], turning_limits: {},
+  },
+  outbound_distance_km: totalKm / 2, selection_basis: 'furthest_reachable',
+  budget: { available_minutes: 360, used_minutes: totalKm * 2, remaining_minutes: 360 - totalKm * 2, days_used: 1 },
+  journey: { ...canal, route: { ...canal.route, total_km: totalKm, start: 'a', end: 'a' } },
+});
 const networkRequest = (days = 7): CanalNetworkRequest => ({
   days, hours_per_day: 6,
   boat_length_m: null, boat_beam_m: null, boat_draft_m: null,
@@ -78,6 +91,7 @@ function setup(options: {
   routePois?: (request: unknown) => Promise<RoutePoisResponse>;
   places?: (request: unknown) => Promise<PlacesResponse>;
   placesHealth?: () => Promise<HealthResponse>;
+  turnaroundCandidates?: (request: unknown) => Promise<TurnaroundCandidatesResponse>;
 } = {}) {
   const canalCandidates = vi.fn(async ({ lat }: LatLon) => lat < 52 ? response('r1', [1, 2]) : response('r1', [3, 4]));
   const canalNetwork = options.canalNetwork ?? vi.fn(async (_request: CanalNetworkRequest) => networkResponse());
@@ -85,6 +99,7 @@ function setup(options: {
   const routePois = options.routePois ?? vi.fn(async () => ({ pois: [], zoom_in_required: false, matching_count: 0, day: null }));
   const places = options.places ?? vi.fn(async () => ({ places: [] }));
   const placesHealth = options.placesHealth ?? vi.fn(async () => ({ status: 'healthy', artifact_revision: 'r1', places_status: 'available' as const }));
+  const turnaroundCandidates = options.turnaroundCandidates ?? vi.fn(async () => ({ artifact_revision: 'r1', request_id: 'request-1', default_route_id: 'route-1', routes: [], rejections: [] }));
   const matrices = options.matrices ?? [[
     { available: true, durationSeconds: 20, distanceMeters: 100 },
     { available: true, durationSeconds: 10, distanceMeters: 200 },
@@ -94,11 +109,193 @@ function setup(options: {
     matrix: vi.fn(async () => matrices[Math.min(matrixIndex++, matrices.length - 1)]),
     route: vi.fn(async () => { if (options.routeError) throw options.routeError; return land; }),
   };
-  const store = createTripStore({ poundApi: { canalCandidates, canalNetwork, canalRoute, routePois, places, health: placesHealth }, transferRouter, mapView: options.map, transferMode: 'WALK' });
-  return { store, canalCandidates, canalNetwork, canalRoute, transferRouter, places, placesHealth };
+  const store = createTripStore({ poundApi: { canalCandidates, canalNetwork, canalRoute, turnaroundCandidates, routePois, places, health: placesHealth }, transferRouter, mapView: options.map, transferMode: 'WALK' });
+  return { store, canalCandidates, canalNetwork, canalRoute, turnaroundCandidates, transferRouter, places, placesHealth };
 }
 
 describe('trip store', () => {
+  it('plans out-and-back from an origin without requiring a destination', async () => {
+    const candidate = outAndBack('route-1', 12);
+    const turnaroundCandidates = vi.fn(async () => ({
+      artifact_revision: 'r1', request_id: 'request-1', default_route_id: 'route-1', routes: [candidate], rejections: [],
+    }));
+    const { store, turnaroundCandidates: api } = setup({ turnaroundCandidates });
+    store.setJourneyMode('out_and_back');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+
+    await store.planCanalRoute({ days: 3, hours_per_day: 6 });
+
+    expect(api).toHaveBeenCalledWith(expect.objectContaining({ start_uid: 2, waypoint_uid: null, days: 3, hours_per_day: 6 }));
+    expect(get(store).canalRoute).toEqual(candidate.journey);
+    expect(get(store).outAndBackRoutes).toEqual([candidate]);
+  });
+
+  it('keeps branch alternatives and displays a selected returned route directly', async () => {
+    const first = outAndBack('route-1', 20);
+    const second = outAndBack('route-2', 16);
+    const { store } = setup({ turnaroundCandidates: vi.fn(async () => ({
+      artifact_revision: 'r1', request_id: 'request-1', default_route_id: first.route_id,
+      routes: [first, second], rejections: [],
+    })) });
+    store.setJourneyMode('out_and_back');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.planCanalRoute({ days: 3, hours_per_day: 6 });
+
+    expect(get(store).canalRoute).toEqual(first.journey);
+    expect(get(store).selectedOutAndBackRouteId).toBe('route-1');
+    store.selectBranchRoute('route-2');
+    expect(get(store).canalRoute).toEqual(second.journey);
+    expect(get(store).selectedOutAndBackRouteId).toBe('route-2');
+  });
+
+  it('refreshes route POIs after out-and-back discovery and branch selection', async () => {
+    vi.useFakeTimers();
+    try {
+      const first = outAndBack('route-1', 20);
+      const second = outAndBack('route-2', 16);
+      const routePois = vi.fn(async () => ({ pois: [], zoom_in_required: false, matching_count: 0, day: null }));
+      const turnaroundCandidates = vi.fn(async () => ({
+        artifact_revision: 'r1', request_id: 'request-1', default_route_id: first.route_id,
+        routes: [first, second], rejections: [],
+      }));
+      let onViewportIdle!: (bounds: MapBounds) => void;
+      const map = viewportMap((callback) => { onViewportIdle = callback; });
+      const { store } = setup({ routePois, turnaroundCandidates, map });
+      store.setJourneyMode('out_and_back');
+      await store.setEndpointCoordinate('origin', place('origin', 51));
+      await store.planCanalRoute({ days: 3 });
+      store.setMapView(map);
+      store.togglePoiKind('pub');
+      const bounds = { south: 50, west: -2, north: 54, east: 0 };
+      onViewportIdle(bounds);
+      await vi.advanceTimersByTimeAsync(100);
+      routePois.mockClear();
+
+      await store.planCanalRoute({ days: 4 });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(routePois).toHaveBeenCalledOnce();
+
+      routePois.mockClear();
+      store.selectBranchRoute(second.route_id);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(routePois).toHaveBeenCalledOnce();
+      expect(routePois).toHaveBeenCalledWith(expect.objectContaining({ bounds }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores stale out-and-back responses after mode invalidation', async () => {
+    let resolveOld!: (value: TurnaroundCandidatesResponse) => void;
+    const old = outAndBack('old', 20);
+    const pendingResponse = new Promise<TurnaroundCandidatesResponse>((resolve) => { resolveOld = resolve; });
+    const { store } = setup({ turnaroundCandidates: vi.fn(async () => pendingResponse) });
+    store.setJourneyMode('out_and_back');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    const pending = store.planCanalRoute({ days: 3, hours_per_day: 6 });
+    store.setJourneyMode('point_to_point');
+    resolveOld({ artifact_revision: 'r1', request_id: 'request-old', default_route_id: old.route_id, routes: [old], rejections: [] });
+    await pending;
+    expect(get(store).canalRoute).toBeNull();
+    expect(get(store).outAndBackRoutes ?? []).toEqual([]);
+  });
+
+  it('clears old out-and-back alternatives as a new discovery starts', async () => {
+    const first = outAndBack('route-1', 12);
+    let resolveNext!: (value: TurnaroundCandidatesResponse) => void;
+    const turnaroundCandidates = vi.fn()
+      .mockResolvedValueOnce({ artifact_revision: 'r1', request_id: 'request-1', default_route_id: first.route_id, routes: [first], rejections: [] })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveNext = resolve; }));
+    const { store } = setup({ turnaroundCandidates });
+    store.setJourneyMode('out_and_back');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.planCanalRoute({ days: 3 });
+    expect(get(store).outAndBackRoutes).toHaveLength(1);
+
+    const pending = store.planCanalRoute({ days: 4 });
+    expect(get(store).outAndBackRoutes).toEqual([]);
+    expect(get(store).outAndBackRequestId).toBeNull();
+    expect(() => store.selectBranchRoute(first.route_id)).toThrow(/unknown out-and-back route/i);
+    resolveNext({ artifact_revision: 'r1', request_id: 'request-2', default_route_id: first.route_id, routes: [], rejections: [{ code: 'budget_exceeded', message: 'No feasible route.', fields: ['days'] }] });
+    await expect(pending).rejects.toThrow('No feasible route.');
+  });
+
+  it('rejects an out-and-back waypoint while its canal candidate is unresolved', async () => {
+    let resolveCandidates!: (value: CanalCandidatesResponse) => void;
+    const { store, canalCandidates } = setup();
+    store.setJourneyMode('out_and_back');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    canalCandidates.mockImplementationOnce(() => new Promise((resolve) => { resolveCandidates = resolve; }));
+    const pendingWaypoint = store.setEndpointCoordinate('destination', place('waypoint', 53));
+    await expect(store.planCanalRoute({ days: 3 })).rejects.toThrow(/waypoint.*select|visit.*way/i);
+    resolveCandidates(response('r1', [3, 4]));
+    await pendingWaypoint;
+  });
+
+  it('does not invalidate the selected route when identical network constraints repeat', async () => {
+    const candidate = outAndBack('route-1', 12);
+    const { store } = setup({ turnaroundCandidates: vi.fn(async () => ({ artifact_revision: 'r1', request_id: 'request-1', default_route_id: candidate.route_id, routes: [candidate], rejections: [] })) });
+    store.setJourneyMode('out_and_back');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.planCanalRoute({ days: 3 });
+    const request = networkRequest(3);
+    store.setNetworkRequest(request);
+    await store.planCanalRoute({ days: 3 });
+    store.setNetworkRequest(request);
+    expect(get(store).canalRoute).toEqual(candidate.journey);
+  });
+
+  it('surfaces candidate rejection fields when discovery fails', async () => {
+    const error = new PoundApiError(422, {
+      code: 'no_feasible_turnaround', message: 'No feasible route.', fields: [],
+      rejections: [{ code: 'budget_exceeded', message: 'Budget exceeded.', fields: ['days'], turnaround_id: 'fixture:end' }],
+    });
+    const { store } = setup({ turnaroundCandidates: vi.fn(async () => { throw error; }) });
+    store.setJourneyMode('out_and_back');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+
+    await expect(store.planCanalRoute({ days: 3 })).rejects.toBe(error);
+    expect(get(store).routeError).toContain('Budget exceeded. (days)');
+    expect(get(store).outAndBackRejections).toEqual(error.rejections);
+  });
+
+  it('clears an optional waypoint and invalidates its displayed route', async () => {
+    const candidate = outAndBack('route-1', 12);
+    const { store } = setup({ turnaroundCandidates: vi.fn(async () => ({
+      artifact_revision: 'r1', request_id: 'request-1', default_route_id: candidate.route_id,
+      routes: [candidate], rejections: [],
+    })) });
+    store.setJourneyMode('out_and_back');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.setEndpointCoordinate('destination', place('waypoint', 53));
+    await store.planCanalRoute({ days: 3 });
+    expect(get(store).canalRoute).toEqual(candidate.journey);
+
+    store.clearEndpoint('destination');
+
+    expect(get(store).destination.place).toBeNull();
+    expect(get(store).destination.selectedUid).toBeNull();
+    expect(get(store).canalRoute).toBeNull();
+    expect(get(store).outAndBackRoutes).toEqual([]);
+  });
+
+  it('invalidates a displayed out-and-back selection when constraints change', async () => {
+    const candidate = outAndBack('route-1', 12);
+    const { store } = setup({ turnaroundCandidates: vi.fn(async () => ({
+      artifact_revision: 'r1', request_id: 'request-1', default_route_id: candidate.route_id,
+      routes: [candidate], rejections: [],
+    })) });
+    store.setJourneyMode('out_and_back');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.planCanalRoute({ days: 3 });
+    expect(get(store).canalRoute).toEqual(candidate.journey);
+
+    store.setNetworkRequest(networkRequest(4));
+
+    expect(get(store).canalRoute).toBeNull();
+    expect(get(store).selectedOutAndBackRouteId).toBeNull();
+  });
+
   it('posts the current request and paints lines and bases when a map attaches', async () => {
     const request = networkRequest();
     const network = networkResponse();
