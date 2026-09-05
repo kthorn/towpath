@@ -16,7 +16,8 @@ import math
 import networkx as nx
 from pyproj import Transformer
 from shapely import transform
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, box
+from shapely.strtree import STRtree
 
 from pound.ingest.ir import NodeKind, WaterwayFeatures, WaterwayKind
 
@@ -75,6 +76,28 @@ def project_point_to_edge(
         return None
 
 
+def _lock_edge_index(graph: nx.Graph) -> tuple[STRtree, list[tuple]]:
+    """Index metric edge geometry once; preserve first-seen order for existing ties."""
+    edges, geometries = [], []
+    for u, v, data in graph.edges(data=True):
+        geometry = data.get("geometry", ())
+        if not isinstance(geometry, (list, tuple)) or len(geometry) < 2:
+            continue
+        try:
+            line = transform(
+                LineString([(lon, lat) for lat, lon in geometry]),
+                _TO_BNG.transform,
+                interleaved=False,
+            )
+            if line.is_empty or line.length == 0 or not all(math.isfinite(x) for x in line.bounds):
+                continue
+        except (TypeError, ValueError, RuntimeError, OverflowError):
+            continue
+        edges.append((u, v, data))
+        geometries.append(line)
+    return STRtree(geometries), edges
+
+
 def attach_locks(
     graph: nx.Graph,
     features: WaterwayFeatures,
@@ -82,6 +105,8 @@ def attach_locks(
     *,
     in_place: bool = False,
 ) -> tuple[nx.Graph, dict]:
+    if not math.isfinite(tolerance_m) or tolerance_m < 0:
+        raise ValueError("tolerance_m must be finite and nonnegative")
     g = graph if in_place else copy.deepcopy(graph)
     report = {
         "lock_ways_attached": 0,
@@ -209,6 +234,7 @@ def attach_locks(
     # sharing the junction) is distance 0 to both; without the kind tie-break,
     # insertion order would decide and a coincident canal spur could spuriously
     # win locks=1.
+    lock_index = None
     for node in features.nodes:
         if node.kind == NodeKind.LOCK_GATE:
             report["lock_gate_nodes"] += 1
@@ -217,7 +243,26 @@ def attach_locks(
             continue
         best_edge = None
         best_key = None
-        for u, v, d in g.edges(data=True):
+        if lock_index is None:
+            lock_index = _lock_edge_index(g)
+        tree, indexed_edges = lock_index
+        x, y = _TO_BNG.transform(node.lon, node.lat)
+        candidates = []
+        if math.isfinite(x) and math.isfinite(y):
+            candidates = sorted(
+                tree.query(
+                    Point(x, y)
+                    if tolerance_m == 0
+                    else box(
+                        x - tolerance_m,
+                        y - tolerance_m,
+                        x + tolerance_m,
+                        y + tolerance_m,
+                    )
+                )
+            )
+        for index in candidates:
+            u, v, d = indexed_edges[index]
             projection = project_point_to_edge(d.get("geometry", []), node.lat, node.lon)
             if projection is None or projection[1] > tolerance_m:
                 continue

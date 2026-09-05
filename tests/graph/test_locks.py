@@ -173,3 +173,57 @@ def test_staircase_lock_gate_counted_not_incrementing():
     # that (no double-counting).
     assert report["lock_gate_nodes"] == 4
     assert sum(d["locks"] for _, _, d in g.edges(data=True)) == 3
+
+
+def test_lock_node_search_projects_only_nearby_edges(monkeypatch):
+    """A local lock must not trigger expensive projections over the entire country."""
+    import pound.graph.locks as locks
+
+    graph = nx.Graph()
+    for index in range(200):
+        lat = 51.0 if index == 0 else 52 + index * 0.001
+        graph.add_edge(
+            index * 2,
+            index * 2 + 1,
+            geometry=[(lat, -1), (lat, -0.99)],
+            kind="canal",
+            length_m=700,
+            locks=0,
+            osm_way_id=index + 1,
+        )
+    features = WaterwayFeatures(
+        ways=[],
+        nodes=[
+            WaterwayNode(
+                osm_id=999, lat=51.0001, lon=-0.995, tags={"lock": "yes"}, kind=NodeKind.LOCK
+            )
+        ],
+        source="test",
+        fetched_at="",
+        bbox=None,
+    )
+    project = locks.project_point_to_edge
+    calls = []
+
+    def counted(geometry, lat, lon):
+        calls.append(geometry)
+        return project(geometry, lat, lon)
+
+    monkeypatch.setattr(locks, "project_point_to_edge", counted)
+    attached, report = locks.attach_locks(graph, features)
+    assert report["lock_nodes_attached"] == 1
+    assert attached.edges[0, 1]["locks"] == 1
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('tolerance', [float('nan'), float('inf'), -1.0])
+def test_lock_attachment_rejects_invalid_tolerance(tolerance):
+    with pytest.raises(ValueError, match='tolerance'):
+        attach_locks(build_graph(_oxford()), _oxford(), tolerance_m=tolerance)
+
+
+def test_lock_index_skips_single_point_geometry():
+    graph = build_graph(_oxford())
+    graph.add_edge(90000, 90001, geometry=[(51, -1)], kind='canal', locks=0)
+    _, report = attach_locks(graph, _oxford())
+    assert report['lock_nodes_attached'] >= 1
