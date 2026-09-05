@@ -11,7 +11,7 @@ import type {
   RouteLock,
   RoutePoi,
 } from '../types';
-import type { EndpointSlot, LandRoute, MapView } from './contracts';
+import type { ClimateMapMarker, EndpointSlot, LandRoute, MapView } from './contracts';
 import { geoJsonToGooglePath, toGoogleLatLng, type GoogleLatLngLiteral } from './routes';
 import { buildGoogleMapsSearchUrl } from './searchUrl';
 
@@ -387,6 +387,11 @@ export function createGoogleMapView(
   const candidateMarkers: Record<EndpointSlot, MarkerInstance[]> = { origin: [], destination: [] };
   const landRoutes: Partial<Record<EndpointSlot, PolylineInstance>> = {};
   let networkGeometries: GeoJSONLineString[] = [];
+  const climateMarkers: MarkerInstance[] = [];
+  const climateListeners: RemovableListener[] = [];
+  let climateData: ClimateMapMarker[] = [];
+  let selectClimate: (id: string) => void = () => {};
+  let climateIdle: RemovableListener | undefined;
   const hireBaseMarkers: MarkerInstance[] = [];
   const hireBaseMarkerListeners: RemovableListener[] = [];
   const hireBaseCoordinates: GoogleLatLngLiteral[] = [];
@@ -587,6 +592,48 @@ export function createGoogleMapView(
     removeMarkers(markers);
     removeTooltips();
   };
+  const paintClimate = () => {
+    removeMarkerGroup(climateMarkers, climateListeners);
+    const bounds = facade.getBounds(map);
+    if (!bounds) return;
+    const occupied = new Set<string>();
+    const width = Math.max(element.clientWidth, 320);
+    const height = Math.max(element.clientHeight, 320);
+    for (const item of [...climateData].sort((a, b) => a.id.localeCompare(b.id))) {
+      const { lat, lon } = item.coordinate;
+      if (lat < bounds.south || lat > bounds.north || lon < bounds.west || lon > bounds.east) continue;
+      // Stable, viewport-relative cells prevent piles of labels at national zoom.
+      const x = (lon - bounds.west) / Math.max(bounds.east - bounds.west, 0.000001) * width;
+      const y = (lat - bounds.south) / Math.max(bounds.north - bounds.south, 0.000001) * height;
+      const cell = `${Math.floor(x / 65)}:${Math.floor(y / 36)}`;
+      if (occupied.has(cell)) continue;
+      occupied.add(cell);
+      const content = documentRef.createElement('span');
+      content.className = 'pound-climate-marker';
+      content.textContent = item.value;
+      content.style.backgroundColor = item.color;
+      content.style.color = '#111827';
+      content.style.border = '2px solid white';
+      content.style.borderRadius = '6px';
+      content.style.padding = '3px 6px';
+      content.style.fontWeight = '700';
+      content.setAttribute('aria-label', item.label);
+      const marker = facade.createMarker({
+        map, position: toGoogleLatLng(item.coordinate), title: item.label, content,
+        // Place the weather label above and to the right of a co-located base marker.
+        anchorLeft: '4px', anchorTop: '-150%', gmpClickable: true, zIndex: 1000,
+      });
+      climateMarkers.push(marker);
+      const click = facade.addMarkerListener(marker, 'click', (event) => {
+        stopMarkerPropagation(event);
+        selectClimate(item.id);
+      });
+      const enter = facade.addMarkerListener(marker, 'mouseenter', () => { showTooltip(item.label); });
+      const leave = facade.addMarkerListener(marker, 'mouseleave', removeTooltips);
+      climateListeners.push(click, enter, leave);
+      markerListeners.push(click, enter, leave);
+    }
+  };
   const clearDay = () => {
     removePolylines(highlightedDay);
     removeMarkers(dayWaypointMarkers);
@@ -602,6 +649,13 @@ export function createGoogleMapView(
   documentRef.addEventListener('keydown', escapeListener);
 
   return {
+    climate(markers, onSelect) {
+      climateData = markers;
+      selectClimate = onSelect;
+      if (markers.length && !climateIdle) climateIdle = map.addListener('idle', paintClimate);
+      if (!markers.length) { climateIdle?.remove(); climateIdle = undefined; }
+      paintClimate();
+    },
     marker(slot, coordinate) {
       if (placeMarkers[slot]) placeMarkers[slot]!.map = null;
       delete placeMarkers[slot];
@@ -797,6 +851,10 @@ export function createGoogleMapView(
     },
     closeInfoWindow,
     destroy() {
+      climateIdle?.remove();
+      climateIdle = undefined;
+      climateData = [];
+      removeMarkerGroup(climateMarkers, climateListeners);
       for (const listener of clickListeners.splice(0)) listener.remove();
       for (const listener of viewportListeners.splice(0)) listener.remove();
       documentRef.removeEventListener('keydown', escapeListener);

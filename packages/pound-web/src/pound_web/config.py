@@ -26,6 +26,7 @@ class WebSettings:
     boat_hire_enrichment_path: Path
     candidate_pool_size: int = 20
     google_destination_limit: int = 10
+    climate_path: Path | None = None
     catalog_path: Path | None = None
     catalog_max_kinds: int = MAX_CATALOG_KINDS
     catalog_max_viewport_span_deg: float = MAX_PLACES_VIEWPORT_SPAN_DEGREES
@@ -77,12 +78,14 @@ class WebSettings:
         if not boat_hire_enrichment_path:
             raise RuntimeError("POUND_BOAT_HIRE_ENRICHMENT_PATH is required")
 
+        climate_path = os.environ.get("POUND_CLIMATE_PATH")
         catalog_path = os.environ.get("POUND_CATALOG_PATH")
         return cls(
             artifact_path=Path(artifact_path),
             static_dir=Path(os.environ.get("POUND_STATIC_DIR", "web/dist")),
             boat_hire_enrichment_path=Path(boat_hire_enrichment_path),
             catalog_path=Path(catalog_path) if catalog_path else None,
+            climate_path=Path(climate_path) if climate_path else None,
             candidate_pool_size=int(os.environ.get("POUND_CANDIDATE_POOL_SIZE", "20")),
             google_destination_limit=int(os.environ.get("POUND_GOOGLE_DESTINATION_LIMIT", "10")),
             catalog_max_kinds=int(os.environ.get("POUND_CATALOG_MAX_KINDS", "16")),

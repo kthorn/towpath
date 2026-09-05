@@ -551,3 +551,62 @@ separate place catalog are derived artifacts and inherit ODbL share-alike and
 attribution requirements. Google Maps attribution does not replace OSM
 attribution. Google Places content is not stored or displayed in the catalog;
 see the URL-only policy under **Google Maps safety and operations**.
+
+## Historical summer temperatures
+
+The optional **Historical temperatures** map layer compares daily highs and lows over
+25 years and the most recent 5 of those same years. Select one of 18 seven-day windows
+from May 1 through September 3 and choose which period colours the markers. Selecting a
+marker shows both periods side by side, their medians, 10th–90th percentile ranges, sample
+counts and empirical distributions. Colours use fixed Celsius limits across weeks and
+periods; a marker outside the legend limits retains its numeric value and an asterisk.
+
+These are historical ranges for individual daily highs/lows, not forecasts or confidence
+intervals for weekly averages. A complete week contributes 175 days across 25 summers
+and 35 days across 5 summers; days within a summer are correlated. The recent period is
+part of the longer baseline. Missing days make the affected period/metric unavailable
+rather than silently changing its years.
+
+The pilot manifest in `config/climate-locations.json` contains eight UK cities and two
+hire bases. It is an explicit list of supported locations, not coverage for arbitrary
+points. Data comes from ERA5-Land through the [Open-Meteo historical API](https://open-meteo.com/en/docs/historical-weather-api).
+The model is pinned to `era5_land`, units to Celsius and daily boundaries to
+`Europe/London`. Source grid coordinates and elevation are retained; a grid estimate is
+not a measurement at the named town. Data attribution is shown in the location panel.
+The hosted free API supports evaluation/noncommercial use; check the
+[provider's access plans](https://open-meteo.com/en/pricing) before commercial acquisition.
+
+Fetch and cache the pilot's seasonal history offline, then build its separate artifact:
+
+```bash
+uv run --package pound-build python -m scripts.build_climate --fetch --end-year 2025
+uv run --package pound-build python -m scripts.build_climate --end-year 2025 --out artifacts/climate.json
+```
+
+Fetching is resumable and paced. Cached batches include request settings, so changing a
+location coordinate does not reuse data for the old point. The build command does not
+make network requests. Keep the raw cache under `data/climate/` and the artifact
+under `artifacts/`; neither belongs in git. To refresh annually, select the latest
+complete year available from the source, fetch the missing batches, rebuild and restart
+the application. Both periods use that same ending year.
+
+Set `POUND_CLIMATE_PATH` to the artifact's absolute path when starting the web server:
+
+```bash
+POUND_CLIMATE_PATH="$PWD/artifacts/climate.json" \
+  uv run --package pound-web uvicorn pound_web.app:app --host 127.0.0.1 --port 8000
+```
+
+The existing routing and hire-base environment settings are still required. The server
+loads climate data once at startup. Missing or corrupt climate data leaves routing
+available and returns a retryable climate-unavailable response. Runtime requests only
+read the loaded artifact:
+
+```text
+GET /api/climate/locations?week_id=8&period_years=25&metric=high
+GET /api/climate/locations/oxford?week_id=8
+```
+
+The first endpoint returns bounded marker summaries without sample arrays; the second
+returns both periods and metrics for one location. Responses use ETags based on artifact
+revision and query selection.

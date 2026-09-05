@@ -1,5 +1,6 @@
 """FastAPI application factory and production entry point."""
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -68,6 +69,17 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         seeds = load_boat_hire_seeds(runtime_settings.boat_hire_enrichment_path)
         app.state.boat_hire_anchors = snap_boat_hire_bases(app.state.spatial_index, seeds)
         app.state.network_unavailable = not app.state.boat_hire_anchors
+
+        app.state.climate = None
+        if runtime_settings.climate_path is not None:
+            try:
+                from pound.climate.artifact import load_climate
+
+                app.state.climate = load_climate(runtime_settings.climate_path).model_dump(
+                    mode="json"
+                )
+            except (OSError, ValueError) as exc:
+                logging.getLogger(__name__).warning("Climate artifact unavailable: %s", exc)
 
         app.state.catalog = None
         app.state.catalog_spatial_index = None
