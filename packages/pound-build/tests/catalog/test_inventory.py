@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from pound.catalog.manifest import (
     CATALOG_KINDS,
     CATALOG_METADATA_KEYS,
@@ -9,6 +10,7 @@ from pound.catalog.manifest import (
 from pound_build.catalog.inventory import CATALOG_TAG_FILTER_EXPR, inventory_pbf
 
 
+@pytest.mark.bulk
 def test_inventory_reports_user_facing_kinds_and_exclusions():
     report = inventory_pbf(Path("packages/pound-core/tests/fixtures/tiny_bulk.osm"))
 
@@ -48,6 +50,7 @@ def test_inventory_reports_user_facing_kinds_and_exclusions():
     }
 
 
+@pytest.mark.bulk
 def test_inventory_excludes_artwork_candidates(tmp_path):
     source = tmp_path / "artwork.osm"
     source.write_text(
@@ -122,6 +125,7 @@ def test_manifest_covers_the_approved_catalog_scope_and_budgets():
     assert MAX_CATALOG_RADIUS_M == 2_000.0
 
 
+@pytest.mark.bulk
 def test_inventory_classifies_every_approved_kind(tmp_path):
     tag_by_kind = {
         "pub": ("amenity", "pub"),
@@ -162,6 +166,7 @@ def test_inventory_classifies_every_approved_kind(tmp_path):
     assert report.candidate_objects == len(CATALOG_KINDS)
 
 
+@pytest.mark.bulk
 def test_inventory_deduplicates_duplicate_source_object(tmp_path):
     source = tmp_path / "duplicate.osm"
     source.write_text(
@@ -181,17 +186,15 @@ def test_inventory_deduplicates_duplicate_source_object(tmp_path):
     assert report.excluded_counts["duplicate"] == 1
 
 
+@pytest.mark.bulk
 def test_inventory_rejects_missing_source():
-    import pytest
-
     with pytest.raises(FileNotFoundError):
         inventory_pbf(Path("packages/pound-core/tests/fixtures/missing.osm.pbf"))
 
 
+@pytest.mark.bulk
 def test_inventory_cli_writes_sorted_json_and_rejects_repo_data_output(tmp_path):
     import json
-
-    import pytest
 
     from scripts.catalog_inventory import main
 

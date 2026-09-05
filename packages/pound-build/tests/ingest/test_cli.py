@@ -137,6 +137,7 @@ def test_build_profile_emits_completed_phases_as_json_lines(tmp_path: Path, monk
     assert all(record["peak_rss_bytes"] > 0 for record in records)
 
 
+@pytest.mark.bulk
 def test_catalog_great_britain_writes_independent_artifact_and_json_summary(tmp_path, capsys):
     out = tmp_path / "catalog.pkl"
     assert (
@@ -177,6 +178,7 @@ def test_catalog_great_britain_writes_independent_artifact_and_json_summary(tmp_
     assert artifact.metadata["attribution"] == "© OpenStreetMap contributors"
 
 
+@pytest.mark.bulk
 def test_catalog_great_britain_filters_pbf_in_unique_temp_file_without_mutating_source(
     tmp_path, monkeypatch
 ):
@@ -241,6 +243,7 @@ def test_catalog_great_britain_cleans_temp_filter_on_failure(tmp_path, monkeypat
     assert filtered_paths and not filtered_paths[0].parent.exists()
 
 
+@pytest.mark.bulk
 def test_catalog_great_britain_profile_reports_reader_and_serialization_phases(tmp_path, capsys):
     out = tmp_path / "catalog.pkl"
     assert (
