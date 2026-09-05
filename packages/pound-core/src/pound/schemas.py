@@ -473,3 +473,87 @@ class CanalRouteResponse(BaseModel):
     geometry: GeoJSONLineString
     day_geometries: list[RouteDayGeometry] = Field(default_factory=list)
     locks: list[RouteLock] = Field(default_factory=list)
+
+
+# Attraction lookup contracts are additive to route-time node/place resolution.
+ATTRACTION_KINDS = [
+    "museum",
+    "gallery",
+    "historic_site",
+    "garden",
+    "wildlife_attraction",
+    "landmark",
+]
+
+
+class ResolvePlaceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    query: str = Field(min_length=1, max_length=200)
+    kinds: list[str] = Field(
+        default_factory=lambda: list(ATTRACTION_KINDS), min_length=1, max_length=16
+    )
+    scope_id: Literal["gb"] = "gb"
+
+    @field_validator("query")
+    @classmethod
+    def normalize_query(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("query must contain text")
+        return value
+
+    @field_validator("kinds")
+    @classmethod
+    def known_kinds(cls, value: list[str]) -> list[str]:
+        if set(value) - CATALOG_KINDS or len(set(value)) != len(value):
+            raise ValueError("kinds must be unique supported catalog kinds")
+        return value
+
+
+class ResolvedPlaceOption(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    option_ref: str
+    source: Literal["osm"] = "osm"
+    source_id: str
+    name: str
+    coordinate: Coordinate
+    locality: str | None
+    catalog_revision: str
+    attribution: str = "© OpenStreetMap contributors"
+
+
+class PlaceResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    status: Literal["resolved", "ambiguous", "not_found", "unavailable", "incomplete"]
+    options: list[ResolvedPlaceOption] = Field(default_factory=list, max_length=5)
+    reason: Literal[
+        "exact",
+        "selection_required",
+        "no_match",
+        "catalog_unavailable",
+        "work_limit",
+        "result_limit",
+    ]
+    work_used: int = Field(ge=0, default=0)
+
+    @model_validator(mode="after")
+    def consistent_outcome(self):
+        reasons = {
+            "resolved": {"exact"},
+            "ambiguous": {"selection_required"},
+            "not_found": {"no_match"},
+            "unavailable": {"catalog_unavailable"},
+            "incomplete": {"work_limit", "result_limit"},
+        }
+        if self.reason not in reasons[self.status]:
+            raise ValueError("reason does not match resolution status")
+        if self.status == "resolved" and len(self.options) != 1:
+            raise ValueError("resolved requires one option")
+        if self.status == "ambiguous" and not self.options:
+            raise ValueError("selection requires options")
+        if self.status in {"not_found", "unavailable"} and self.options:
+            raise ValueError("missing source result cannot contain options")
+        return self

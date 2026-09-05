@@ -6,6 +6,7 @@ import { config } from './lib/config';
 import type { PlaceSearch, TransferRouter } from './lib/google/contracts';
 import { googleMapsLoader } from './lib/google/loader';
 import { createGoogleAdapters } from './lib/google/sdk';
+import { createPlaceController } from './lib/places/controller';
 import { createTripStore } from './lib/stores/trip';
 
 const target = document.getElementById('app');
@@ -30,5 +31,14 @@ const store = createTripStore({
 });
 mount(App, { target, props: { dependencies: {
   store, placeSearch,
+  placeDiscovery: createPlaceController({
+    transferRouter,
+    textSearch: {
+      async search(query, bounds) {
+        const loaded = await adapters;
+        return loaded.placeTextSearch?.search(query, bounds) ?? { status: 'unavailable', places: [] };
+      },
+    },
+  }),
   loadMapView: async (element: HTMLElement) => (await adapters).createMapView(element),
 } } });
