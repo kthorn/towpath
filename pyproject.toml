@@ -3,6 +3,7 @@ package = false
 
 [tool.uv.workspace]
 members = ["packages/*"]
+exclude = ["packages/towpath-agent"]
 
 [dependency-groups]
 dev = [

@@ -36,3 +36,13 @@ after their actionable feedback has been incorporated.
 ## Security & Data Practices
 
 Do not commit downloaded PBF files, generated artifacts, credentials, or API tokens. Treat graph validation reports as authoritative and record confirmed topology corrections in `data/overrides.json` rather than patching generated output.
+
+## Optional application agent
+
+`packages/towpath-agent/` contains the independently installed TypeScript Pi adapter. Use
+Node 24.15+ and run `npm ci`, `npm test`, and `npm run demo` from that directory. Tests and
+the demo use a faux provider and synthetic domain tools; they must not call external models.
+This package is excluded from the uv workspace and the production Python website image.
+Future model calls are permitted only in the optional application agent service, not in
+Pound core or deterministic routing/catalog handlers. Keep credentials and provider objects
+out of browser events and shared routing artifacts.
