@@ -3,13 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.15.0" },
+  "engines": {
+    "node": ">=24.15.0"
+  },
   "exports": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "demo": "npm run build && node dist/test/demo.js"
+    "demo": "npm run build && node dist/test/demo.js",
+    "smoke:live": "npm run build && node dist/src/live-cli.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.2",

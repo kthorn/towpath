@@ -103,3 +103,13 @@ limits, strict tool schemas, ownership/revision/deletion/expiry, concurrency, ca
 late factories/tool results, browser replay/schema failures, and error redaction. Regression
 coverage includes fatal payload budgets through real Pi and browser promises rejected before
 the task event can be emitted. All default tests and the demonstration are offline.
+
+### Live smoke harness
+
+The opt-in `npm run smoke:live` CLI uses GPT 5.6 Luna through Amazon Bedrock Converse
+(`us.openai.gpt-5.6-luna`) with AWS-owned credentials and billing. A single synthetic
+place tool checks the model/tool round-trip; route quality is deferred to the web UI.
+The harness is bounded to three model calls and runs independently of offline CI.
+Initial live validation reached AWS but was denied because Luna is unavailable to the
+configured account; successful tool execution awaits account access. See the package
+README for setup and the command.

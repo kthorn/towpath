@@ -157,3 +157,37 @@ as a separately supervised optional Node service with its own authentication, se
 lifecycle. The Python website container and manual planner remain usable without this package.
 
 See [the design](../../docs/completed/2026-09-05-pi-agent-runtime-design.md) for the #20 handoff.
+
+## Live Bedrock smoke test
+
+Requires Node 24.15+, AWS credentials, and account access to **GPT 5.6 Luna** on
+Amazon Bedrock. Billing goes through AWS. From this package directory:
+
+```sh
+npm ci
+AWS_PROFILE=default AWS_REGION=us-east-1 npm run smoke:live
+# Optional one-shot prompt (still requires a tool call to pass):
+npm run smoke:live -- --prompt 'Use resolve_place to look up Bletchley Park.'
+```
+
+The CLI uses Pi's `amazon-bedrock` provider and Converse streaming with the US inference
+ID `us.openai.gpt-5.6-luna`. AWS documents the supported regions and inference IDs in the
+[model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html).
+Use a supported US region. AWS environment credentials, bearer tokens, container roles,
+and web identity are supported; absent those, the CLI uses `AWS_PROFILE` or the default profile.
+No Pi login or OpenAI API key is needed. It does not load Pi credential files or fall back
+to another model/provider.
+
+This makes at most three billed model calls (1024 output tokens each), with a 60-second
+run deadline. One synthetic `resolve_place` tool returns a fixed fixture; no routing or
+place service is contacted. JSON event output shows tool status and streamed text, followed
+by elapsed time and the executed tool count. Exit status is zero only if the run completes,
+executes the tool, and emits text. This checks connectivity, not route-selection quality.
+Each invocation starts a fresh in-memory session. The live command is opt-in and never runs
+in CI; `npm test` checks the harness's pass/fail behavior offline.
+
+If it reports `model_unavailable`, check credentials and Bedrock account/model access.
+During initial validation on 2026-09-05, AWS rejected Luna with `AccessDeniedException`:
+`openai.gpt-5.6-luna is not available for this account.` AWS directed the account owner to
+[Sales support](https://aws.amazon.com/contact-us/sales-support/) for access options.
+A successful live tool round-trip remains to be verified once account access is available.
