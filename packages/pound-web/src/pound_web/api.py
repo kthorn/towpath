@@ -1,10 +1,13 @@
 """HTTP API for candidate selection and pure artifact-backed routing."""
 
+import hashlib
 import threading
 from collections import OrderedDict
+from typing import Annotated, Literal
 
 import networkx as nx
-from fastapi import APIRouter, HTTPException, Request  # pyright: ignore[reportMissingImports]
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, Response  # pyright: ignore[reportMissingImports]
 from pound.models import RETAINED_POI_KINDS  # pyright: ignore[reportMissingImports]
 from pound.route.candidates import nearest_candidates  # pyright: ignore[reportMissingImports]
 from pound.route.cost import resolve_movable_bridge_delay  # pyright: ignore[reportMissingImports]
@@ -18,6 +21,8 @@ from pound.schemas import (  # pyright: ignore[reportMissingImports]
     CanalNetworkResponse,
     CanalPointHandle,
     CanalRouteResponse,
+    ClimateLocationResponse,
+    ClimateLocationsResponse,
     Coordinate,
     PlacesRequest,
     PlacesResponse,
@@ -391,3 +396,93 @@ def canal_route(body: CanalRouteRequest, request: Request) -> CanalRouteResponse
         return plan_projected_route(constraints, artifact=request.app.state.artifact)
     except RouteUnavailableError as exc:
         raise _error(422, code="route_unavailable", message=str(exc)) from exc
+
+
+def _climate_data(request: Request) -> dict:
+    data = getattr(request.app.state, "climate", None)
+    if data is None:
+        raise _error(
+            503, code="climate_unavailable", message="Historical temperatures are unavailable."
+        )
+    return data
+
+
+def _climate_response(request: Request, data: dict, key: str) -> Response:
+    # Include the representation key: a week or period change must not reuse another ETag.
+    tag = '"' + hashlib.sha256(f"{data['revision']}:{key}".encode()).hexdigest() + '"'
+    headers = {"ETag": tag, "Cache-Control": "public, max-age=0, must-revalidate"}
+    matches = request.headers.get("if-none-match", "").split(",")
+    if any(value.strip().removeprefix("W/") in (tag, "*") for value in matches):
+        return Response(status_code=304, headers=headers)
+    return JSONResponse(data, headers=headers)
+
+
+@router.get("/climate/locations", response_model=ClimateLocationsResponse)
+def climate_locations(
+    request: Request,
+    week_id: Annotated[int, Query(ge=0, le=17)] = 8,
+    period_years: Annotated[int, Query()] = 25,
+    metric: Literal["high", "low"] = "high",
+) -> Response:
+    """Return bounded named-location summaries without distribution sample arrays."""
+    if period_years not in (5, 25):
+        raise HTTPException(status_code=422, detail="period_years must be 5 or 25")
+    artifact = _climate_data(request)
+    locations = []
+    for location in artifact["locations"]:
+        week = location["weeks"][week_id]
+        distribution = week[metric][str(period_years)]
+        locations.append(
+            {
+                "id": location["id"],
+                "name": location["name"],
+                "coordinate": location["coordinate"],
+                "distribution": {k: v for k, v in distribution.items() if k != "samples"},
+            }
+        )
+    from pound.climate.calendar import week_label
+
+    payload = {
+        "revision": artifact["revision"],
+        "end_year": artifact["end_year"],
+        "source": artifact["source"],
+        "week_id": week_id,
+        "week_label": week_label(week_id),
+        "period_years": period_years,
+        "metric": metric,
+        "locations": locations,
+    }
+    return _climate_response(
+        request,
+        ClimateLocationsResponse.model_validate(payload).model_dump(mode="json"),
+        f"list:{week_id}:{period_years}:{metric}",
+    )
+
+
+@router.get("/climate/locations/{location_id}", response_model=ClimateLocationResponse)
+def climate_location(
+    location_id: str,
+    request: Request,
+    week_id: Annotated[int, Query(ge=0, le=17)] = 8,
+) -> Response:
+    """Return both historical periods and metrics for one supported location."""
+    artifact = _climate_data(request)
+    location = next((loc for loc in artifact["locations"] if loc["id"] == location_id), None)
+    if location is None:
+        raise _error(404, code="climate_location_not_found", message="Climate location not found.")
+    week = location["weeks"][week_id]
+    payload = {
+        "revision": artifact["revision"],
+        "end_year": artifact["end_year"],
+        "source": artifact["source"],
+        "week_id": week_id,
+        "week_label": week["label"],
+        "location": {k: v for k, v in location.items() if k != "weeks"},
+        "high": week["high"],
+        "low": week["low"],
+    }
+    return _climate_response(
+        request,
+        ClimateLocationResponse.model_validate(payload).model_dump(mode="json"),
+        f"detail:{location_id}:{week_id}",
+    )
