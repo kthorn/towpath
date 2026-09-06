@@ -1,5 +1,6 @@
 """FastAPI application factory and production entry point."""
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -74,6 +75,18 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
 
         app.state.place_sessions = PlaceSessions()
         app.state.place_name_index = None
+
+        app.state.climate = None
+        if runtime_settings.climate_path is not None:
+            try:
+                from pound.climate.artifact import load_climate
+
+                app.state.climate = load_climate(runtime_settings.climate_path).model_dump(
+                    mode="json"
+                )
+            except (OSError, ValueError) as exc:
+                logging.getLogger(__name__).warning("Climate artifact unavailable: %s", exc)
+
         app.state.catalog = None
         app.state.catalog_spatial_index = None
         app.state.catalog_error = None

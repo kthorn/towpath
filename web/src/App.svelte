@@ -2,6 +2,11 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import './app.css';
   import AttractionPanel from './component/AttractionPanel.svelte';
+
+  import ClimateControls from './component/ClimateControls.svelte';
+  import ClimateDetail from './component/ClimateDetail.svelte';
+  import { climateColor, CLIMATE_COLOR_LIMITS } from './lib/climate';
+  import { createClimateStore } from './lib/stores/climate';
   import BoatConstraints from './component/BoatConstraints.svelte';
   import BoatSettings from './component/BoatSettings.svelte';
   import EndpointPanel from './component/EndpointPanel.svelte';
@@ -16,11 +21,43 @@
 
   let { dependencies }: { dependencies: AppDependencies } = $props();
   const store = $derived(dependencies.store);
+  const defaultClimateStore = createClimateStore();
+  const climateStore = $derived(dependencies.climateStore ?? defaultClimateStore);
+  let mapView = $state<MapView | undefined>();
+  let paintedClimateView: MapView | undefined;
+  let paintedClimateSignature = "";
+  $effect(() => {
+    const state = $climateStore;
+    const markers = state.enabled ? state.summaries.map((location) => {
+      const d = location.distribution;
+      const available = d.available && d.median !== null && d.p10 !== null && d.p90 !== null;
+      const limits = CLIMATE_COLOR_LIMITS[state.metric];
+      const clipped = available && (d.median! < limits.min || d.median! > limits.max);
+      return {
+        id: location.id, coordinate: location.coordinate,
+        value: available ? `${d.median!.toFixed(1)}°${clipped ? '*' : ''}` : '—',
+        color: available ? climateColor(state.metric, d.median!) : '#e5e7eb',
+        label: `${location.name}: daily ${state.metric}, ${state.weekLabel}, ` +
+          `${d.start_year}–${d.end_year}. ` + (available
+            ? `Median ${d.median!.toFixed(1)}°C; middle 80% ${d.p10!.toFixed(1)}–${d.p90!.toFixed(1)}°C. ${d.n_days} days across ${d.n_years} summers.${clipped ? ' Colour is at the legend limit.' : ''}`
+            : 'Historical range unavailable.'),
+      };
+    }) : [];
+    const signature = JSON.stringify(markers);
+    if (mapView !== paintedClimateView || signature !== paintedClimateSignature) {
+      mapView?.climate(markers, (id) => { void climateStore.selectLocation(id); });
+      paintedClimateView = mapView;
+      paintedClimateSignature = signature;
+    }
+  });
+  function setMapView(view: MapView | undefined) {
+    mapView = view;
+    dependencies.store.setMapView(view);
+  }
   const boatSettings = createBoatSettingsStore();
   let active = $state<EndpointSlot>('origin');
   let plannerSession = $state({ days: 7 as string | number, hours: 6 as string | number });
   let searchKey = $state(0);
-  let mapView: MapView | undefined;
   let hasAttractionPreview = false;
   function clearAttractionPreview() {
     if (!hasAttractionPreview) return;
@@ -119,7 +156,7 @@
     <BoatConstraints formId="route-actions" bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
     <div class="map-column">
       <fieldset class="map-target"><legend>Map click sets</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set destination from map</label></fieldset>
-		<MapCanvas
+    <MapCanvas
         load={dependencies.loadMapView}
         onclick={(coordinate) => store.setEndpointCoordinate(active, coordinate)}
         onhirebaseselect={store.selectHireBase}
@@ -128,7 +165,7 @@
           address: base.operator,
           coordinate: base.coordinate,
         })}
-        onready={(view) => { mapView = view; store.setMapView(view); }}
+        onready={setMapView}
       />
     {#if $store.networkLoading && !$store.hasNetworkOverlay}
       <p class="network-status" role="status">Loading canal network overlay…</p>
@@ -147,6 +184,9 @@
           onPreview={(routes) => { hasAttractionPreview = true; mapView?.land('origin', routes.outward); mapView?.land('destination', routes.return); }}
           onClearPreview={clearAttractionPreview} />
       {/if}
+
+      <ClimateControls store={climateStore} />
+      <ClimateDetail store={climateStore} />
 		{#key searchKey}
 			<EndpointPanel slot="origin" endpoint={$store.origin} {store} search={dependencies.placeSearch} />
 			<EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} />

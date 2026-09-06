@@ -186,6 +186,7 @@ function setup(
 		hireBases: vi.fn(
 			(_bases: never[], _selectedIdentity: string | null) => {},
 		),
+		climate: vi.fn(),
 		fitNetwork: vi.fn(),
 		places: vi.fn(),
 		pois: vi.fn(),
@@ -836,6 +837,7 @@ describe("trip planning interface", () => {
 			hireBases: vi.fn(
 				(_bases: never[], _selectedIdentity: string | null) => {},
 			),
+			climate: vi.fn(),
 			fitNetwork: vi.fn(),
 			places: vi.fn(),
 			pois: vi.fn(),
@@ -858,6 +860,7 @@ describe("trip planning interface", () => {
 			hireBases: vi.fn(
 				(_bases: never[], _selectedIdentity: string | null) => {},
 			),
+			climate: vi.fn(),
 			fitNetwork: vi.fn(),
 			places: vi.fn(),
 			pois: vi.fn(),
@@ -909,6 +912,7 @@ describe("trip planning interface", () => {
 			hireBases: vi.fn(
 				(_bases: never[], _selectedIdentity: string | null) => {},
 			),
+			climate: vi.fn(),
 			fitNetwork: vi.fn(),
 			clearLand: vi.fn(),
 			onMapClick: vi.fn(() => removeClick),
@@ -1136,4 +1140,56 @@ it('restores endpoint walking overlays when an attraction preview is cleared', a
   await fireEvent.click(screen.getByRole('button', { name: 'Clear attraction' }));
   await waitFor(() => expect(map.land).toHaveBeenCalledWith('origin', endpoint('Bletchley Park', 1).landRoute));
   expect(map.land).toHaveBeenCalledWith('destination', endpoint('Canal Base', 2).landRoute);
+});
+
+it('connects climate summaries and selection to the map across planner remounts', async () => {
+  history.replaceState(null, '', '/');
+  const { createClimateStore } = await import('../lib/stores/climate');
+  const distribution = {
+    available: true, missing_years: [], start_year: 2001, end_year: 2025,
+    n_days: 175, n_years: 25, p10: 17, median: 21, p90: 25,
+  };
+  const source = { name: 'Synthetic test source', url: 'https://example.org', attribution: 'Test', timezone: 'Europe/London', model: 'era5_land' };
+  const summaries = { revision: 'climate-r1', end_year: 2025, source, week_id: 8,
+    week_label: 'June 26–July 2', period_years: 25 as const, metric: 'high' as const,
+    locations: [{ id: 'oxford', name: 'Oxford', coordinate: { lat: 51.75, lon: -1.25 }, distribution }],
+  };
+  const api = {
+    locations: vi.fn(async () => summaries),
+    location: vi.fn(async () => ({ revision: 'climate-r1', end_year: 2025, source, week_id: 8,
+      week_label: 'June 26–July 2', location: { id: 'oxford', name: 'Oxford', coordinate: { lat: 51.75, lon: -1.25 }, source_coordinate: null, elevation: null },
+      high: { '25': { ...distribution, samples: [17, 21, 25] }, '5': { ...distribution, samples: [18, 22, 26] } },
+      low: { '25': { ...distribution, samples: [7, 11, 15] }, '5': { ...distribution, samples: [8, 12, 16] } },
+    })),
+  };
+  const climateStore = createClimateStore({ api });
+  const { dependencies } = setup();
+  dependencies.climateStore = climateStore;
+  render(App, { props: { dependencies } });
+  await waitFor(() => expect(dependencies.loadMapView).toHaveBeenCalled());
+  const map = await vi.mocked(dependencies.loadMapView).mock.results[0].value;
+  await climateStore.setEnabled(true);
+  await waitFor(() => expect(map.climate).toHaveBeenCalledWith(
+    [expect.objectContaining({ id: 'oxford', value: '21.0°', label: expect.stringContaining('2001–2025') })],
+    expect.any(Function),
+  ));
+  const paintsBeforeSelection = vi.mocked(map.climate).mock.calls.length;
+  const select = vi.mocked(map.climate).mock.lastCall![1];
+  select('oxford');
+  await waitFor(() => expect(api.location).toHaveBeenCalledWith('oxford', { week_id: 8 }));
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Oxford' })).toBeInTheDocument());
+  expect(vi.mocked(map.climate).mock.calls.length).toBe(paintsBeforeSelection);
+  const remountedMap = { ...map, climate: vi.fn(), destroy: vi.fn() };
+  vi.mocked(dependencies.loadMapView).mockResolvedValueOnce(remountedMap);
+  await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+  const oldPaintCount = vi.mocked(map.climate).mock.calls.length;
+  await fireEvent.click(screen.getByRole('link', { name: 'Plan trip' }));
+  await waitFor(() => expect(dependencies.loadMapView).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(remountedMap.climate).toHaveBeenLastCalledWith(
+    [expect.objectContaining({ id: 'oxford' })], expect.any(Function),
+  ));
+  expect(api.locations).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(map.climate).mock.calls.length).toBe(oldPaintCount);
+  await climateStore.setEnabled(false);
+  await waitFor(() => expect(remountedMap.climate).toHaveBeenLastCalledWith([], expect.any(Function)));
 });

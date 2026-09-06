@@ -14,6 +14,7 @@ from pydantic import (  # pyright: ignore[reportMissingImports]
 
 from pound.catalog.manifest import CATALOG_KINDS
 from pound.catalog.metadata import CatalogMetadata
+from pound.climate.artifact import ClimateSource, PeriodDistributions
 
 
 class CanalConstraints(BaseModel):
@@ -557,3 +558,55 @@ class PlaceResolution(BaseModel):
         if self.status in {"not_found", "unavailable"} and self.options:
             raise ValueError("missing source result cannot contain options")
         return self
+
+# Climate API contracts are independent of the routing artifact's revision.
+class ClimateSummaryDistribution(BaseModel):
+    """Historical daily statistics without the detail endpoint's sample arrays."""
+
+    model_config = ConfigDict(extra="forbid")
+    available: bool
+    missing_years: list[int]
+    start_year: int
+    end_year: int
+    n_days: int = Field(ge=0)
+    n_years: int = Field(ge=0)
+    p10: FiniteFloat | None
+    median: FiniteFloat | None
+    p90: FiniteFloat | None
+
+
+class ClimateLocationSummary(BaseModel):
+    id: str
+    name: str
+    coordinate: Coordinate
+    distribution: ClimateSummaryDistribution
+
+
+class ClimateLocationsResponse(BaseModel):
+    revision: str
+    end_year: int
+    source: ClimateSource
+    week_id: int = Field(ge=0, le=17)
+    week_label: str
+    period_years: Literal[5, 25]
+    metric: Literal["high", "low"]
+    locations: list[ClimateLocationSummary] = Field(max_length=500)
+
+
+class ClimateLocationInfo(BaseModel):
+    id: str
+    name: str
+    coordinate: Coordinate
+    source_coordinate: Coordinate
+    elevation: FiniteFloat | None
+
+
+class ClimateLocationResponse(BaseModel):
+    revision: str
+    end_year: int
+    source: ClimateSource
+    week_id: int = Field(ge=0, le=17)
+    week_label: str
+    location: ClimateLocationInfo
+    high: PeriodDistributions
+    low: PeriodDistributions
