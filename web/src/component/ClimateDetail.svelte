@@ -16,6 +16,7 @@
   }
 
   let props: ClimateDetailProps = $props();
+  const instanceId = $props.id();
   let observedState = $state<ClimateState | null>(null);
 
   $effect(() => {
@@ -100,10 +101,10 @@
 </script>
 
 {#if detail}
-  <aside class="climate-detail" aria-labelledby="climate-detail-title">
+  <aside class="climate-detail" aria-labelledby={`${instanceId}-title`}>
     <div class="climate-detail-heading">
       <div>
-        <h2 id="climate-detail-title">{detail.location.name}</h2>
+        <h2 id={`${instanceId}-title`}>{detail.location.name}</h2>
         <p>{detail.week_label}</p>
       </div>
       <button type="button" class="close" aria-label="Close temperature details" onclick={close}>Close</button>
@@ -161,8 +162,8 @@
       </tbody>
     </table>
 
-    <section class="ecdf" aria-labelledby="ecdf-title">
-      <h3 id="ecdf-title">Daily {metric === 'high' ? 'highs' : 'lows'} empirical distribution</h3>
+    <section class="ecdf" aria-labelledby={`${instanceId}-ecdf`}>
+      <h3 id={`${instanceId}-ecdf`}>Daily {metric === 'high' ? 'highs' : 'lows'} empirical distribution</h3>
       {#if curves.length}
         <p>Each line uses its own sample count and spans 0–100%; both periods share this temperature axis.</p>
         <svg viewBox="0 0 100 100" role="img" aria-label={`Daily ${metric === 'high' ? 'highs' : 'lows'} empirical distribution`} preserveAspectRatio="none">

@@ -30,3 +30,6 @@ scripts/local
 artifacts/*
 !artifacts/great-britain.pkl
 !artifacts/great-britain-catalog.pkl
+
+!artifacts/climate.json
+!artifacts/climate-grid.sqlite
