@@ -16,10 +16,10 @@ try:
 except ImportError:  # pragma: no cover - resource is unavailable on some platforms
     resource = None
 
+from pound.artifact import load_artifact
 from pound.catalog.artifact import load_catalog
 from pound.catalog.manifest import MAX_CATALOG_RADIUS_M
 from pound.catalog.spatial import CatalogSpatialIndex
-from pound.graph.artifact import load_artifact
 from pound.graph.spatial import GraphSpatialIndex
 from pound.schemas import (
     GeoJSONLineString,
@@ -27,8 +27,8 @@ from pound.schemas import (
     NearbyPlacesRequest,
     ViewportPlacesRequest,
 )
-from pound.web.boat_hire import load_boat_hire_seeds
-from pound.web.places import (
+from pound_web.boat_hire import load_boat_hire_seeds
+from pound_web.places import (
     MAX_PLACES_QUERY_WORK,
     PlacesIndex,
     PlacesQueryStats,

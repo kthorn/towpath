@@ -4,10 +4,10 @@ import type { CanalCandidate } from './types';
 import { rankCandidates } from './planner';
 
 const candidates: CanalCandidate[] = [
-  { uid: 1, artifact_revision: 'r1', coordinate: { lat: 1, lon: 1 }, straight_line_distance_m: 10, display_name: 'one' },
-  { uid: 2, artifact_revision: 'r1', coordinate: { lat: 2, lon: 2 }, straight_line_distance_m: 20, display_name: 'two' },
-  { uid: 3, artifact_revision: 'r1', coordinate: { lat: 3, lon: 3 }, straight_line_distance_m: 30, display_name: 'three' },
-  { uid: 4, artifact_revision: 'r1', coordinate: { lat: 4, lon: 4 }, straight_line_distance_m: 40, display_name: 'four' },
+  { candidate_id: 'candidate-1', handle: { edge: [1, 2], fraction: 0.5 }, coordinate: { lat: 1, lon: 1 }, straight_line_distance_m: 10, display_name: 'one' },
+  { candidate_id: 'candidate-2', handle: { edge: [2, 3], fraction: 0.5 }, coordinate: { lat: 2, lon: 2 }, straight_line_distance_m: 20, display_name: 'two' },
+  { candidate_id: 'candidate-3', handle: { edge: [3, 4], fraction: 0.5 }, coordinate: { lat: 3, lon: 3 }, straight_line_distance_m: 30, display_name: 'three' },
+  { candidate_id: 'candidate-4', handle: { edge: [4, 5], fraction: 0.5 }, coordinate: { lat: 4, lon: 4 }, straight_line_distance_m: 40, display_name: 'four' },
 ];
 
 describe('rankCandidates', () => {
@@ -19,7 +19,7 @@ describe('rankCandidates', () => {
       { available: true, durationSeconds: 10, distanceMeters: 200 },
     ]);
 
-    expect(ranked.map(({ candidate }) => candidate.uid)).toEqual([3, 4, 1, 2]);
+    expect(ranked.map(({ candidate }) => candidate.candidate_id)).toEqual(['candidate-3', 'candidate-4', 'candidate-1', 'candidate-2']);
     expect(ranked.map(({ recommended }) => recommended)).toEqual([true, false, false, false]);
     expect(ranked[0]).toMatchObject({ available: true, durationSeconds: 10, distanceMeters: 200 });
     expect(ranked[3]).toMatchObject({ available: false, reason: 'closed' });
@@ -27,7 +27,7 @@ describe('rankCandidates', () => {
 
   it('preserves all geometric candidates and treats missing matrix results as unavailable', () => {
     const ranked = rankCandidates(candidates, [{ available: true, durationSeconds: 5, distanceMeters: 8 }]);
-    expect(ranked.map(({ candidate }) => candidate.uid)).toEqual([1, 2, 3, 4]);
+    expect(ranked.map(({ candidate }) => candidate.candidate_id)).toEqual(['candidate-1', 'candidate-2', 'candidate-3', 'candidate-4']);
     expect(ranked.slice(1).map((item) => item.available ? undefined : item.reason)).toEqual([
       'NO_RESULT', 'NO_RESULT', 'NO_RESULT',
     ]);
@@ -40,7 +40,7 @@ describe('rankCandidates', () => {
       { available: false, reason: 'c' },
       { available: true, durationSeconds: 1, distanceMeters: 1 },
     ]);
-    expect(ranked.map(({ candidate }) => candidate.uid)).toEqual([1, 2, 3]);
+    expect(ranked.map(({ candidate }) => candidate.candidate_id)).toEqual(['candidate-1', 'candidate-2', 'candidate-3']);
     expect(ranked.map(({ recommended }) => recommended)).toEqual([true, false, false]);
   });
 });

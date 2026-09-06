@@ -2,14 +2,14 @@
 
 - **Date:** 2026-08-25
 - **Status:** Refined
-- **Scope:** Show active boat-hire bases on the startup map and show only the one-way, time-reachable background canal network from those bases.
+- **Scope:** Show active boat-hire bases on the startup map and show only the time-reachable background canal network from those bases. (Update: #52 changed the overlay from a one-way reach to a return-trip allowance; see the schedule-semantics lines below.)
 
 ## Goal
 
 Replace the startup-only connected-component overlay introduced by #43 with a live,
 user-specific reachability overlay. The map must show every active supported hire base and
-only canal edges reachable from at least one of them within the selected one-way cruising
-time. The full routing graph remains available for all route and candidate operations.
+only canal edges reachable from at least one of them within the selected cruising
+time (return-trip semantics since #52). The full routing graph remains available for all route and candidate operations.
 
 ## User experience
 
@@ -24,15 +24,17 @@ The existing planner schedule is the single map-reachability control:
   required, and applies `min=1`/`max=365`; it also applies `max=24` to `Hours per day`. This
   deliberately tightens planner-UI hours to a physical day, while direct route API/CLI callers
   retain their existing finite-positive upper-bound-free hours contract.
-- The map budget is `days * hours_per_day * 60` minutes. It is a one-way limit from
-  any active base, not a return-trip allowance.
+- The map budget is `days * hours_per_day * 60` minutes. (Update: #52 re-scoped this
+  budget to a return-trip allowance — the overlay now shows canal routes that can
+  return to the same base, computed with an effective one-way cutoff of half the
+  budget.)
 - A valid edit to either schedule input refreshes the background network without requiring
   the user to plan a route. A short client-side debounce prevents a request for every
   keystroke; response generations ensure an older response cannot overwrite a newer one.
 - Saving existing boat dimensions or the movable-bridge delay also refreshes the network.
   The map therefore uses the same constraint and cost model as route planning.
-- The schedule UI states that the background map is the one-way cruising reach from any
-  hire base, capped at 168 cruising hours. It does not introduce a second settings screen or a
+- The schedule UI states that the background map shows canal routes that can return to
+  the same hire base within the selected schedule, capped at 168 cruising hours. It does not introduce a second settings screen or a
   separate time control.
 
 Every active base receives a distinct accessible map marker. It has a hover label and a
@@ -220,8 +222,8 @@ startup/API coverage. The real-artifact gate is a documented manual pre-deployme
 the web app with real `POUND_ARTIFACT_PATH` and `POUND_BOAT_HIRE_ENRICHMENT_PATH`, POST the
 default seven-day payload, and record curl latency plus response line and vertex counts in the PR
 verification. It adds neither a committed artifact/output nor a hardware-dependent CI timing
-limit. Update the README's map description to state the default seven-day, one-way hire-base
-reachability behavior. When implementation is delivered, move this design
+limit. Update the README's map description to state the default seven-day hire-base
+reachability behavior (return-trip semantics since #52). When implementation is delivered, move this design
 to `docs/completed/` in the same pull request.
 
 ## Non-goals

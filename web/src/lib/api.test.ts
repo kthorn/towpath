@@ -4,6 +4,8 @@ import { createPoundApi, PoundApiError } from './api';
 import type {
   CanalCandidatesResponse,
   CanalNetworkRequest,
+  CanalNetworkResponse,
+  CanalPointHandle,
   CanalRouteResponse,
   HealthResponse,
   TurnaroundCandidatesResponse,
@@ -17,8 +19,8 @@ const candidatesResponse: CanalCandidatesResponse = {
   artifact_revision: 'artifact-123',
   candidates: [
     {
-      uid: 42,
-      artifact_revision: 'artifact-123',
+      candidate_id: '41:42:0.500000000000',
+      handle: { edge: [41, 42], fraction: 0.5 },
       coordinate: { lat: 51.997, lon: -0.742 },
       straight_line_distance_m: 125.5,
       display_name: 'Grand Union Canal',
@@ -86,8 +88,8 @@ describe('createPoundApi', () => {
     };
     const request = {
       artifact_revision: 'artifact-123',
-      start_uid: 42,
-      waypoint_uid: null,
+      start: { edge: [42, 43] as [number, number], fraction: 0.5 },
+      waypoint: null,
       days: 3,
       hours_per_day: 6,
       boat_length_m: 17.5,
@@ -131,7 +133,7 @@ describe('createPoundApi', () => {
       boat_height_m: null, movable_bridge_delay_min: null,
     };
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ artifact_revision: 'artifact-123', lines: [], bases: [] }), {
+      new Response(JSON.stringify({ artifact_revision: 'artifact-123', lines: [], highlight_lines: [], bases: [] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -143,10 +145,53 @@ describe('createPoundApi', () => {
     });
   });
 
+  it('posts the network reachability request with selected focus lines', async () => {
+    const request: CanalNetworkRequest = {
+      days: 7,
+      hours_per_day: 6,
+      boat_length_m: null,
+      boat_beam_m: null,
+      boat_draft_m: null,
+      boat_height_m: null,
+      movable_bridge_delay_min: null,
+      selected_base_identity: 'test-provider/base:test',
+    };
+    const response: CanalNetworkResponse = {
+      artifact_revision: 'artifact-123',
+      lines: [],
+      highlight_lines: [{ type: 'LineString', coordinates: [[-1, 51], [-1.1, 51.1]] }],
+      bases: [],
+    };
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const result = await createPoundApi(fetchFn).canalNetwork(request);
+
+    expect(result).toEqual(response);
+    expect(fetchFn).toHaveBeenCalledWith('/api/canal-network', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
+    });
+  });
+
   it('posts route constraints and parses the complete route response', async () => {
-    const request = {
-      start_uid: 42,
-      end_uid: 84,
+    const request: {
+      start: CanalPointHandle;
+      end: CanalPointHandle;
+      artifact_revision: string;
+      days: number;
+      hours_per_day: number;
+      boat_length_m: number | null;
+      boat_beam_m: number | null;
+      boat_draft_m: number | null;
+      boat_height_m: number | null;
+      movable_bridge_delay_min: number;
+    } = {
+      start: { edge: [41, 42], fraction: 0.5 },
+      end: { edge: [83, 84], fraction: 0.5 },
       artifact_revision: 'artifact-123',
       days: 2,
       hours_per_day: 6,
@@ -207,7 +252,7 @@ describe('createPoundApi', () => {
     }), { status: 422, headers: { 'Content-Type': 'application/json' } }));
 
     await expect(createPoundApi(fetchFn).turnaroundCandidates({
-      artifact_revision: 'r1', start_uid: 1, waypoint_uid: null, days: 1, hours_per_day: 6,
+      artifact_revision: 'r1', start: { edge: [1, 2], fraction: 0.5 }, waypoint: null, days: 1, hours_per_day: 6,
     })).rejects.toMatchObject({
       code: 'no_feasible_turnaround',
       rejections: [{ code: 'budget_exceeded', fields: ['days'] }],

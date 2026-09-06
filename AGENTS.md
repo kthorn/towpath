@@ -2,16 +2,16 @@
 
 ## Project Structure & Module Organization
 
-`pound/` contains the Python package. Keep functionality within the existing domain modules: `ingest/` handles OSM and Overpass input, `graph/` builds and loads routing artifacts, `route/` resolves locations and plans journeys, and `validate/` checks graph integrity. Shared Pydantic models live in `pound/schemas.py`. Tests mirror this layout under `tests/`; reusable sample data belongs in `tests/fixtures/`. Put developer utilities in `scripts/`, design notes in `docs/`, downloaded source data in `pound/data/`, and generated graph files in `pound/artifacts/`.
+`packages/pound-core/src/pound/` contains runtime Python code, `packages/pound-build/src/pound_build/` contains offline build tooling, and `packages/pound-web/src/pound_web/` contains the FastAPI application. Keep functionality within the existing domain modules: ingest handles OSM and Overpass input, graph builds and loads routing artifacts, route resolves locations and plans journeys, and validate checks graph integrity. Shared Pydantic models live in `packages/pound-core/src/pound/schemas.py`. Tests mirror each package under its `tests/` directory; reusable sample data belongs in package fixtures. Put developer utilities in `scripts/`, design notes in `docs/`, downloaded source data in `data/`, and generated graph files in `artifacts/`.
 
 ## Build, Test, and Development Commands
 
-- `uv sync --extra dev` installs the package and development tools.
+- `uv sync` installs the workspace and development tools.
 - `uv run pytest` runs the default test suite without live-network or bulk-ingest cases.
 - `uv run pytest --run-network` includes tests that call the Overpass API.
-- `uv sync --extra bulk && uv run pytest --run-bulk` installs `pyosmium` and enables bulk tests; `osmium-tool` must also be installed separately.
+- `uv sync --all-packages --extra bulk && uv run pytest --run-bulk` installs `pyosmium` and enables bulk tests; `osmium-tool` must also be installed separately. For build-only work, use `uv sync --package pound-build --extra bulk`.
 - `uv run ruff check .` checks formatting-independent style, imports, and common Python errors.
-- `uv run pound-ingest build oxford --out pound/artifacts/oxford.pkl` builds a small local artifact for manual testing.
+- `uv run --package pound-build python -m pound_build.ingest.cli build oxford --out artifacts/oxford.pkl` builds a small local artifact for manual testing.
 
 ## Coding Style & Naming Conventions
 
@@ -35,4 +35,4 @@ after their actionable feedback has been incorporated.
 
 ## Security & Data Practices
 
-Do not commit downloaded PBF files, generated artifacts, credentials, or API tokens. Treat graph validation reports as authoritative and record confirmed topology corrections in `pound/data/overrides.json` rather than patching generated output.
+Do not commit downloaded PBF files, generated artifacts, credentials, or API tokens. Treat graph validation reports as authoritative and record confirmed topology corrections in `data/overrides.json` rather than patching generated output.

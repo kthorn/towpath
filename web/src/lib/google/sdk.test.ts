@@ -4,20 +4,30 @@ import { createGoogleAdapters } from "./sdk";
 
 describe("Google SDK production bridge", () => {
 	it("wires Maps, Places, and AdvancedMarkerElement constructors", () => {
-		const MapCtor = vi.fn(() => ({ addListener: vi.fn(), fitBounds: vi.fn() }));
-		const PolylineCtor = vi.fn((options) => ({ ...options, setMap: vi.fn() }));
-		const InfoWindowCtor = vi.fn(() => ({
-			setContent: vi.fn(),
-			open: vi.fn(),
-			close: vi.fn(),
-			addListener: vi.fn(() => ({ remove: vi.fn() })),
-		}));
-		const MarkerCtor = vi.fn((options) => ({ ...options }));
-		const PlaceAutocompleteElementCtor = vi.fn(() => ({
-			addEventListener: vi.fn(),
-			removeEventListener: vi.fn(),
-			remove: vi.fn(),
-		}));
+		const MapCtor = vi.fn(function () {
+			return { addListener: vi.fn(), fitBounds: vi.fn() };
+		});
+		const PolylineCtor = vi.fn(function (options) {
+			return { ...options, setMap: vi.fn() };
+		});
+		const InfoWindowCtor = vi.fn(function () {
+			return {
+				setContent: vi.fn(),
+				open: vi.fn(),
+				close: vi.fn(),
+				addListener: vi.fn(() => ({ remove: vi.fn() })),
+			};
+		});
+		const MarkerCtor = vi.fn(function (options) {
+			return { ...options };
+		});
+		const PlaceAutocompleteElementCtor = vi.fn(function () {
+			return {
+				addEventListener: vi.fn(),
+				removeEventListener: vi.fn(),
+				remove: vi.fn(),
+			};
+		});
 		const adapters = createGoogleAdapters(
 			{
 				maps: {
@@ -58,14 +68,20 @@ describe("Google SDK production bridge", () => {
 
 	it("fits a ceiling-sized network without spreading engine-limit arguments", () => {
 		const fitBounds = vi.fn();
-		const MapCtor = vi.fn(() => ({ addListener: vi.fn(), fitBounds }));
-		const PolylineCtor = vi.fn((options) => ({ ...options, setMap: vi.fn() }));
-		const InfoWindowCtor = vi.fn(() => ({
-			setContent: vi.fn(),
-			open: vi.fn(),
-			close: vi.fn(),
-			addListener: vi.fn(() => ({ remove: vi.fn() })),
-		}));
+		const MapCtor = vi.fn(function () {
+			return { addListener: vi.fn(), fitBounds };
+		});
+		const PolylineCtor = vi.fn(function (options) {
+			return { ...options, setMap: vi.fn() };
+		});
+		const InfoWindowCtor = vi.fn(function () {
+			return {
+				setContent: vi.fn(),
+				open: vi.fn(),
+				close: vi.fn(),
+				addListener: vi.fn(() => ({ remove: vi.fn() })),
+			};
+		});
 		const adapters = createGoogleAdapters({
 			maps: {
 				Map: MapCtor,
@@ -115,23 +131,29 @@ describe("Google SDK production bridge", () => {
 			markerEvents.push([event, callback]),
 		);
 		const removeEventListener = vi.fn();
-		const MapCtor = vi.fn(() => ({ addListener: vi.fn(), fitBounds: vi.fn() }));
-		const MarkerCtor = vi.fn((options) => ({
-			...options,
-			addEventListener,
-			removeEventListener,
-		}));
+		const MapCtor = vi.fn(function () {
+			return { addListener: vi.fn(), fitBounds: vi.fn() };
+		});
+		const MarkerCtor = vi.fn(function (options) {
+			return {
+				...options,
+				addEventListener,
+				removeEventListener,
+			};
+		});
 		const infoWindowEvents: Array<[string, unknown]> = [];
 		const addInfoWindowListener = vi.fn((event, callback) => {
 			infoWindowEvents.push([event, callback]);
 			return { remove: vi.fn() };
 		});
-		const InfoWindowCtor = vi.fn(() => ({
-			setContent: vi.fn(),
-			open: vi.fn(),
-			close: vi.fn(),
-			addListener: addInfoWindowListener,
-		}));
+		const InfoWindowCtor = vi.fn(function () {
+			return {
+				setContent: vi.fn(),
+				open: vi.fn(),
+				close: vi.fn(),
+				addListener: addInfoWindowListener,
+			};
+		});
 		const adapters = createGoogleAdapters({
 			maps: { Map: MapCtor, Polyline: vi.fn(), InfoWindow: InfoWindowCtor },
 			marker: { AdvancedMarkerElement: MarkerCtor },

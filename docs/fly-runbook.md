@@ -1,6 +1,6 @@
 # Fly Redeployment Runbook
 
-This runbook operates the existing graph-only Towpath deployment. For the rationale
+This runbook operates the existing Towpath deployment. For the rationale
 behind its one warm Machine, see
 [`2026-08-11-fly-warm-machine-deployment-design.md`](completed/2026-08-11-fly-warm-machine-deployment-design.md).
 
@@ -11,7 +11,7 @@ behind its one warm Machine, see
 | App | `towpath-4772e4a8` |
 | Public domain | `https://towpath-4772e4a8.fly.dev` |
 | Region | `sjc` |
-| Machine | one `shared-cpu-4x` / 8 GB Machine |
+| Machine | one `shared-cpu-2x` / 4 GB Machine |
 | Warm minimum | `min_machines_running = 1` |
 
 Use the `fly.dev` hostname, not Fly's shared IPv4 address. There is no custom domain.
@@ -19,7 +19,8 @@ Use the `fly.dev` hostname, not Fly's shared IPv4 address. There is no custom do
 ```bash
 APP=towpath-4772e4a8
 DOMAIN=https://towpath-4772e4a8.fly.dev
-ARTIFACT=pound/artifacts/england.pkl
+ARTIFACT=artifacts/great-britain.pkl
+CATALOG_ARTIFACT=artifacts/great-britain-catalog.pkl
 ```
 
 Run commands from the repository root in a clean, isolated deployment worktree.
@@ -43,20 +44,26 @@ matching `fly.toml`.
 ## Full source redeploy (code or tracked data)
 
 Use this path after changing application code, frontend code, dependency files, or
-tracked files below `pound/`. Stage the selected `england.pkl` at `$ARTIFACT` first;
-if it is absent, use [Graph-artifact redeploy](#graph-artifact-redeploy). Source-only
-checks and inputs are required here, not for configuration-only releases:
+tracked runtime files below `packages/` or `data/`. Stage the selected graph at
+`$ARTIFACT` and catalog at `$CATALOG_ARTIFACT` first; if either is absent, use the
+corresponding artifact-redeploy procedure below. Source-only checks and inputs are
+required here, not for configuration-only releases:
 
 ```bash
-uv sync --extra dev --extra bulk
-uv run pytest
+uv sync --all-packages --extra bulk
+uv run pytest --run-bulk
 uv run ruff check .
 (cd web && npm ci && npm run check && npm test -- --run)
 test -f "$ARTIFACT"
+test -f "$CATALOG_ARTIFACT"
 git check-ignore -q "$ARTIFACT"
-EXPECTED_REVISION="$(uv run python -c '
-from pound.graph.artifact import load_artifact
-print(load_artifact("pound/artifacts/england.pkl").metadata["artifact_revision"])
+git check-ignore -q "$CATALOG_ARTIFACT"
+EXPECTED_REVISION="$(uv run --package pound-core python -c '
+from pathlib import Path
+from pound.artifact import load_artifact
+from pound.catalog.artifact import load_catalog
+load_catalog(Path("artifacts/great-britain-catalog.pkl"))
+print(load_artifact("artifacts/great-britain.pkl").metadata["artifact_revision"])
 ')"
 printf 'Deploying artifact revision: %s\n' "$EXPECTED_REVISION"
 : "${VITE_GOOGLE_MAPS_API_KEY:?set the restricted browser key}"
@@ -86,20 +93,40 @@ Use this path after rebuilding the routing graph. Copy the selected generated gr
 into the ignored artifact location, then use the full source procedure:
 
 ```bash
-: "${NEW_ARTIFACT:?set the generated england.pkl path}"
+: "${NEW_ARTIFACT:?set the generated great-britain.pkl path}"
 mkdir -p "$(dirname "$ARTIFACT")"
 cp "$NEW_ARTIFACT" "$ARTIFACT"
 test -f "$ARTIFACT"
 git check-ignore -q "$ARTIFACT"
-EXPECTED_REVISION="$(uv run python -c '
-from pound.graph.artifact import load_artifact
-print(load_artifact("pound/artifacts/england.pkl").metadata["artifact_revision"])
+EXPECTED_REVISION="$(uv run --package pound-core python -c '
+from pound.artifact import load_artifact
+print(load_artifact("artifacts/great-britain.pkl").metadata["artifact_revision"])
 ')"
 printf 'Deploying artifact revision: %s\n' "$EXPECTED_REVISION"
 ```
 
 Run the full source deploy, then record its `ImageRef`, `$EXPECTED_REVISION`, and
 `FLY_CONFIG_COMMIT="$(git rev-parse HEAD)"`. Never commit the staged graph artifact.
+
+## Catalog-artifact redeploy
+
+Use this path after rebuilding the place catalog. Copy the selected generated catalog
+into the ignored artifact location, validate it with the runtime loader, then use the
+full source procedure:
+
+```bash
+: "${NEW_CATALOG_ARTIFACT:?set the generated great-britain-catalog.pkl path}"
+mkdir -p "$(dirname "$CATALOG_ARTIFACT")"
+cp "$NEW_CATALOG_ARTIFACT" "$CATALOG_ARTIFACT"
+git check-ignore -q "$CATALOG_ARTIFACT"
+uv run --package pound-core python -c '
+from pathlib import Path
+from pound.catalog.artifact import load_catalog
+load_catalog(Path("artifacts/great-britain-catalog.pkl"))
+'
+```
+
+Never commit the staged catalog artifact.
 
 ## Configuration-only redeploy
 
@@ -151,7 +178,7 @@ fly config validate --strict --app "$APP"
 fly machines list --app "$APP"
 ```
 
-There must be exactly one `sjc` `shared-cpu-4x:8192MB` Machine, in `started` state
+There must be exactly one `sjc` `shared-cpu-2x:4096MB` Machine, in `started` state
 with a passing check. If it is stopped, get its ID from the listing and start it once:
 
 ```bash
@@ -188,12 +215,12 @@ or early health response.
 
 ## Safety notes
 
-- Keep `min_machines_running = 1`; the 8 GB Machine cannot use Fly suspend, and
+- Keep `min_machines_running = 1`; the 4 GB Machine cannot use Fly suspend, and
   ordinary stop/start did not meet the accepted readiness contract.
 - Keep `--ha=false`: this deployment intentionally has one Machine, no volume, no
   database, and no autoscaler.
 - Do not use the shared IPv4 as an endpoint. The canonical public address is
   `https://towpath-4772e4a8.fly.dev`.
-- Do not commit `pound/artifacts/england.pkl`, browser configuration values, or
-  credentials.
+- Do not commit `artifacts/great-britain.pkl`, `artifacts/great-britain-catalog.pkl`, browser
+  configuration values, or credentials.
 - This runbook does not add CI, a custom domain, a second region, or scale-to-zero.

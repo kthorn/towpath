@@ -16,6 +16,7 @@ import type {
 	SelectedPlace,
 } from "../lib/google/contracts";
 import type { TripState, TripStore } from "../lib/stores/trip";
+import type { BoatHireBase } from "../lib/types";
 
 function storedSettings(): unknown {
 	try {
@@ -25,13 +26,15 @@ function storedSettings(): unknown {
 	}
 }
 
+const candidateId = (uid: number) => `candidate-${uid}`;
+const candidateHandle = (uid: number) => ({ edge: [uid, uid + 1] as [number, number], fraction: 0.5 });
 const endpoint = (name: string, uid: number, unavailable = false) => ({
 	place: { name, address: `${name} address`, coordinate: { lat: 51, lon: -1 } },
 	candidates: [
 		{
 			candidate: {
-				uid,
-				artifact_revision: "r1",
+				candidate_id: candidateId(uid),
+				handle: candidateHandle(uid),
 				coordinate: { lat: 51.1, lon: -1.1 },
 				straight_line_distance_m: 1250,
 				display_name: `${name} Wharf`,
@@ -48,8 +51,8 @@ const endpoint = (name: string, uid: number, unavailable = false) => ({
 		},
 		{
 			candidate: {
-				uid: uid + 100,
-				artifact_revision: "r1",
+				candidate_id: candidateId(uid + 100),
+				handle: candidateHandle(uid + 100),
 				coordinate: { lat: 51.2, lon: -1.2 },
 				straight_line_distance_m: 1700,
 				display_name: `${name} Alternative`,
@@ -61,7 +64,8 @@ const endpoint = (name: string, uid: number, unavailable = false) => ({
 			distanceMeters: 3100,
 		},
 	],
-	selectedUid: uid,
+	selectedCandidateId: candidateId(uid),
+	selectedHandle: candidateHandle(uid),
 	artifactRevision: "r1",
 	landRoute: unavailable
 		? null
@@ -122,6 +126,7 @@ function setup(
 		mapReject?: boolean;
 		sameNode?: boolean;
 		networkError?: string;
+		networkLoading?: boolean;
 		hasNetworkOverlay?: boolean;
 		journeyMode?: "point_to_point" | "out_and_back";
 	} = {},
@@ -145,6 +150,8 @@ function setup(
 			: route,
 		routeError: null,
 		networkError: overrides.networkError ?? null,
+		networkLoading: overrides.networkLoading ?? false,
+		selectedHireBaseIdentity: null,
 		hasNetworkOverlay: overrides.hasNetworkOverlay ?? false,
 		routing: false,
 		selectedDay: null,
@@ -184,6 +191,7 @@ function setup(
 		togglePlaceKinds: vi.fn(),
 		refreshPlaces: vi.fn(async () => {}),
 		reset: vi.fn(),
+		selectHireBase: vi.fn(),
 		setNetworkRequest: vi.fn(),
 		setMapView: vi.fn(),
 	};
@@ -191,13 +199,26 @@ function setup(
 	const mapClick = {
 		callback: (_coordinate: { lat: number; lon: number }) => {},
 	};
-	const map: MapView = {
+	const hireBaseSelect = {
+		callback: (_identity: string | null) => {},
+	};
+	const hireBaseEndpointSelect = {
+		callback: (_slot: EndpointSlot, _base: BoatHireBase) => {},
+	};
+	const removeHireBaseSelect = vi.fn();
+	const map: MapView & {
+		onHireBaseEndpointSelect: (callback: typeof hireBaseEndpointSelect.callback) => () => void;
+	} = {
 		marker: vi.fn(),
 		candidates: vi.fn(),
 		land: vi.fn(),
 		canal: vi.fn(),
 		network: vi.fn(),
-		hireBases: vi.fn(),
+		focusedNetwork: vi.fn(),
+		hireBases: vi.fn(
+			(_bases: never[], _selectedIdentity: string | null) => {},
+		),
+		climate: vi.fn(),
 		fitNetwork: vi.fn(),
 		places: vi.fn(),
 		pois: vi.fn(),
@@ -208,6 +229,14 @@ function setup(
 		destroy: vi.fn(),
 		onMapClick: vi.fn((callback) => {
 			mapClick.callback = callback;
+			return vi.fn();
+		}),
+		onHireBaseSelect: vi.fn((callback) => {
+			hireBaseSelect.callback = callback;
+			return removeHireBaseSelect;
+		}),
+		onHireBaseEndpointSelect: vi.fn((callback) => {
+			hireBaseEndpointSelect.callback = callback;
 			return vi.fn();
 		}),
 		onViewportIdle: vi.fn(() => vi.fn()),
@@ -226,7 +255,17 @@ function setup(
 				})
 			: vi.fn(async () => map),
 	};
-	return { dependencies, store, selects, mapClick, calls };
+	return {
+		dependencies,
+		store,
+		selects,
+		map,
+		mapClick,
+		hireBaseSelect,
+		hireBaseEndpointSelect,
+		removeHireBaseSelect,
+		calls,
+	};
 }
 
 describe("trip planning interface", () => {
@@ -407,6 +446,44 @@ describe("trip planning interface", () => {
 		]);
 	});
 
+	it("connects hire-base selections to the store", async () => {
+		const { dependencies, store, map, hireBaseSelect } = setup();
+		render(App, { props: { dependencies } });
+		await vi.waitFor(() => expect(map.onHireBaseSelect).toHaveBeenCalledOnce());
+
+		hireBaseSelect.callback("base-one");
+		hireBaseSelect.callback(null);
+
+		expect(store.selectHireBase).toHaveBeenNthCalledWith(1, "base-one");
+		expect(store.selectHireBase).toHaveBeenNthCalledWith(2, null);
+	});
+
+	it("selects a hire base as either endpoint", async () => {
+		const { dependencies, hireBaseEndpointSelect, calls } = setup();
+		render(App, { props: { dependencies } });
+		await vi.waitFor(() => expect(dependencies.loadMapView).toHaveBeenCalled());
+		const base: BoatHireBase = {
+			identity: "canal-holidays/base-one",
+			operator: "Canal Holidays",
+			name: "Base One",
+			coordinate: { lat: 51, lon: -1 },
+		};
+
+		hireBaseEndpointSelect.callback("origin", base);
+		hireBaseEndpointSelect.callback("destination", base);
+
+		expect(calls).toEqual([
+			{
+				slot: "origin",
+				place: { name: "Base One", address: "Canal Holidays", coordinate: base.coordinate },
+			},
+			{
+				slot: "destination",
+				place: { name: "Base One", address: "Canal Holidays", coordinate: base.coordinate },
+			},
+		]);
+	});
+
 	it("shows candidate recommendation, metrics, unavailable reasons, and confirmation", async () => {
 		const { dependencies, store } = setup({ unavailable: true });
 		render(App, { props: { dependencies } });
@@ -436,7 +513,7 @@ describe("trip planning interface", () => {
 				name: /Bletchley Park Alternative/i,
 			}),
 		);
-		expect(store.selectCandidate).toHaveBeenCalledWith("origin", 101);
+		expect(store.selectCandidate).toHaveBeenCalledWith("origin", candidateId(101));
 	});
 
 	it("submits exact controlled schedule with empty boat settings", async () => {
@@ -460,6 +537,31 @@ describe("trip planning interface", () => {
 			boat_height_m: null,
 			movable_bridge_delay_min: null,
 		});
+	});
+
+	it("places cruising-time inputs above the map while keeping route actions with the planner", () => {
+		render(App, { props: { dependencies: setup().dependencies } });
+		const main = screen.getByRole("main");
+		const schedule = screen.getByRole("group", { name: "Cruising time" });
+		const map = main.querySelector(".map-column");
+		const planner = main.querySelector(".planner-column");
+
+		expect(schedule.parentElement).toBe(main);
+		expect(schedule.compareDocumentPosition(map!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+		expect(schedule).not.toContainElement(
+			screen.getByRole("button", { name: /plan canal route/i }),
+		);
+		expect(planner).toContainElement(
+			screen.getByRole("button", { name: /plan canal route/i }),
+		);
+		const days = screen.getByLabelText('Days');
+		const hours = screen.getByLabelText('Hours per day');
+		expect(days).toHaveAttribute('form', 'route-actions');
+		expect(hours).toHaveAttribute('form', 'route-actions');
+		expect(screen.getByRole('button', { name: 'Plan canal route' }).closest('form')).toHaveAttribute(
+			'id',
+			'route-actions',
+		);
 	});
 
 	it("defaults and resets the required schedule controls", async () => {
@@ -549,6 +651,25 @@ describe("trip planning interface", () => {
 				movable_bridge_delay_min: null,
 			}),
 		);
+	});
+
+	it("reports a loading canal network overlay before the first response", () => {
+		render(App, {
+			props: {
+				dependencies: setup({ networkLoading: true }).dependencies,
+			},
+		});
+		expect(screen.getByRole("status")).toHaveTextContent(/loading canal network overlay/i);
+		expect(screen.getByRole("button", { name: /plan canal route/i })).toBeVisible();
+	});
+
+	it("does not show the loading notice once the overlay is available", () => {
+		render(App, {
+			props: {
+				dependencies: setup({ networkLoading: true, hasNetworkOverlay: true }).dependencies,
+			},
+		});
+		expect(screen.queryByText(/loading canal network overlay/i)).not.toBeInTheDocument();
 	});
 
 	it("reports an unavailable canal network overlay without blocking the planner", () => {
@@ -773,7 +894,11 @@ describe("trip planning interface", () => {
 			land: vi.fn(),
 			canal: vi.fn(),
 			network: vi.fn(),
-			hireBases: vi.fn(),
+			focusedNetwork: vi.fn(),
+			hireBases: vi.fn(
+				(_bases: never[], _selectedIdentity: string | null) => {},
+			),
+			climate: vi.fn(),
 			fitNetwork: vi.fn(),
 			places: vi.fn(),
 			pois: vi.fn(),
@@ -783,6 +908,7 @@ describe("trip planning interface", () => {
 			closeInfoWindow: vi.fn(),
 			destroy: vi.fn(),
 			onMapClick: vi.fn(() => vi.fn()),
+			onHireBaseSelect: vi.fn(() => vi.fn()),
 			onViewportIdle: vi.fn(() => vi.fn()),
 		};
 		const secondMap: MapView = {
@@ -791,7 +917,11 @@ describe("trip planning interface", () => {
 			land: vi.fn(),
 			canal: vi.fn(),
 			network: vi.fn(),
-			hireBases: vi.fn(),
+			focusedNetwork: vi.fn(),
+			hireBases: vi.fn(
+				(_bases: never[], _selectedIdentity: string | null) => {},
+			),
+			climate: vi.fn(),
 			fitNetwork: vi.fn(),
 			places: vi.fn(),
 			pois: vi.fn(),
@@ -801,6 +931,7 @@ describe("trip planning interface", () => {
 			closeInfoWindow: vi.fn(),
 			destroy: vi.fn(),
 			onMapClick: vi.fn(() => vi.fn()),
+			onHireBaseSelect: vi.fn(() => vi.fn()),
 			onViewportIdle: vi.fn(() => vi.fn()),
 		};
 		let loadCount = 0;
@@ -830,6 +961,7 @@ describe("trip planning interface", () => {
 			(_input, _select) => detach[index++],
 		);
 		const removeClick = vi.fn();
+		const removeHireBaseSelect = vi.fn();
 		const destroy = vi.fn();
 		const view = {
 			marker: vi.fn(),
@@ -837,10 +969,15 @@ describe("trip planning interface", () => {
 			land: vi.fn(),
 			canal: vi.fn(),
 			network: vi.fn(),
-			hireBases: vi.fn(),
+			focusedNetwork: vi.fn(),
+			hireBases: vi.fn(
+				(_bases: never[], _selectedIdentity: string | null) => {},
+			),
+			climate: vi.fn(),
 			fitNetwork: vi.fn(),
 			clearLand: vi.fn(),
 			onMapClick: vi.fn(() => removeClick),
+			onHireBaseSelect: vi.fn(() => removeHireBaseSelect),
 			destroy,
 		} as unknown as MapView;
 		fixture.dependencies.loadMapView = vi.fn(async () => view);
@@ -852,7 +989,14 @@ describe("trip planning interface", () => {
 		expect(detach[0]).toHaveBeenCalled();
 		expect(detach[1]).toHaveBeenCalled();
 		expect(removeClick).toHaveBeenCalled();
+		expect(removeHireBaseSelect).toHaveBeenCalled();
 		expect(destroy).toHaveBeenCalled();
+		expect(removeClick.mock.invocationCallOrder[0]).toBeLessThan(
+			destroy.mock.invocationCallOrder[0],
+		);
+		expect(removeHireBaseSelect.mock.invocationCallOrder[0]).toBeLessThan(
+			destroy.mock.invocationCallOrder[0],
+		);
 	});
 
 	it("ignores a map rejection that arrives after unmount", async () => {
@@ -1010,4 +1154,56 @@ describe("trip planning interface", () => {
 		await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 		expect(screen.queryByRole("status")).not.toBeInTheDocument();
 	});
+});
+
+it('connects climate summaries and selection to the map across planner remounts', async () => {
+  history.replaceState(null, '', '/');
+  const { createClimateStore } = await import('../lib/stores/climate');
+  const distribution = {
+    available: true, missing_years: [], start_year: 2001, end_year: 2025,
+    n_days: 175, n_years: 25, p10: 17, median: 21, p90: 25,
+  };
+  const source = { name: 'Synthetic test source', url: 'https://example.org', attribution: 'Test', timezone: 'Europe/London', model: 'era5_land' };
+  const summaries = { revision: 'climate-r1', end_year: 2025, source, week_id: 8,
+    week_label: 'June 26–July 2', period_years: 25 as const, metric: 'high' as const,
+    locations: [{ id: 'oxford', name: 'Oxford', coordinate: { lat: 51.75, lon: -1.25 }, distribution }],
+  };
+  const api = {
+    locations: vi.fn(async () => summaries),
+    location: vi.fn(async () => ({ revision: 'climate-r1', end_year: 2025, source, week_id: 8,
+      week_label: 'June 26–July 2', location: { id: 'oxford', name: 'Oxford', coordinate: { lat: 51.75, lon: -1.25 }, source_coordinate: null, elevation: null },
+      high: { '25': { ...distribution, samples: [17, 21, 25] }, '5': { ...distribution, samples: [18, 22, 26] } },
+      low: { '25': { ...distribution, samples: [7, 11, 15] }, '5': { ...distribution, samples: [8, 12, 16] } },
+    })),
+  };
+  const climateStore = createClimateStore({ api });
+  const { dependencies } = setup();
+  dependencies.climateStore = climateStore;
+  render(App, { props: { dependencies } });
+  await waitFor(() => expect(dependencies.loadMapView).toHaveBeenCalled());
+  const map = await vi.mocked(dependencies.loadMapView).mock.results[0].value;
+  await climateStore.setEnabled(true);
+  await waitFor(() => expect(map.climate).toHaveBeenCalledWith(
+    [expect.objectContaining({ id: 'oxford', value: '21.0°', label: expect.stringContaining('2001–2025') })],
+    expect.any(Function),
+  ));
+  const paintsBeforeSelection = vi.mocked(map.climate).mock.calls.length;
+  const select = vi.mocked(map.climate).mock.lastCall![1];
+  select('oxford');
+  await waitFor(() => expect(api.location).toHaveBeenCalledWith('oxford', { week_id: 8 }));
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Oxford' })).toBeInTheDocument());
+  expect(vi.mocked(map.climate).mock.calls.length).toBe(paintsBeforeSelection);
+  const remountedMap = { ...map, climate: vi.fn(), destroy: vi.fn() };
+  vi.mocked(dependencies.loadMapView).mockResolvedValueOnce(remountedMap);
+  await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+  const oldPaintCount = vi.mocked(map.climate).mock.calls.length;
+  await fireEvent.click(screen.getByRole('link', { name: 'Plan trip' }));
+  await waitFor(() => expect(dependencies.loadMapView).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(remountedMap.climate).toHaveBeenLastCalledWith(
+    [expect.objectContaining({ id: 'oxford' })], expect.any(Function),
+  ));
+  expect(api.locations).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(map.climate).mock.calls.length).toBe(oldPaintCount);
+  await climateStore.setEnabled(false);
+  await waitFor(() => expect(remountedMap.climate).toHaveBeenLastCalledWith([], expect.any(Function)));
 });

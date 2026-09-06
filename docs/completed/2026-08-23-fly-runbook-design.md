@@ -18,7 +18,7 @@ Machine with `min_machines_running = 1`.
 The runbook will distinguish these release paths:
 
 1. **Full source redeploy** for code or tracked-data changes. It requires the
-   ignored `pound/artifacts/england.pkl` plus the three Vite build variables, then
+   ignored `artifacts/england.pkl` plus the three Vite build variables, then
    uses `fly deploy --ha=false`.
 2. **Artifact redeploy** for a new graph. It stages the ignored graph artifact,
    records its revision, and follows the same full source deploy path.

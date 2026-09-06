@@ -72,7 +72,7 @@ trap 'cleanup 130' INT
 trap 'cleanup 143' TERM
 
 printf 'Starting backend on http://127.0.0.1:8000\n'
-uv run uvicorn pound.web.app:app --host 127.0.0.1 --port 8000 --reload &
+uv run uvicorn pound_web.app:app --host 127.0.0.1 --port 8000 --reload &
 backend_pid=$!
 
 printf 'Starting frontend on http://127.0.0.1:5173\n'

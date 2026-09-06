@@ -5,7 +5,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from pound.catalog.inventory import inventory_pbf
+from pound_build.catalog.inventory import inventory_pbf  # pyright: ignore[reportMissingImports]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _ensure_external_output(output: Path) -> None:
     root = Path(__file__).resolve().parents[1]
-    forbidden = (root / "pound" / "data", root / "pound" / "artifacts")
+    forbidden = (root / "data", root / "artifacts")
     if any(_is_relative_to(output, directory) for directory in forbidden):
         raise ValueError(
             "generated inventory output cannot be inside repository data or artifact directory"

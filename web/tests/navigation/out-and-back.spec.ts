@@ -111,10 +111,17 @@ async function installFixtures(page: Page) {
   const discoveryRequests: Array<Record<string, unknown>> = [];
   await page.route('https://maps.googleapis.com/maps/api/js**', fakeGoogleScript);
   await page.route('**/api/health', (route) => route.fulfill({ json: { status: 'healthy', artifact_revision: revision, places_status: 'available' } }));
-  await page.route('**/api/canal-network', (route) => route.fulfill({ json: { artifact_revision: revision, lines: [], bases: [] } }));
+  await page.route('**/api/canal-network', (route) => route.fulfill({ json: { artifact_revision: revision, lines: [], highlight_lines: [], bases: [] } }));
   await page.route('**/api/canal-candidates', (route) => route.fulfill({ json: {
     artifact_revision: revision,
-    candidates: [{ uid: route.request().postDataJSON().lat < 52 ? 10 : 20, artifact_revision: revision, coordinate: { lat: 51.1, lon: -1.3 }, straight_line_distance_m: 100, display_name: 'Fixture canal access' }],
+    candidates: [{
+      candidate_id: `fixture:${route.request().postDataJSON().lat < 52 ? 10 : 20}`,
+      handle: (() => {
+        const uid = route.request().postDataJSON().lat < 52 ? 10 : 20;
+        return { edge: [uid, uid + 1], fraction: 0.5 };
+      })(),
+      coordinate: { lat: 51.1, lon: -1.3 }, straight_line_distance_m: 100, display_name: 'Fixture canal access',
+    }],
   } }));
   await page.route('**/api/turnaround-candidates', (route) => {
     discoveryRequests.push(route.request().postDataJSON());
@@ -149,7 +156,10 @@ test('origin-only out-and-back submits a null waypoint', async ({ page }) => {
   await openOutAndBack(page);
   await page.getByRole('button', { name: 'Plan out-and-back journey' }).click();
   await expect(page.getByRole('region', { name: 'Out-and-back routes' })).toBeVisible();
-  expect(requests[0]).toMatchObject({ artifact_revision: revision, start_uid: 10, waypoint_uid: null, days: 7, hours_per_day: 6 });
+  expect(requests[0]).toMatchObject({
+    artifact_revision: revision, start: { edge: [10, 11], fraction: 0.5 }, waypoint: null,
+    days: 7, hours_per_day: 6,
+  });
   await expect(page.getByText('Destination transfer')).toHaveCount(0);
   await expect(page.getByText(/returns to the origin/i)).toBeVisible();
 });

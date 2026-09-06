@@ -210,8 +210,8 @@ Request:
 ```json
 {
   "artifact_revision": "fixture-revision",
-  "start_uid": 10,
-  "waypoint_uid": null,
+  "start": {"edge": [10, 20], "fraction": 0.25},
+  "waypoint": null,
   "days": 3,
   "hours_per_day": 6,
   "boat_length_m": 18,
@@ -353,3 +353,14 @@ remain explicitly network-marked; generated artifacts and downloads are not comm
 This specification replaces the earlier full-ring execution draft and is retained in
 `docs/completed/` with the implementation. Separate execution plans remain disposable
 and uncommitted.
+
+
+### Integration with compact runtime artifacts
+
+The implementation follows the workspace package split: runtime routing and validation live in
+`packages/pound-core`, offline construction in `packages/pound-build`, and HTTP endpoints in
+`packages/pound-web`. Compaction preserves every indexed turnaround vertex and the normalized
+turnaround index. Discovery accepts `start` and optional `waypoint` edge/fraction handles, matching
+point-to-point candidate selection. Interior positions use request-local graph vertices; the loaded
+artifact remains unchanged. The original UID fields remain supported for deterministic tool clients;
+a request must supply exactly one start representation.

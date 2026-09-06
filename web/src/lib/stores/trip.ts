@@ -17,6 +17,7 @@ import type {
   CanalCandidatesResponse,
   CanalNetworkRequest,
   CanalNetworkResponse,
+  CanalPointHandle,
   CanalRouteRequest,
   CanalRouteResponse,
   JourneyMode,
@@ -49,7 +50,8 @@ interface PoundApi {
 export interface EndpointState {
   place: SelectedPlace | null;
   candidates: RankedCandidate[];
-  selectedUid: number | null;
+  selectedCandidateId: string | null;
+  selectedHandle: CanalPointHandle | null;
   artifactRevision?: string;
   landRoute: LandRoute | null;
   transferWarning: string | null;
@@ -72,6 +74,8 @@ export interface TripState {
   canalRoute: CanalRouteResponse | null;
   routeError: string | null;
   networkError: string | null;
+  networkLoading: boolean;
+  selectedHireBaseIdentity: string | null;
   hasNetworkOverlay: boolean;
   routing: boolean;
   selectedDay: number | null;
@@ -89,18 +93,54 @@ export interface TripState {
   selectedOutAndBackRouteId?: string | null;
 }
 
-export type CanalConstraints = Omit<CanalRouteRequest, 'start_uid' | 'end_uid' | 'artifact_revision'>;
+export type CanalConstraints = Omit<CanalRouteRequest, 'start' | 'end' | 'artifact_revision'>;
+
+type NetworkConstraintKey = readonly [
+  number,
+  number,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+];
+
+const networkConstraintKey = (request: CanalNetworkRequest): NetworkConstraintKey => [
+  request.days,
+  request.hours_per_day,
+  request.boat_length_m,
+  request.boat_beam_m,
+  request.boat_draft_m,
+  request.boat_height_m,
+  request.movable_bridge_delay_min,
+];
+
+const sameConstraintKey = (left: NetworkConstraintKey, right: NetworkConstraintKey) =>
+  left.every((value, index) => value === right[index]);
+
+const sameNetworkRequest = (left: CanalNetworkRequest, right: CanalNetworkRequest) =>
+  left.days === right.days &&
+  left.hours_per_day === right.hours_per_day &&
+  left.boat_length_m === right.boat_length_m &&
+  left.boat_beam_m === right.boat_beam_m &&
+  left.boat_draft_m === right.boat_draft_m &&
+  left.boat_height_m === right.boat_height_m &&
+  left.movable_bridge_delay_min === right.movable_bridge_delay_min &&
+  left.selected_base_identity === right.selected_base_identity;
 
 type SuccessfulNetwork = {
   requestGeneration: number;
   lines: GeoJSONLineString[];
+  highlightLines: GeoJSONLineString[];
   bases: BoatHireBase[];
+  selectedBaseIdentity: string | null;
+  constraintKey: NetworkConstraintKey;
 };
 
 export interface TripStore extends Readable<TripState> {
   setEndpointCoordinate(slot: EndpointSlot, place: SelectedPlace | LatLon): Promise<void>;
   clearEndpoint(slot: EndpointSlot): void;
-  selectCandidate(slot: EndpointSlot, uid: number): Promise<void>;
+  selectCandidate(slot: EndpointSlot, candidateId: string): Promise<void>;
   confirmGeometricFallback(slot: EndpointSlot): void;
   planCanalRoute(constraints: CanalConstraints): Promise<CanalRouteResponse>;
   setJourneyMode: (mode: JourneyMode) => void;
@@ -112,12 +152,13 @@ export interface TripStore extends Readable<TripState> {
   togglePlaceKinds(kinds: string[], policy: PlacesQueryPolicy): void;
   refreshPlaces(bounds: MapBounds): Promise<void>;
   reset(): void;
+  selectHireBase(identity: string | null): void;
   setNetworkRequest(request: CanalNetworkRequest | null): void;
   setMapView(mapView: MapView | undefined): void;
 }
 
 const emptyEndpoint = (): EndpointState => ({
-  place: null, candidates: [], selectedUid: null, landRoute: null, transferWarning: null,
+  place: null, candidates: [], selectedCandidateId: null, selectedHandle: null, landRoute: null, transferWarning: null,
   requiresManualConfirmation: false, confirmed: false, loading: false, error: null,
 });
 
@@ -142,7 +183,8 @@ export function createTripStore(dependencies: {
   let mapView = dependencies.mapView;
   const initial: TripState = {
     origin: emptyEndpoint(), destination: emptyEndpoint(), canalRoute: null, routeError: null, routing: false,
-    selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null, networkError: null, hasNetworkOverlay: false,
+    selectedDay: null, enabledPoiKinds: [], routePois: null, poiError: null, networkError: null, networkLoading: false,
+    selectedHireBaseIdentity: null, hasNetworkOverlay: false,
     places: { enabledKinds: [], places: [], loading: false, error: null },
     placesStatus: 'unknown', placesResultLimitExceeded: false,
     journeyMode: 'point_to_point', outAndBackRoutes: [], outAndBackRejections: [],
@@ -161,8 +203,10 @@ export function createTripStore(dependencies: {
   let desiredNetworkGeneration = 0;
   let mapAttachmentGeneration = mapView ? 1 : 0;
   let networkPaintedAttachmentGeneration: number | undefined;
+  let paintedUnion: { attachmentGeneration: number; constraintKey: NetworkConstraintKey } | null = null;
   let successfulNetwork: SuccessfulNetwork | undefined;
   let networkRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let networkRetryPendingGeneration: number | undefined;
   let networkRequest: { generation: number; promise: Promise<void> } | undefined;
   let viewportUnsubscribe: (() => void) | undefined;
   let lastViewportBounds: MapBounds | undefined;
@@ -217,11 +261,22 @@ export function createTripStore(dependencies: {
   const isCurrentMapAttachment = (view: MapView, attachmentGeneration: number) =>
     mapView === view && mapAttachmentGeneration === attachmentGeneration;
   const drawNetwork = (view: MapView, attachmentGeneration: number, network: SuccessfulNetwork) => {
-    if (network.requestGeneration !== desiredNetworkGeneration ||
-        !isCurrentMapAttachment(view, attachmentGeneration)) return;
-    mapCall('origin', () => view.network(network.lines));
     if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
-    mapCall('origin', () => view.hireBases(network.bases));
+    // ponytail: union lines are byte-identical when only the selected base changed;
+    // skipping the repaint avoids re-pathing thousands of polylines.
+    const unionUnchanged = paintedUnion?.attachmentGeneration === attachmentGeneration
+      && sameConstraintKey(paintedUnion.constraintKey, network.constraintKey);
+    if (!unionUnchanged) {
+      mapCall('origin', () => view.network(network.lines));
+      if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
+      paintedUnion = { attachmentGeneration, constraintKey: network.constraintKey };
+    }
+    mapCall('origin', () => view.hireBases(network.bases, state.selectedHireBaseIdentity));
+    if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
+    const focusedLines = network.selectedBaseIdentity === state.selectedHireBaseIdentity
+      ? network.highlightLines
+      : [];
+    mapCall('origin', () => view.focusedNetwork(focusedLines));
     if (!isCurrentMapAttachment(view, attachmentGeneration)) return;
     const shouldFit = networkPaintedAttachmentGeneration !== attachmentGeneration || network.lines.length === 0;
     networkPaintedAttachmentGeneration = attachmentGeneration;
@@ -233,11 +288,19 @@ export function createTripStore(dependencies: {
     const request = desiredNetworkRequest;
     const generation = desiredNetworkGeneration;
     if (!mapView || !request || networkRequest?.generation === generation) return;
+    networkRetryPendingGeneration = undefined;
     const promise = Promise.resolve()
       .then(() => poundApi.canalNetwork(request))
-      .then(({ lines, bases }) => {
+      .then(({ lines, highlight_lines, bases }) => {
         if (generation !== desiredNetworkGeneration) return;
-        const network = { requestGeneration: generation, lines, bases };
+        const network: SuccessfulNetwork = {
+          requestGeneration: generation,
+          lines,
+          highlightLines: highlight_lines,
+          bases,
+          selectedBaseIdentity: request.selected_base_identity ?? null,
+          constraintKey: networkConstraintKey(request),
+        };
         successfulNetwork = network;
         inner.update((current) => ({ ...current, networkError: null, hasNetworkOverlay: true }));
         const view = mapView;
@@ -245,12 +308,23 @@ export function createTripStore(dependencies: {
       })
       .catch((error) => {
         if (generation !== desiredNetworkGeneration) return;
+        if (request.selected_base_identity != null &&
+            typeof error === 'object' && error !== null &&
+            'status' in error && error.status === 422 &&
+            'code' in error && error.code === 'selected_base_not_found') {
+          clearHireBaseSelection(true);
+          return;
+        }
         inner.update((current) => ({ ...current, networkError: message(error) }));
       })
       .finally(() => {
-        if (networkRequest?.generation === generation) networkRequest = undefined;
+        if (networkRequest?.generation === generation) {
+          networkRequest = undefined;
+          inner.update((current) => ({ ...current, networkLoading: false }));
+        }
       });
     networkRequest = { generation, promise };
+    inner.update((current) => ({ ...current, networkLoading: true }));
   };
   const cancelScheduledNetworkRefresh = () => {
     if (networkRefreshTimer === undefined) return;
@@ -264,25 +338,87 @@ export function createTripStore(dependencies: {
     networkRefreshTimer = setTimeout(() => {
       networkRefreshTimer = undefined;
       if (!mapView || generation !== desiredNetworkGeneration) return;
+      if (networkRetryPendingGeneration === generation) networkRetryPendingGeneration = undefined;
       loadNetwork();
     }, 100);
   };
   const setNetworkRequest = (request: CanalNetworkRequest | null) => {
-    const nextKey = request === null ? 'invalid' : JSON.stringify([
-      request.days, request.hours_per_day, request.boat_length_m, request.boat_beam_m,
-      request.boat_draft_m, request.boat_height_m, request.movable_bridge_delay_min,
-    ]);
-    if (nextKey === networkRequestKey) return;
-    networkRequestKey = nextKey;
     if (request === null) {
+      if (networkRequestKey === 'invalid') return;
+      networkRequestKey = 'invalid';
+      desiredNetworkRequest = undefined;
+      cancelScheduledNetworkRefresh();
+      desiredNetworkGeneration += 1;
       invalidateCanalRoute('origin');
       return;
     }
-    desiredNetworkRequest = request;
+    const normalized = { ...request, selected_base_identity: state.selectedHireBaseIdentity };
+    if (desiredNetworkRequest && sameNetworkRequest(desiredNetworkRequest, normalized)) return;
+    networkRequestKey = JSON.stringify(normalized);
+    networkRetryPendingGeneration = undefined;
+    desiredNetworkRequest = normalized;
     desiredNetworkGeneration += 1;
     invalidateCanalRoute('origin');
     scheduleNetworkRefresh();
   };
+  const repaintHireBaseSelection = (identity: string | null) => {
+    const view = mapView;
+    if (!view) return;
+    const retained = successfulNetwork;
+    if (retained) mapCall('origin', () => view.hireBases(retained.bases, identity));
+    mapCall('origin', () => view.focusedNetwork([]));
+  };
+  const clearHireBaseSelection = (retry = false) => {
+    cancelScheduledNetworkRefresh();
+    const nextRequest = desiredNetworkRequest
+      ? { ...desiredNetworkRequest, selected_base_identity: null }
+      : undefined;
+    desiredNetworkRequest = nextRequest;
+    desiredNetworkGeneration += 1;
+    networkRetryPendingGeneration = retry ? desiredNetworkGeneration : undefined;
+    networkRequestKey = nextRequest ? JSON.stringify(nextRequest) : 'invalid';
+    inner.update((current) => ({
+      ...current,
+      selectedHireBaseIdentity: null,
+      ...(retry ? { networkError: null } : {}),
+    }));
+    repaintHireBaseSelection(null);
+
+    const retained = successfulNetwork;
+    const reusable = retained && nextRequest && sameConstraintKey(
+      retained.constraintKey,
+      networkConstraintKey(nextRequest),
+    );
+    if (reusable) {
+      successfulNetwork = {
+        ...retained,
+        requestGeneration: desiredNetworkGeneration,
+        highlightLines: [],
+        selectedBaseIdentity: null,
+        constraintKey: networkConstraintKey(nextRequest),
+      };
+    }
+    if (retry || !reusable) scheduleNetworkRefresh();
+  };
+  function selectHireBase(identity: string | null): void {
+    if (identity === state.selectedHireBaseIdentity) return;
+    if (identity === null) {
+      clearHireBaseSelection();
+      return;
+    }
+    cancelScheduledNetworkRefresh();
+    networkRetryPendingGeneration = undefined;
+    desiredNetworkGeneration += 1;
+    networkRequestKey = desiredNetworkRequest ? JSON.stringify({
+      ...desiredNetworkRequest, selected_base_identity: identity,
+    }) : networkRequestKey;
+    if (desiredNetworkRequest) {
+      desiredNetworkRequest = { ...desiredNetworkRequest, selected_base_identity: identity };
+    }
+    inner.update((current) => ({ ...current, selectedHireBaseIdentity: identity }));
+    repaintHireBaseSelection(identity);
+    scheduleNetworkRefresh();
+  }
   const clearPlaces = () => {
     cancelScheduledPlacesRefresh();
     placesRequest += 1;
@@ -323,11 +459,11 @@ export function createTripStore(dependencies: {
 
   async function loadLandRoute(slot: EndpointSlot, generation: number): Promise<void> {
     const endpoint = state[slot];
-    const selected = endpoint.candidates.find(({ candidate }) => candidate.uid === endpoint.selectedUid);
+    const selected = endpoint.candidates.find(({ candidate }) => candidate.candidate_id === endpoint.selectedCandidateId);
     if (!endpoint.place || !selected) return;
     try {
       const route = await transferRouter.route(endpoint.place.coordinate, selected.candidate.coordinate, transferMode);
-      if (generation !== generations[slot] || state[slot].selectedUid !== selected.candidate.uid) return;
+      if (generation !== generations[slot] || state[slot].selectedCandidateId !== selected.candidate.candidate_id) return;
       updateEndpoint(slot, { landRoute: route });
       mapCall(slot, () => mapView?.land(slot, route));
     } catch (error) {
@@ -371,20 +507,21 @@ export function createTripStore(dependencies: {
     if (generation !== generations[slot]) return;
     const ranked = rankCandidates(candidateResponse.candidates, matrix);
     const allUnavailable = ranked.length > 0 && ranked.every(({ available }) => !available);
-    const selectedUid = ranked[0]?.candidate.uid ?? null;
+    const selectedCandidateId = ranked[0]?.candidate.candidate_id ?? null;
+    const selectedHandle = ranked[0]?.candidate.handle ?? null;
     const priorWarning = state[slot].transferWarning;
     const fallbackWarning = allUnavailable
       ? 'Could not verify a land transfer. Confirm the geometric fallback before canal routing.'
       : null;
     const transferWarning = [priorWarning, fallbackWarning, matrixWarning].filter(Boolean).join(' ') || null;
     updateEndpoint(slot, {
-      candidates: ranked, selectedUid, artifactRevision: candidateResponse.artifact_revision,
+      candidates: ranked, selectedCandidateId, selectedHandle, artifactRevision: candidateResponse.artifact_revision,
       requiresManualConfirmation: allUnavailable, confirmed: !allUnavailable,
       transferWarning,
       loading: false, error: null,
     });
-    mapCall(slot, () => mapView?.candidates(slot, candidateResponse.candidates, selectedUid ?? undefined));
-    if (selectedUid !== null) await loadLandRoute(slot, generation);
+    mapCall(slot, () => mapView?.candidates(slot, candidateResponse.candidates, selectedCandidateId ?? undefined));
+    if (selectedCandidateId !== null) await loadLandRoute(slot, generation);
   }
 
   function clearEndpoint(slot: EndpointSlot): void {
@@ -396,20 +533,22 @@ export function createTripStore(dependencies: {
     mapCall(slot, () => mapView?.candidates(slot, []));
   }
 
-  async function selectCandidate(slot: EndpointSlot, uid: number): Promise<void> {
-    if (!state[slot].candidates.some(({ candidate }) => candidate.uid === uid)) {
-      throw new Error(`Unknown ${slot} candidate UID ${uid}`);
+  async function selectCandidate(slot: EndpointSlot, candidateId: string): Promise<void> {
+    const selected = state[slot].candidates.find(({ candidate }) => candidate.candidate_id === candidateId);
+    if (!selected) {
+      throw new Error(`Unknown ${slot} candidate ${candidateId}`);
     }
     const generation = ++generations[slot];
     invalidateCanalRoute(slot);
     clearLand(slot);
     updateEndpoint(slot, {
-      selectedUid: uid,
+      selectedCandidateId: candidateId,
+      selectedHandle: selected.candidate.handle,
       landRoute: null,
       confirmed: state[slot].requiresManualConfirmation ? false : state[slot].confirmed,
     });
     mapCall(slot, () => mapView?.candidates(
-      slot, state[slot].candidates.map(({ candidate }) => candidate), uid,
+      slot, state[slot].candidates.map(({ candidate }) => candidate), candidateId,
     ));
     await loadLandRoute(slot, generation);
   }
@@ -420,19 +559,19 @@ export function createTripStore(dependencies: {
 
   async function planOutAndBack(constraints: CanalConstraints): Promise<CanalRouteResponse> {
     const { origin, destination } = state;
-    if (origin.selectedUid === null) throw new Error('Select an origin canal endpoint before routing');
+    if (origin.selectedHandle === null) throw new Error('Select an origin canal endpoint before routing');
     if (origin.requiresManualConfirmation && !origin.confirmed) {
       throw new Error('Confirm geometric fallback candidates before canal routing');
     }
-    if (destination.place && destination.selectedUid === null) {
+    if (destination.place && destination.selectedHandle === null) {
       throw new Error('Select a canal waypoint or clear the optional visit-on-the-way field');
     }
-    if (destination.selectedUid !== null &&
+    if (destination.selectedHandle !== null &&
         (destination.requiresManualConfirmation && !destination.confirmed)) {
       throw new Error('Confirm geometric fallback candidates before canal routing');
     }
     if (!origin.artifactRevision ||
-        (destination.selectedUid !== null && origin.artifactRevision !== destination.artifactRevision)) {
+        (destination.selectedHandle !== null && origin.artifactRevision !== destination.artifactRevision)) {
       throw new Error('Endpoint artifact revisions do not match');
     }
     if (!poundApi.turnaroundCandidates) throw new Error('Out-and-back routing is unavailable');
@@ -445,8 +584,8 @@ export function createTripStore(dependencies: {
     }
     const request: TurnaroundCandidatesRequest = {
       artifact_revision: origin.artifactRevision,
-      start_uid: origin.selectedUid,
-      waypoint_uid: destination.selectedUid,
+      start: origin.selectedHandle,
+      waypoint: destination.selectedHandle,
       ...constraints,
       days: constraints.days,
       hours_per_day: hoursPerDay,
@@ -502,7 +641,8 @@ export function createTripStore(dependencies: {
   async function planCanalRoute(constraints: CanalConstraints): Promise<CanalRouteResponse> {
     if (state.journeyMode === 'out_and_back') return planOutAndBack(constraints);
     const { origin, destination } = state;
-    if (origin.selectedUid === null || destination.selectedUid === null) {
+    if (origin.selectedCandidateId === null || destination.selectedCandidateId === null ||
+        origin.selectedHandle === null || destination.selectedHandle === null) {
       throw new Error('Select both canal endpoints before routing');
     }
     if ((origin.requiresManualConfirmation && !origin.confirmed) ||
@@ -513,8 +653,8 @@ export function createTripStore(dependencies: {
       throw new Error('Endpoint artifact revisions do not match');
     }
     const request: CanalRouteRequest = {
-      start_uid: origin.selectedUid,
-      end_uid: destination.selectedUid,
+      start: origin.selectedHandle,
+      end: destination.selectedHandle,
       artifact_revision: origin.artifactRevision,
       ...constraints,
     };
@@ -730,6 +870,7 @@ export function createTripStore(dependencies: {
   }
 
   function reset(): void {
+    clearHireBaseSelection();
     generations.origin += 1;
     generations.destination += 1;
     routeGeneration += 1;
@@ -771,7 +912,7 @@ export function createTripStore(dependencies: {
   return {
     subscribe: inner.subscribe, setEndpointCoordinate, clearEndpoint, selectCandidate, confirmGeometricFallback,
     planCanalRoute, togglePoiKind, togglePlaceKind, togglePlaceKinds, selectDay, refreshRoutePois, refreshPlaces,
-    reset, setNetworkRequest, setJourneyMode, selectBranchRoute,
+    reset, selectHireBase, setNetworkRequest, setJourneyMode, selectBranchRoute,
     setMapView(value) {
       cancelScheduledPoiRefresh();
       viewportUnsubscribe?.();
@@ -783,16 +924,14 @@ export function createTripStore(dependencies: {
       mapView = value;
       if (!mapView) return;
       const network = successfulNetwork;
-      if (network?.requestGeneration === desiredNetworkGeneration) {
-        drawNetwork(mapView, attachmentGeneration, network);
-      } else {
-        loadNetwork();
-      }
+      if (network) drawNetwork(mapView, attachmentGeneration, network);
+      if (networkRetryPendingGeneration === desiredNetworkGeneration) scheduleNetworkRefresh();
+      else if (!network || network.requestGeneration !== desiredNetworkGeneration) loadNetwork();
       for (const slot of ['origin', 'destination'] as const) {
         const endpoint = state[slot];
         if (endpoint.place) mapCall(slot, () => mapView?.marker(slot, endpoint.place!.coordinate));
         mapCall(slot, () => mapView?.candidates(
-          slot, endpoint.candidates.map(({ candidate }) => candidate), endpoint.selectedUid ?? undefined,
+          slot, endpoint.candidates.map(({ candidate }) => candidate), endpoint.selectedCandidateId ?? undefined,
         ));
         if (endpoint.landRoute) mapCall(slot, () => mapView?.land(slot, endpoint.landRoute));
       }

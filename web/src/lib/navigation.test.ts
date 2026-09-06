@@ -1,43 +1,39 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { createNavigation, parseRoute, type AppRoute, type NavigationEnvironment } from './navigation';
 
-interface FakeBrowser {
+interface FakeBrowser extends NavigationEnvironment {
   location: { pathname: string };
   history: {
-    pushState: ReturnType<typeof vi.fn>;
-    replaceState: ReturnType<typeof vi.fn>;
+    pushState: Mock<History['pushState']>;
+    replaceState: Mock<History['replaceState']>;
   };
-  addEventListener: ReturnType<typeof vi.fn>;
-  removeEventListener: ReturnType<typeof vi.fn>;
+  addEventListener: Mock<NavigationEnvironment['addEventListener']>;
+  removeEventListener: Mock<NavigationEnvironment['removeEventListener']>;
   emitPopState: () => void;
 }
 
 function fakeBrowser(pathname: string): FakeBrowser {
   const listeners = new Set<() => void>();
 
-  const environment = {
+  return {
     location: { pathname },
     history: {
-      pushState: vi.fn(),
-      replaceState: vi.fn(),
+      pushState: vi.fn<History['pushState']>(),
+      replaceState: vi.fn<History['replaceState']>(),
     },
-    addEventListener: vi.fn((_type: 'popstate', listener: () => void) => {
+    addEventListener: vi.fn<NavigationEnvironment['addEventListener']>((_type, listener) => {
       listeners.add(listener);
     }),
-    removeEventListener: vi.fn((_type: 'popstate', listener: () => void) => {
+    removeEventListener: vi.fn<NavigationEnvironment['removeEventListener']>((_type, listener) => {
       listeners.delete(listener);
     }),
+    emitPopState: () => {
+      for (const listener of listeners) {
+        listener();
+      }
+    },
   };
-
-  // @ts-expect-error emitPopState is only used in tests
-  environment.emitPopState = () => {
-    for (const listener of listeners) {
-      listener();
-    }
-  };
-
-  return environment as unknown as FakeBrowser;
 }
 
 beforeEach(() => {

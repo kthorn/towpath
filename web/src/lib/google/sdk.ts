@@ -1,7 +1,7 @@
 import type { MapBounds } from '../types';
 import type { MapView, PlaceSearch, TransferRouter } from './contracts';
 import type { GoogleMapsModules } from './loader';
-import { createGoogleMapView, type MapFacade, type MarkerEvent } from './map';
+import { createGoogleMapView, type MapFacade, type MapInstance, type MarkerEvent } from './map';
 import { createGooglePlaceSearch, type PlacesFacade } from './places';
 import { createGoogleTransferRouter, type RoutesFacade } from './routes';
 
@@ -16,6 +16,7 @@ interface MapsModule {
 interface RuntimeMap {
   fitBounds(bounds: { north: number; south: number; east: number; west: number }): void;
   getBounds(): { toJSON(): MapBounds } | undefined;
+  getZoom?(): number;
 }
 
 interface MarkerModule {
@@ -23,6 +24,8 @@ interface MarkerModule {
 }
 
 interface RuntimeMarker {
+  map: MapInstance | null;
+  title: string;
   addEventListener(event: string, callback: (event: unknown) => void): void;
   removeEventListener(event: string, callback: (event: unknown) => void): void;
 }
@@ -102,12 +105,14 @@ function createMapFacade(modules: RuntimeModules): MapFacade {
       return new modules.maps.Map(element, options) as ReturnType<MapFacade['createMap']>;
     },
     createMarker(options) {
-      return new modules.marker.AdvancedMarkerElement({
+      const marker = new modules.marker.AdvancedMarkerElement({
         ...options,
         gmpClickable: options.gmpClickable ?? true,
-      }) as ReturnType<MapFacade['createMarker']>;
+      }) as RuntimeMarker;
+      return marker;
     },
     addMarkerListener(marker, event, callback) {
+      // SAFETY: MapFacade markers are AdvancedMarkerElement-compatible runtime objects.
       const runtimeMarker = marker as unknown as RuntimeMarker;
       const runtimeEvent = event === 'click' ? 'gmp-click' : event;
       const runtimeCallback = (eventValue: unknown) => callback(eventValue as MarkerEvent);
@@ -137,11 +142,17 @@ function createMapFacade(modules: RuntimeModules): MapFacade {
         if (lng > east) east = lng;
         if (lng < west) west = lng;
       }
+      // SAFETY: MapFacade maps are runtime Google Maps instances exposing fitBounds.
       (map as unknown as RuntimeMap).fitBounds({ north, south, east, west });
     },
     getBounds(map) {
+      // SAFETY: MapFacade maps are runtime Google Maps instances exposing getBounds.
       const bounds = (map as unknown as RuntimeMap).getBounds();
       return bounds?.toJSON();
+    },
+    getZoom(map) {
+      // SAFETY: MapFacade maps are runtime Google Maps instances exposing getZoom.
+      return (map as unknown as RuntimeMap).getZoom?.();
     },
   };
 }
