@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
   "pound-core",
   "fastapi>=0.116,<0.142",
-  "uvicorn[standard]>=0.35",
+  "uvicorn[standard]>=0.52.4",
 ]
 
 [tool.uv.sources]
