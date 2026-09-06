@@ -1,9 +1,11 @@
 from pathlib import Path
 
+import pytest
 from pound_build.catalog.reader import read_catalog
 from pound_build.ingest.ir import OsmElementType
 
 FIXTURE = Path("packages/pound-core/tests/fixtures/tiny_bulk.osm")
+pytestmark = pytest.mark.bulk
 
 
 def test_read_catalog_emits_all_supported_geometry_records_deterministically():

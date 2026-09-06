@@ -11,7 +11,7 @@ behind its one warm Machine, see
 | App | `towpath-4772e4a8` |
 | Public domain | `https://towpath-4772e4a8.fly.dev` |
 | Region | `sjc` |
-| Machine | one `shared-cpu-4x` / 8 GB Machine |
+| Machine | one `shared-cpu-2x` / 4 GB Machine |
 | Warm minimum | `min_machines_running = 1` |
 
 Use the `fly.dev` hostname, not Fly's shared IPv4 address. There is no custom domain.
@@ -51,7 +51,7 @@ required here, not for configuration-only releases:
 
 ```bash
 uv sync --all-packages --extra bulk
-uv run pytest
+uv run pytest --run-bulk
 uv run ruff check .
 (cd web && npm ci && npm run check && npm test -- --run)
 test -f "$ARTIFACT"
@@ -178,7 +178,7 @@ fly config validate --strict --app "$APP"
 fly machines list --app "$APP"
 ```
 
-There must be exactly one `sjc` `shared-cpu-4x:8192MB` Machine, in `started` state
+There must be exactly one `sjc` `shared-cpu-2x:4096MB` Machine, in `started` state
 with a passing check. If it is stopped, get its ID from the listing and start it once:
 
 ```bash
@@ -215,7 +215,7 @@ or early health response.
 
 ## Safety notes
 
-- Keep `min_machines_running = 1`; the 8 GB Machine cannot use Fly suspend, and
+- Keep `min_machines_running = 1`; the 4 GB Machine cannot use Fly suspend, and
   ordinary stop/start did not meet the accepted readiness contract.
 - Keep `--ha=false`: this deployment intentionally has one Machine, no volume, no
   database, and no autoscaler.
