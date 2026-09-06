@@ -106,10 +106,13 @@ the task event can be emitted. All default tests and the demonstration are offli
 
 ### Live smoke harness
 
-The opt-in `npm run smoke:live` CLI uses GPT 5.6 Luna through Amazon Bedrock Converse
-(`us.openai.gpt-5.6-luna`) with AWS-owned credentials and billing. A single synthetic
-place tool checks the model/tool round-trip; route quality is deferred to the web UI.
-The harness is bounded to three model calls and runs independently of offline CI.
-Initial live validation reached AWS but was denied because Luna is unavailable to the
-configured account; successful tool execution awaits account access. See the package
-README for setup and the command.
+The opt-in `npm run smoke:live` CLI uses GPT 5.6 Luna through the OpenAI Responses API
+(`openai` / `gpt-5.6-luna`). The host supplies `OPENAI_API_KEY`; AWS Secrets Manager
+stores the key and the launch environment retrieves it. Inference billing goes to OpenAI.
+The package README documents a suggested secret name and retrieval command; secret
+creation and live validation are pending the user's API key.
+
+A single synthetic place tool checks the model/tool round-trip; route quality is deferred
+to the web UI. The harness is bounded to three model calls and runs independently of
+offline CI. Missing credentials fail before session setup. The runtime retains explicit
+host-owned provider configuration and does not fall back to another provider.

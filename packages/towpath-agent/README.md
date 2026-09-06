@@ -158,26 +158,47 @@ lifecycle. The Python website container and manual planner remain usable without
 
 See [the design](../../docs/completed/2026-09-05-pi-agent-runtime-design.md) for the #20 handoff.
 
-## Live Bedrock smoke test
+## Live OpenAI smoke test
 
-Requires Node 24.15+, AWS credentials, and account access to **GPT 5.6 Luna** on
-Amazon Bedrock. Billing goes through AWS. From this package directory:
+Requires Node 24.15+ and an OpenAI API key with access to **GPT 5.6 Luna**.
+Pi uses the `openai` provider, `gpt-5.6-luna`, and the Responses API at
+`https://api.openai.com/v1`. Inference billing goes to OpenAI; AWS Secrets Manager
+can hold the API key. See the [OpenAI model documentation](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
+
+From this package directory, with `OPENAI_API_KEY` supplied in the environment:
 
 ```sh
 npm ci
-AWS_PROFILE=default AWS_REGION=us-east-1 npm run smoke:live
+npm run smoke:live
 # Optional one-shot prompt (still requires a tool call to pass):
 npm run smoke:live -- --prompt 'Use resolve_place to look up Bletchley Park.'
 ```
 
-The CLI uses Pi's `amazon-bedrock` provider and Converse streaming with the US inference
-ID `us.openai.gpt-5.6-luna`. AWS documents the supported regions and inference IDs in the
-[model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html).
-Use a supported US region. AWS environment credentials, bearer tokens, container roles,
-and web identity are supported; absent those, the CLI uses `AWS_PROFILE` or the default profile.
-No Pi login or OpenAI API key is needed. It does not load Pi credential files or fall back
-to another model/provider.
+For AWS Secrets Manager, create an **Other type of secret** later, with the raw API key
+as its plaintext secret value (not a JSON object). Suggested name: `towpath/openai-api-key`.
+Then run this Bash command to fetch it into the smoke process environment:
 
+```bash
+(
+  set +x
+  OPENAI_API_KEY="$(aws secretsmanager get-secret-value \
+    --profile default --region us-east-1 \
+    --secret-id towpath/openai-api-key \
+    --query SecretString --output text --no-cli-pager)" || exit
+  export OPENAI_API_KEY
+  npm run smoke:live
+)
+```
+
+The subshell keeps the key out of the parent shell environment and command history.
+The calling AWS identity needs `secretsmanager:GetSecretValue` for that secret (and
+`kms:Decrypt` if it uses a customer-managed KMS key). See the
+[AWS retrieval documentation](https://docs.aws.amazon.com/cli/latest/reference/secretsmanager/get-secret-value.html).
+For the future hosted service, inject the same secret as `OPENAI_API_KEY` at startup;
+the agent library itself does not fetch secrets. No secret has been created yet.
+
+The CLI fails immediately when the key is missing. It does not load Pi credential files,
+use ChatGPT subscription credentials, or fall back to Bedrock or another model.
 This makes at most three billed model calls (1024 output tokens each), with a 60-second
 run deadline. One synthetic `resolve_place` tool returns a fixed fixture; no routing or
 place service is contacted. JSON event output shows tool status and streamed text, followed
@@ -186,8 +207,5 @@ executes the tool, and emits text. This checks connectivity, not route-selection
 Each invocation starts a fresh in-memory session. The live command is opt-in and never runs
 in CI; `npm test` checks the harness's pass/fail behavior offline.
 
-If it reports `model_unavailable`, check credentials and Bedrock account/model access.
-During initial validation on 2026-09-05, AWS rejected Luna with `AccessDeniedException`:
-`openai.gpt-5.6-luna is not available for this account.` AWS directed the account owner to
-[Sales support](https://aws.amazon.com/contact-us/sales-support/) for access options.
-A successful live tool round-trip remains to be verified once account access is available.
+If it reports `model_unavailable`, check the OpenAI API key, billing, and model access.
+Live OpenAI validation is pending creation of the API key.
