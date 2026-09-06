@@ -4,6 +4,11 @@ import type { GoogleMapsModules } from './loader';
 import { createGoogleMapView, type MapFacade, type MapInstance, type MarkerEvent } from './map';
 import { createGooglePlaceSearch, type PlacesFacade } from './places';
 import { createGoogleTransferRouter, type RoutesFacade } from './routes';
+import {
+  createGooglePlaceTextSearch,
+  type PlaceTextSearch,
+  type TextSearchFacade,
+} from './textSearch';
 
 type Constructor<T, A extends unknown[] = [Record<string, unknown>]> = new (...args: A) => T;
 
@@ -39,6 +44,9 @@ interface RuntimeInfoWindow {
 
 interface PlacesModule {
   PlaceAutocompleteElement: Constructor<unknown, []>;
+  Place: {
+    searchByText(request: object): Promise<{ places?: unknown[] }>;
+  };
 }
 
 interface RoutesModule {
@@ -66,6 +74,7 @@ export interface GoogleAdapterOptions {
 
 export interface GoogleAdapters {
   placeSearch: PlaceSearch;
+  placeTextSearch?: PlaceTextSearch;
   transferRouter: TransferRouter;
   createMapView(element: HTMLElement, options?: Record<string, unknown>): MapView;
 }
@@ -95,6 +104,14 @@ function createPlacesFacade(modules: RuntimeModules): PlacesFacade {
   return {
     createAutocomplete() {
       return new modules.places.PlaceAutocompleteElement() as ReturnType<PlacesFacade['createAutocomplete']>;
+    },
+  };
+}
+
+function createTextSearchFacade(modules: RuntimeModules): TextSearchFacade {
+  return {
+    searchByText(request) {
+      return modules.places.Place.searchByText(request);
     },
   };
 }
@@ -165,6 +182,7 @@ export function createGoogleAdapters(
   const mapFacade = createMapFacade(modules);
   return {
     placeSearch: createGooglePlaceSearch(createPlacesFacade(modules)),
+    placeTextSearch: createGooglePlaceTextSearch(createTextSearchFacade(modules)),
     transferRouter: createGoogleTransferRouter(createRoutesFacade(modules)),
     createMapView(element, options = {}) {
       return createGoogleMapView(mapFacade, element, {
