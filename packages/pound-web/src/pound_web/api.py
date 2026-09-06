@@ -11,6 +11,10 @@ from fastapi.responses import JSONResponse, Response  # pyright: ignore[reportMi
 from pound.models import RETAINED_POI_KINDS  # pyright: ignore[reportMissingImports]
 from pound.route.candidates import nearest_candidates  # pyright: ignore[reportMissingImports]
 from pound.route.cost import resolve_movable_bridge_delay  # pyright: ignore[reportMissingImports]
+from pound.route.plan import (  # pyright: ignore[reportMissingImports]
+    RouteUnavailableError,
+    plan_projected_route,
+)
 from pound.route.round_trip import RoundTripError, discover_round_trips, plan_out_and_back
 from pound.schemas import (
     BoatHireBase,
@@ -39,10 +43,6 @@ from pydantic import (  # pyright: ignore[reportMissingImports]
     field_validator,
 )
 
-from pound.route.plan import (  # pyright: ignore[reportMissingImports]
-    RouteUnavailableError,
-    plan_projected_route,
-)
 from pound_web.boat_hire import select_boat_hire_reachability
 from pound_web.config import MAX_NETWORK_TRAVEL_MINUTES
 from pound_web.network import prepare_network_geometry

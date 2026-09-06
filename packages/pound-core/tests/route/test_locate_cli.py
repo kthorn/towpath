@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest  # pyright: ignore[reportMissingImports]
 from pound.artifact import load_artifact
-
 from pound.route import locate_cli
+
 from tests.fixtures import routing_test_graph, write_runtime_artifact
 
 

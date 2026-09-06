@@ -4,12 +4,11 @@ import networkx as nx
 import pytest
 from pound.geometry import haversine_m as _haversine_m
 from pound.graph.spatial import CandidateSpatialIndex
+from pound.route import candidates as candidate_module
 from pound.route.candidates import nearest_candidates
 from pound.route.project import project_handle
 from pound.schemas import CanalPointHandle, Coordinate
 from shapely.strtree import STRtree
-
-from pound.route import candidates as candidate_module
 
 
 def _graph() -> nx.Graph:

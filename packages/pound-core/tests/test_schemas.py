@@ -1,4 +1,5 @@
 import pytest  # pyright: ignore[reportMissingImports]
+from pound import schemas
 from pound.catalog.metadata import CatalogMetadata
 from pound.schemas import (
     BoatHireProvenance,
@@ -20,8 +21,6 @@ from pound.schemas import (
     RouteResult,
 )
 from pydantic import TypeAdapter, ValidationError  # pyright: ignore[reportMissingImports]
-
-from pound import schemas
 
 
 def _projected_payload() -> dict[str, object]:

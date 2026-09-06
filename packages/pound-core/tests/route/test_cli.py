@@ -3,8 +3,8 @@ from unittest.mock import patch
 
 import pytest  # pyright: ignore[reportMissingImports]
 from pound.artifact import load_artifact
-
 from pound.route import cli
+
 from tests.fixtures import routing_test_graph, write_runtime_artifact
 
 
