@@ -1,3 +1,4 @@
+import type { ClimateGridStore } from './stores/climate-grid';
 import type { ClimateStore } from './stores/climate';
 import type { PlaceSearch, MapView } from './google/contracts';
 import type { PlaceController } from './places/controller';
@@ -8,6 +9,7 @@ export interface AppDependencies {
   placeDiscovery?: PlaceController;
 
   climateStore?: ClimateStore;
+  climateGridStore?: ClimateGridStore;
   placeSearch: PlaceSearch;
   loadMapView(element: HTMLElement): Promise<MapView>;
 }

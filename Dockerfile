@@ -26,6 +26,7 @@ RUN uv sync --package pound-web --no-dev --frozen
 RUN .venv/bin/python -c "from importlib.util import find_spec; assert all(find_spec(name) is None for name in ('pound_build', 'requests', 'flask', 'osmium')); import pound, pound_web"
 COPY artifacts/ /app/artifacts/
 COPY data/ /app/data/
+RUN .venv/bin/python -c "from pathlib import Path; from pound.climate.artifact import load_climate; from pound.climate.grid import ClimateGrid; p=Path('/app/artifacts/climate.json'); load_climate(p) if p.exists() else None; g=Path('/app/artifacts/climate-grid.sqlite'); ClimateGrid(g) if g.exists() else None"
 RUN test -f /app/artifacts/great-britain.pkl
 RUN .venv/bin/python -c "from pathlib import Path; from pound.catalog.artifact import load_catalog; load_catalog(Path('/app/artifacts/great-britain-catalog.pkl'))"
 COPY --from=web-builder /build/web/dist /app/web/dist

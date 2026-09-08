@@ -1,3 +1,4 @@
+import type { ClimateRaster } from './climate-raster';
 import type {
   BoatHireBase,
   BoatHireProvenance,
@@ -53,6 +54,7 @@ export interface InfoWindowInstance {
 }
 
 export interface MapFacade {
+  createClimateRaster?(map: MapInstance): ClimateRaster;
   createMap(element: HTMLElement, options: Record<string, unknown>): MapInstance;
   createMarker(options: {
     map: MapInstance;
@@ -382,6 +384,7 @@ export function createGoogleMapView(
   options: Record<string, unknown> = {},
 ): MapView {
   const map = facade.createMap(element, options);
+  let climateRaster: ClimateRaster | undefined;
   const documentRef = element.ownerDocument;
   const placeMarkers: Partial<Record<EndpointSlot, MarkerInstance>> = {};
   const candidateMarkers: Record<EndpointSlot, MarkerInstance[]> = { origin: [], destination: [] };
@@ -649,6 +652,10 @@ export function createGoogleMapView(
   documentRef.addEventListener('keydown', escapeListener);
 
   return {
+    climateGrid(surface, opacity) {
+      if (surface && !climateRaster) climateRaster = facade.createClimateRaster?.(map);
+      climateRaster?.setSurface(surface, opacity);
+    },
     climate(markers, onSelect) {
       climateData = markers;
       selectClimate = onSelect;
@@ -851,6 +858,8 @@ export function createGoogleMapView(
     },
     closeInfoWindow,
     destroy() {
+      climateRaster?.destroy();
+      climateRaster = undefined;
       climateIdle?.remove();
       climateIdle = undefined;
       climateData = [];

@@ -74,7 +74,7 @@ function viewportMap(setCallback: (callback: (bounds: MapBounds) => void) => voi
   return {
     marker: vi.fn(), candidates: vi.fn(), land: vi.fn(), canal: vi.fn(), network: vi.fn(), focusedNetwork: vi.fn(), hireBases: vi.fn(), fitNetwork: vi.fn(), places: vi.fn(), pois: vi.fn(), locks: vi.fn(), day: vi.fn(),
     clearLand: vi.fn(), closeInfoWindow: vi.fn(), destroy: vi.fn(), onMapClick: vi.fn(() => vi.fn()), onHireBaseSelect: vi.fn(() => vi.fn()),
-    climate: vi.fn(),
+    climate: vi.fn(), climateGrid: vi.fn(),
     onViewportIdle: vi.fn((callback) => { setCallback(callback); return vi.fn(); }),
   };
 }

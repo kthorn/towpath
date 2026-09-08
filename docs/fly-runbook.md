@@ -224,3 +224,26 @@ or early health response.
 - Do not commit `artifacts/great-britain.pkl`, `artifacts/great-britain-catalog.pkl`, browser
   configuration values, or credentials.
 - This runbook does not add CI, a custom domain, a second region, or scale-to-zero.
+
+## Optional historical temperature artifacts
+
+Temperature data is separate from routing and catalog data. Stage the generated files at
+`artifacts/climate.json` (city references) and `artifacts/climate-grid.sqlite` (UK surface).
+Both are allowed through `.dockerignore`; the Docker build validates each file that is
+present. Raw weather caches and boundary downloads remain excluded.
+
+Enable only the artifacts staged for the release by adding these arguments to the full
+source deploy command:
+
+```bash
+--env POUND_CLIMATE_PATH=/app/artifacts/climate.json \
+--env POUND_CLIMATE_GRID_PATH=/app/artifacts/climate-grid.sqlite
+```
+
+Record the temperature artifact revisions and these environment overrides alongside the
+image, routing revision and config commit. In addition to routing health, verify both
+`/api/climate/grid?week_id=8&period_years=25&view=high_p90` and
+`/api/climate/grid?week_id=8&period_years=5&view=high_exceedance&threshold_c=30`.
+Require the expected grid revision, inspect available-cell counts, and open a cell detail
+with both historical periods. Routing health alone does not prove optional temperature
+data loaded. A partial regional pilot must not be described as populated UK coverage.

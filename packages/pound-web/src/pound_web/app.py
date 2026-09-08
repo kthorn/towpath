@@ -31,6 +31,7 @@ from starlette.staticfiles import StaticFiles  # pyright: ignore[reportMissingIm
 from pound_web.api import clear_network_geometry_caches
 from pound_web.api import router as api_router
 from pound_web.boat_hire import load_boat_hire_seeds, snap_boat_hire_bases
+from pound_web.climate_grid import router as climate_grid_router
 from pound_web.config import WebSettings
 from pound_web.place_api import router as place_router
 from pound_web.place_sessions import PlaceSessionError, PlaceSessions
@@ -75,6 +76,15 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
 
         app.state.place_sessions = PlaceSessions()
         app.state.place_name_index = None
+
+        app.state.climate_grid = None
+        if runtime_settings.climate_grid_path is not None:
+            try:
+                from pound.climate.grid import ClimateGrid
+
+                app.state.climate_grid = ClimateGrid(runtime_settings.climate_grid_path)
+            except (OSError, ValueError) as exc:
+                logging.getLogger(__name__).warning("Climate grid unavailable: %s", exc)
 
         app.state.climate = None
         if runtime_settings.climate_path is not None:
@@ -121,6 +131,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
 
     application = FastAPI(lifespan=lifespan)
     application.include_router(api_router)
+    application.include_router(climate_grid_router)
     application.include_router(place_router)
 
     @application.exception_handler(PlaceSessionError)

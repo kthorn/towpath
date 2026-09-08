@@ -610,3 +610,54 @@ GET /api/climate/locations/oxford?week_id=8
 The first endpoint returns bounded marker summaries without sample arrays; the second
 returns both periods and metrics for one location. Responses use ETags based on artifact
 revision and query selection.
+
+### UK temperature surface
+
+The **UK temperature overlay** adds a translucent land-masked surface with five views:
+median daily high, P90 daily high (default), median daily low, P10 daily low, and the
+historical fraction of daily highs strictly above a configurable threshold (default 30°C).
+The week and 25-year/5-year controls use the same historical windows as city comparisons.
+
+Opacity is adjustable without reloading data. Choose **Inspect temperature from map** to
+inspect the nearest sample within 15 km, or use the searchable/paginated cell selector.
+Details show original unsmoothed samples and exact exceedance counts. A P90 high is not an
+absolute maximum, and an exceedance fraction is not a forecast or a probability for an
+entire trip. Zero historical exceedances does not rule out future heat.
+
+Build tools operate on a separate 10 km grid in EPSG:3035. Obtain a WGS84 UK land-mask
+GeoJSON with known provenance, then prepare the manifest and estimate acquisition first:
+
+```bash
+uv run --package pound-build python -m scripts.build_climate_grid prepare \
+  --mask data/climate-grid/ons-uk-2024.geojson --manifest data/climate-grid/uk-manifest.json
+uv run --package pound-build python -m scripts.build_climate_grid estimate \
+  --manifest data/climate-grid/uk-manifest.json --end-year 2025
+```
+
+The December 2024 ONS boundary produces 3,030 cells: 75,750 annual requests,
+estimated at 681,750 weighted calls for 25 years before retries. A four-cell real-data
+pilot has been validated; national weather acquisition requires sufficient provider access.
+
+Acquisition is resumable and requires an explicit weighted-call budget. It is separate
+from the cache-only artifact build:
+
+```bash
+uv run --package pound-build python -m scripts.build_climate_grid acquire-limited \
+  --manifest data/climate-grid/uk-manifest.json --end-year 2025 --max-weighted-calls 1000
+uv run --package pound-build python -m scripts.build_climate_grid build \
+  --manifest data/climate-grid/uk-manifest.json --mask data/climate-grid/ons-uk-2024.geojson \
+  --end-year 2025 --out artifacts/climate-grid.sqlite
+```
+
+A budget-exhausted acquisition preserves completed batches and can be resumed; build
+requires the requested annual batches to be cached. Check provider limits across all
+runs rather than treating the per-run budget as a daily entitlement. National history
+requires a substantially larger acquisition than a regional evaluation, potentially
+bulk-data or subscribed historical access. No national weather dataset is bundled in git.
+
+Set `POUND_CLIMATE_GRID_PATH` to the absolute SQLite path when starting the web server.
+The surface API reads only the selected period/week/metric from the local artifact;
+missing or invalid grid data leaves routing available. See the
+[deployment runbook](docs/fly-runbook.md#optional-historical-temperature-artifacts) for
+packaging and post-release checks. The named-location temperature feature remains optional
+and independent.

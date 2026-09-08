@@ -1,3 +1,4 @@
+import { createClimateRaster, type ClimateRasterMap, type ClimateRasterMapsNamespace } from './climate-raster';
 import type { MapBounds } from '../types';
 import type { MapView, PlaceSearch, TransferRouter } from './contracts';
 import type { GoogleMapsModules } from './loader';
@@ -12,7 +13,7 @@ import {
 
 type Constructor<T, A extends unknown[] = [Record<string, unknown>]> = new (...args: A) => T;
 
-interface MapsModule {
+interface MapsModule extends ClimateRasterMapsNamespace {
   Map: Constructor<unknown, [HTMLElement, Record<string, unknown>]>;
   Polyline: Constructor<unknown>;
   InfoWindow: Constructor<unknown, []>;
@@ -118,6 +119,9 @@ function createTextSearchFacade(modules: RuntimeModules): TextSearchFacade {
 
 function createMapFacade(modules: RuntimeModules): MapFacade {
   return {
+    createClimateRaster(map) {
+      return createClimateRaster(map as unknown as ClimateRasterMap, modules.maps);
+    },
     createMap(element, options) {
       return new modules.maps.Map(element, options) as ReturnType<MapFacade['createMap']>;
     },
