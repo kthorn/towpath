@@ -218,7 +218,7 @@ function setup(
 		hireBases: vi.fn(
 			(_bases: never[], _selectedIdentity: string | null) => {},
 		),
-		climate: vi.fn(),
+		climate: vi.fn(), climateGrid: vi.fn(),
 		fitNetwork: vi.fn(),
 		places: vi.fn(),
 		pois: vi.fn(),
@@ -898,7 +898,7 @@ describe("trip planning interface", () => {
 			hireBases: vi.fn(
 				(_bases: never[], _selectedIdentity: string | null) => {},
 			),
-			climate: vi.fn(),
+			climate: vi.fn(), climateGrid: vi.fn(),
 			fitNetwork: vi.fn(),
 			places: vi.fn(),
 			pois: vi.fn(),
@@ -921,7 +921,7 @@ describe("trip planning interface", () => {
 			hireBases: vi.fn(
 				(_bases: never[], _selectedIdentity: string | null) => {},
 			),
-			climate: vi.fn(),
+			climate: vi.fn(), climateGrid: vi.fn(),
 			fitNetwork: vi.fn(),
 			places: vi.fn(),
 			pois: vi.fn(),
@@ -973,7 +973,7 @@ describe("trip planning interface", () => {
 			hireBases: vi.fn(
 				(_bases: never[], _selectedIdentity: string | null) => {},
 			),
-			climate: vi.fn(),
+			climate: vi.fn(), climateGrid: vi.fn(),
 			fitNetwork: vi.fn(),
 			clearLand: vi.fn(),
 			onMapClick: vi.fn(() => removeClick),
@@ -1240,7 +1240,7 @@ it('connects climate summaries and selection to the map across planner remounts'
   await waitFor(() => expect(api.location).toHaveBeenCalledWith('oxford', { week_id: 8 }));
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Oxford' })).toBeInTheDocument());
   expect(vi.mocked(map.climate).mock.calls.length).toBe(paintsBeforeSelection);
-  const remountedMap = { ...map, climate: vi.fn(), destroy: vi.fn() };
+  const remountedMap = { ...map, climate: vi.fn(), climateGrid: vi.fn(), destroy: vi.fn() };
   vi.mocked(dependencies.loadMapView).mockResolvedValueOnce(remountedMap);
   await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
   const oldPaintCount = vi.mocked(map.climate).mock.calls.length;
@@ -1253,4 +1253,34 @@ it('connects climate summaries and selection to the map across planner remounts'
   expect(vi.mocked(map.climate).mock.calls.length).toBe(oldPaintCount);
   await climateStore.setEnabled(false);
   await waitFor(() => expect(remountedMap.climate).toHaveBeenLastCalledWith([], expect.any(Function)));
+});
+
+it('paints the grid surface, adjusts opacity without fetching, and clears on disable', async () => {
+  const { createClimateGridStore } = await import('../lib/stores/climate-grid');
+  const surface = {
+    revision: 'grid-r1', end_year: 2025,
+    source: { name: 'Test', url: 'https://example.org', attribution: 'Test', timezone: 'Europe/London', model: 'era5_land' },
+    week_id: 8, week_label: 'June 26–July 2', period_years: 25, view: 'high_p90',
+    threshold_c: null, unit: 'celsius', spacing_km: 10,
+    mask: { type: 'Polygon', coordinates: [[[-2,51],[0,51],[0,53],[-2,51]]] },
+    cells: [{ id: 'cell', coordinate: { lat: 52, lon: -1 }, value: 28, n_days: 175 }],
+  } as const;
+  const api = { grid: vi.fn(async () => surface as never), cell: vi.fn() };
+  const gridStore = createClimateGridStore({ api });
+  const { dependencies } = setup();
+  dependencies.climateGridStore = gridStore;
+  render(App, { props: { dependencies } });
+  await waitFor(() => expect(dependencies.loadMapView).toHaveBeenCalled());
+  const map = await vi.mocked(dependencies.loadMapView).mock.results[0].value;
+  await gridStore.setEnabled(true);
+  await waitFor(() => expect(map.climateGrid).toHaveBeenCalledWith(surface, 0.4));
+  gridStore.setOpacity(0.6);
+  await waitFor(() => expect(map.climateGrid).toHaveBeenLastCalledWith(surface, 0.6));
+  expect(api.grid).toHaveBeenCalledTimes(1);
+  await fireEvent.click(screen.getByRole('radio', { name: 'Inspect temperature from map' }));
+  const mapClick = vi.mocked(map.onMapClick).mock.lastCall![0];
+  mapClick({ lat: 52, lon: -1 });
+  await waitFor(() => expect(api.cell).toHaveBeenCalledWith('cell', { week_id: 8 }));
+  await gridStore.setEnabled(false);
+  await waitFor(() => expect(map.climateGrid).toHaveBeenLastCalledWith(null, 0.6));
 });

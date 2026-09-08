@@ -4,6 +4,9 @@
   import AttractionPanel from './component/AttractionPanel.svelte';
 
   import ClimateControls from './component/ClimateControls.svelte';
+  import ClimateGridControls from './component/ClimateGridControls.svelte';
+  import ClimateGridDetail from './component/ClimateGridDetail.svelte';
+  import { createClimateGridStore } from './lib/stores/climate-grid';
   import ClimateDetail from './component/ClimateDetail.svelte';
   import { climateColor, CLIMATE_COLOR_LIMITS } from './lib/climate';
   import { createClimateStore } from './lib/stores/climate';
@@ -25,7 +28,13 @@
   const journeyMode = $derived($store.journeyMode ?? 'point_to_point');
   const defaultClimateStore = createClimateStore();
   const climateStore = $derived(dependencies.climateStore ?? defaultClimateStore);
+  const defaultClimateGridStore = createClimateGridStore();
+  const climateGridStore = $derived(dependencies.climateGridStore ?? defaultClimateGridStore);
   let mapView = $state<MapView | undefined>();
+  $effect(() => {
+    const grid = $climateGridStore;
+    mapView?.climateGrid(grid.enabled ? grid.surface : null, grid.opacity);
+  });
   let paintedClimateView: MapView | undefined;
   let paintedClimateSignature = "";
   $effect(() => {
@@ -57,7 +66,27 @@
     dependencies.store.setMapView(view);
   }
   const boatSettings = createBoatSettingsStore();
-  let active = $state<EndpointSlot>('origin');
+  let active = $state<EndpointSlot | 'temperature'>('origin');
+  let temperatureSelectionMessage = $state('');
+  $effect(() => {
+    if (!$climateGridStore.enabled && active === 'temperature') active = 'origin';
+  });
+  function handleMapClick(coordinate: { lat: number; lon: number }) {
+    if (active !== 'temperature') {
+      store.setEndpointCoordinate(active, coordinate);
+      return;
+    }
+    let nearest: string | null = null;
+    let distanceKm = 15;
+    for (const cell of $climateGridStore.surface?.cells ?? []) {
+      const dy = (cell.coordinate.lat - coordinate.lat) * 111.195;
+      const dx = (cell.coordinate.lon - coordinate.lon) * 111.195 * Math.cos(coordinate.lat * Math.PI / 180);
+      const distance = Math.hypot(dx, dy);
+      if (distance < distanceKm) { nearest = cell.id; distanceKm = distance; }
+    }
+    temperatureSelectionMessage = nearest ? 'Showing the nearest sampled land location.' : 'No temperature sample within 15 km of this point.';
+    if (nearest) void climateGridStore.selectCell(nearest);
+  }
   let plannerSession = $state({ days: 7 as string | number, hours: 6 as string | number });
   let searchKey = $state(0);
   let hasAttractionPreview = false;
@@ -162,10 +191,11 @@
     {/if}
     <BoatConstraints formId="route-actions" bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
     <div class="map-column">
-      <fieldset class="map-target"><legend>Map click sets</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set {journeyMode === 'out_and_back' ? 'visit on the way' : 'destination'} from map</label></fieldset>
-      <MapCanvas
+      <fieldset class="map-target"><legend>Map click action</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set {journeyMode === 'out_and_back' ? 'visit on the way' : 'destination'} from map</label>{#if $climateGridStore.enabled}<label><input type="radio" bind:group={active} value="temperature" /> Inspect temperature from map</label>{/if}</fieldset>
+      {#if active === 'temperature' && temperatureSelectionMessage}<p role="status">{temperatureSelectionMessage}</p>{/if}
+    <MapCanvas
         load={dependencies.loadMapView}
-        onclick={(coordinate) => store.setEndpointCoordinate(active, coordinate)}
+        onclick={handleMapClick}
         onhirebaseselect={store.selectHireBase}
         onhirebaseendpointselect={(slot, base) => store.setEndpointCoordinate(slot, {
           name: base.name,
@@ -197,8 +227,13 @@
           onClearPreview={clearAttractionPreview} />
       {/if}
 
-      <ClimateControls store={climateStore} />
-      <ClimateDetail store={climateStore} />
+      <ClimateGridControls store={climateGridStore} />
+      <ClimateGridDetail store={climateGridStore} />
+      <details open={$climateStore.enabled}>
+        <summary>City temperature references</summary>
+        <ClimateControls store={climateStore} />
+        <ClimateDetail store={climateStore} />
+      </details>
 		{#key searchKey}
 			<EndpointPanel slot="origin" endpoint={$store.origin} {store} search={dependencies.placeSearch} />
 			<EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} title={journeyMode === 'out_and_back' ? 'Visit on the way' : 'Destination'} optional={journeyMode === 'out_and_back'} />

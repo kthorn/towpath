@@ -1,3 +1,4 @@
+import type { ClimateGridSurface } from '../climate-grid';
 import type {
   CanalCandidate,
   BoatHireBase,
@@ -56,6 +57,7 @@ export interface ClimateMapMarker {
 }
 
 export interface MapView {
+  climateGrid(surface: ClimateGridSurface | null, opacity: number): void;
   climate(markers: ClimateMapMarker[], onSelect: (id: string) => void): void;
   marker(slot: EndpointSlot, coordinate: LatLon | null): void;
   candidates(slot: EndpointSlot, candidates: CanalCandidate[], selectedCandidateId?: string): void;

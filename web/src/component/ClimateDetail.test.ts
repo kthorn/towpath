@@ -116,3 +116,13 @@ describe('ClimateDetail', () => {
     expect(screen.queryByText('25 years')).toBeInTheDocument();
   });
 });
+
+it('keeps accessible names distinct when grid and city details coexist', () => {
+  render(ClimateDetail, { props: { detail, metric: 'high' } });
+  render(ClimateDetail, { props: { detail: { ...detail, location: { ...detail.location, name: 'Grid sample' } }, metric: 'low' } });
+  expect(screen.getByRole('complementary', { name: 'Oxford' })).toBeInTheDocument();
+  expect(screen.getByRole('complementary', { name: 'Grid sample' })).toBeInTheDocument();
+  const headings = screen.getAllByRole('heading');
+  const ids = headings.map((heading) => heading.id).filter(Boolean);
+  expect(new Set(ids).size).toBe(ids.length);
+});

@@ -882,3 +882,19 @@ it('repaints climate for changed idle bounds and removes its idle listener when 
   expect(markers.at(-1)?.map).toBeNull();
   view.destroy();
 });
+
+it('creates the climate raster lazily and destroys it without fitting the map', () => {
+  const { view, facade } = setup();
+  const raster = { setSurface: vi.fn(), destroy: vi.fn() };
+  facade.createClimateRaster = vi.fn(() => raster);
+  view.climateGrid(null, 0.4);
+  expect(facade.createClimateRaster).not.toHaveBeenCalled();
+  const surface = { revision: 'test' } as never;
+  view.climateGrid(surface, 0.4);
+  expect(raster.setSurface).toHaveBeenCalledWith(surface, 0.4);
+  expect(facade.fitBounds).not.toHaveBeenCalled();
+  view.climateGrid(null, 0.4);
+  expect(raster.setSurface).toHaveBeenLastCalledWith(null, 0.4);
+  view.destroy();
+  expect(raster.destroy).toHaveBeenCalledOnce();
+});
