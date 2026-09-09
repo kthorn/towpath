@@ -127,4 +127,3 @@ as a separately supervised optional Node service with its own authentication, se
 lifecycle. The Python website container and manual planner remain usable without this package.
 
 See [the design](completed/2026-09-05-pi-agent-runtime-design.md) for the #20 handoff.
-
