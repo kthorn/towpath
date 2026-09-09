@@ -109,8 +109,9 @@ the task event can be emitted. All default tests and the demonstration are offli
 The opt-in `npm run smoke:live` CLI uses GPT 5.6 Luna through the OpenAI Responses API
 (`openai` / `gpt-5.6-luna`). The host supplies `OPENAI_API_KEY`; AWS Secrets Manager
 stores the key and the launch environment retrieves it. Inference billing goes to OpenAI.
-The package README documents a suggested secret name and retrieval command; secret
-creation and live validation are pending the user's API key.
+The package README documents the secret name and retrieval command. Live validation
+passed on 2026-09-08 using the stored key: one successful synthetic tool execution,
+a streamed text reply, and completion in 5833 ms.
 
 A single synthetic place tool checks the model/tool round-trip; route quality is deferred
 to the web UI. The harness is bounded to three model calls and runs independently of

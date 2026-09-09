@@ -174,7 +174,7 @@ npm run smoke:live
 npm run smoke:live -- --prompt 'Use resolve_place to look up Bletchley Park.'
 ```
 
-For AWS Secrets Manager, create an **Other type of secret** later, with the raw API key
+For AWS Secrets Manager, create an **Other type of secret**, with the raw API key
 as its plaintext secret value (not a JSON object). Suggested name: `towpath/openai-api-key`.
 Then run this Bash command to fetch it into the smoke process environment:
 
@@ -195,7 +195,7 @@ The calling AWS identity needs `secretsmanager:GetSecretValue` for that secret (
 `kms:Decrypt` if it uses a customer-managed KMS key). See the
 [AWS retrieval documentation](https://docs.aws.amazon.com/cli/latest/reference/secretsmanager/get-secret-value.html).
 For the future hosted service, inject the same secret as `OPENAI_API_KEY` at startup;
-the agent library itself does not fetch secrets. No secret has been created yet.
+the agent library itself does not fetch secrets.
 
 The CLI fails immediately when the key is missing. It does not load Pi credential files,
 use ChatGPT subscription credentials, or fall back to Bedrock or another model.
@@ -208,4 +208,6 @@ Each invocation starts a fresh in-memory session. The live command is opt-in and
 in CI; `npm test` checks the harness's pass/fail behavior offline.
 
 If it reports `model_unavailable`, check the OpenAI API key, billing, and model access.
-Live OpenAI validation is pending creation of the API key.
+Live validation passed on 2026-09-08 using the key from AWS Secrets Manager: Luna
+executed `resolve_place` once, received its synthetic result, and streamed a text reply.
+The run completed successfully in 5833 ms (exit status 0).
