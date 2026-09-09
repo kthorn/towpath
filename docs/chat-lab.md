@@ -94,7 +94,17 @@ labels. A follow-up referring to the “first canal candidate” was also interp
 the first place before canal alternatives had been presented. These cases are tracked in
 [#94](https://github.com/kthorn/towpath/issues/94), which blocks the public chat UI (#80).
 
-The local Great Britain artifact predates the turnaround index, so the route call
-returned `503 turnarounds_unavailable`. Rebuild the graph with current main before
-judging out-and-back planning. The lab surfaces the actual API error; it does not invent
-an itinerary when routing data is unavailable.
+The initial artifact lacked the turnaround index and returned
+`503 turnarounds_unavailable`. After rebuilding from the September 8 Great Britain
+extract, the browser conversation successfully called the route tool and returned a
+17.6 km, eight-lock out-and-back preview using a mapped winding hole. The rebuilt
+index contains 392 winding holes and 1,199 junction turnarounds.
+
+A combined request still stopped after place resolution despite saying it would fetch
+canal candidates next. Explicit follow-ups fetched candidates and then planned the
+route successfully. This is a prompting/control-flow finding to revisit while testing.
+
+The route evidence also exposed a dimensional parser gap: a mapped `maxlength=22 m`
+was retained in source tags but absent from normalized turning limits. This is tracked
+in [#97](https://github.com/kthorn/towpath/issues/97), which blocks the public chat UI.
+Boat-fit conclusions need that fix and another artifact rebuild.
