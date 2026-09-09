@@ -28,6 +28,7 @@ from pound.models import (  # pyright: ignore[reportMissingImports]
     PoiCategory,
     RuntimePoi,
 )
+from pound.turnarounds import validate_turnarounds  # pyright: ignore[reportMissingImports]
 from pydantic import ValidationError  # pyright: ignore[reportMissingImports]
 from shapely.geometry import Point
 
@@ -280,6 +281,10 @@ def _validate_graph(graph: Any, *, compact: bool = False) -> nx.Graph:
                 _finite_coordinate(
                     f"graph edge {(u, v)} lock_points[{index}].lon", coordinate[1], -180, 180
                 )
+    try:
+        validate_turnarounds(graph)
+    except ValueError as exc:
+        raise _invalid("graph turnarounds", graph.graph.get("turnarounds"), str(exc)) from exc
     return graph
 
 

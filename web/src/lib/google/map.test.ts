@@ -822,3 +822,79 @@ describe('Google map adapter', () => {
 function markersAt(facade: MapFacade, index: number) {
   return vi.mocked(facade.createMarker).mock.results[index]?.value;
 }
+
+describe('historical temperature markers', () => {
+  const climateMarker = (id = 'oxford', lat = 51.75, lon = -1.25) => ({
+    id, coordinate: { lat, lon }, value: '21.0°', color: '#f59e0b',
+    label: `${id}: daily high 21.0°C, middle 80% 17.0–25.0°C, 2001–2025`,
+  });
+
+  it('selects climate without refitting or changing hire markers, and cleans up', () => {
+    const { view, markers, markerListeners, facade } = setup();
+    view.hireBases([hireBase()], null);
+    const base = markers[0];
+    const select = vi.fn();
+    view.climate([climateMarker()], select);
+    const climate = markers.at(-1)!;
+    expect(climate.title).toContain('2001–2025');
+    expect(vi.mocked(facade.createMarker).mock.lastCall![0]).toMatchObject({ zIndex: 1000 });
+    expect(climate.content?.textContent).toBe('21.0°');
+    const listener = markerListeners.find((l) => l.marker === climate && l.event === 'click')!;
+    const stopPropagation = vi.fn();
+    listener.callback({ stopPropagation } as never);
+    expect(select).toHaveBeenCalledWith('oxford');
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(facade.fitBounds).not.toHaveBeenCalled();
+    view.climate([], select);
+    expect(climate.map).toBeNull();
+    expect(listener.remove).toHaveBeenCalled();
+    expect(base.map).not.toBeNull();
+    view.climate([climateMarker()], select);
+    const replacement = markers.at(-1)!;
+    view.destroy();
+    expect(replacement.map).toBeNull();
+  });
+
+  it('filters by viewport and declutters deterministically independent of input order', () => {
+    const { view, markers } = setup();
+    const select = vi.fn();
+    view.climate([climateMarker('outside', 57), climateMarker('z'), climateMarker('a')], select);
+    expect(markers.filter((m) => m.map !== null)).toHaveLength(1);
+    expect(markers.at(-1)!.title).toMatch(/^a:/);
+    view.climate([climateMarker('a'), climateMarker('z')], select);
+    expect(markers.filter((m) => m.map !== null)).toHaveLength(1);
+    expect(markers.at(-1)!.title).toMatch(/^a:/);
+    view.destroy();
+  });
+});
+
+
+it('repaints climate for changed idle bounds and removes its idle listener when disabled', () => {
+  const { view, markers, facade, map, mapListeners } = setup();
+  view.climate([{ id: 'north', coordinate: { lat: 57, lon: -1 }, value: '15°', color: '#eee', label: 'North' }], vi.fn());
+  expect(markers).toHaveLength(0);
+  const idle = mapListeners.filter(({ event }) => event === 'idle').at(-1)!;
+  vi.mocked(facade.getBounds).mockReturnValue({ south: 55, north: 58, west: -2, east: 0 });
+  idle.callback(undefined as never);
+  expect(markers.at(-1)?.title).toBe('North');
+  view.climate([], vi.fn());
+  expect(idle.remove).toHaveBeenCalledOnce();
+  expect(markers.at(-1)?.map).toBeNull();
+  view.destroy();
+});
+
+it('creates the climate raster lazily and destroys it without fitting the map', () => {
+  const { view, facade } = setup();
+  const raster = { setSurface: vi.fn(), destroy: vi.fn() };
+  facade.createClimateRaster = vi.fn(() => raster);
+  view.climateGrid(null, 0.4);
+  expect(facade.createClimateRaster).not.toHaveBeenCalled();
+  const surface = { revision: 'test' } as never;
+  view.climateGrid(surface, 0.4);
+  expect(raster.setSurface).toHaveBeenCalledWith(surface, 0.4);
+  expect(facade.fitBounds).not.toHaveBeenCalled();
+  view.climateGrid(null, 0.4);
+  expect(raster.setSurface).toHaveBeenLastCalledWith(null, 0.4);
+  view.destroy();
+  expect(raster.destroy).toHaveBeenCalledOnce();
+});

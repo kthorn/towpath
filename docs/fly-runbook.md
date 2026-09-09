@@ -11,7 +11,7 @@ behind its one warm Machine, see
 | App | `towpath-4772e4a8` |
 | Public domain | `https://towpath-4772e4a8.fly.dev` |
 | Region | `sjc` |
-| Machine | one `shared-cpu-4x` / 8 GB Machine |
+| Machine | one `shared-cpu-2x` / 4 GB Machine |
 | Warm minimum | `min_machines_running = 1` |
 
 Use the `fly.dev` hostname, not Fly's shared IPv4 address. There is no custom domain.
@@ -51,7 +51,7 @@ required here, not for configuration-only releases:
 
 ```bash
 uv sync --all-packages --extra bulk
-uv run pytest
+uv run pytest --run-bulk
 uv run ruff check .
 (cd web && npm ci && npm run check && npm test -- --run)
 test -f "$ARTIFACT"
@@ -178,7 +178,7 @@ fly config validate --strict --app "$APP"
 fly machines list --app "$APP"
 ```
 
-There must be exactly one `sjc` `shared-cpu-4x:8192MB` Machine, in `started` state
+There must be exactly one `sjc` `shared-cpu-2x:4096MB` Machine, in `started` state
 with a passing check. If it is stopped, get its ID from the listing and start it once:
 
 ```bash
@@ -215,7 +215,7 @@ or early health response.
 
 ## Safety notes
 
-- Keep `min_machines_running = 1`; the 8 GB Machine cannot use Fly suspend, and
+- Keep `min_machines_running = 1`; the 4 GB Machine cannot use Fly suspend, and
   ordinary stop/start did not meet the accepted readiness contract.
 - Keep `--ha=false`: this deployment intentionally has one Machine, no volume, no
   database, and no autoscaler.
@@ -224,3 +224,26 @@ or early health response.
 - Do not commit `artifacts/great-britain.pkl`, `artifacts/great-britain-catalog.pkl`, browser
   configuration values, or credentials.
 - This runbook does not add CI, a custom domain, a second region, or scale-to-zero.
+
+## Optional historical temperature artifacts
+
+Temperature data is separate from routing and catalog data. Stage the generated files at
+`artifacts/climate.json` (city references) and `artifacts/climate-grid.sqlite` (UK surface).
+Both are allowed through `.dockerignore`; the Docker build validates each file that is
+present. Raw weather caches and boundary downloads remain excluded.
+
+Enable only the artifacts staged for the release by adding these arguments to the full
+source deploy command:
+
+```bash
+--env POUND_CLIMATE_PATH=/app/artifacts/climate.json \
+--env POUND_CLIMATE_GRID_PATH=/app/artifacts/climate-grid.sqlite
+```
+
+Record the temperature artifact revisions and these environment overrides alongside the
+image, routing revision and config commit. In addition to routing health, verify both
+`/api/climate/grid?week_id=8&period_years=25&view=high_p90` and
+`/api/climate/grid?week_id=8&period_years=5&view=high_exceedance&threshold_c=30`.
+Require the expected grid revision, inspect available-cell counts, and open a cell detail
+with both historical periods. Routing health alone does not prove optional temperature
+data loaded. A partial regional pilot must not be described as populated UK coverage.

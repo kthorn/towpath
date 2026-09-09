@@ -1,0 +1,52 @@
+[
+  {
+    "id": "oxford",
+    "name": "Oxford",
+    "coordinate": {"lat": 51.752, "lon": -1.2577}
+  },
+  {
+    "id": "birmingham",
+    "name": "Birmingham",
+    "coordinate": {"lat": 52.4862, "lon": -1.8904}
+  },
+  {
+    "id": "worcester",
+    "name": "Worcester",
+    "coordinate": {"lat": 52.1936, "lon": -2.2216}
+  },
+  {
+    "id": "chester",
+    "name": "Chester",
+    "coordinate": {"lat": 53.1934, "lon": -2.8931}
+  },
+  {
+    "id": "york",
+    "name": "York",
+    "coordinate": {"lat": 53.959, "lon": -1.0815}
+  },
+  {
+    "id": "edinburgh",
+    "name": "Edinburgh",
+    "coordinate": {"lat": 55.9533, "lon": -3.1883}
+  },
+  {
+    "id": "cardiff",
+    "name": "Cardiff",
+    "coordinate": {"lat": 51.4816, "lon": -3.1791}
+  },
+  {
+    "id": "belfast",
+    "name": "Belfast",
+    "coordinate": {"lat": 54.5973, "lon": -5.9301}
+  },
+  {
+    "id": "hire-bunbury",
+    "name": "Bunbury hire base",
+    "coordinate": {"lat": 53.1269591, "lon": -2.6325626}
+  },
+  {
+    "id": "hire-lower-heyford",
+    "name": "Lower Heyford hire base",
+    "coordinate": {"lat": 51.918833, "lon": -1.298733}
+  }
+]

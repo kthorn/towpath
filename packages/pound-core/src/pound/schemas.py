@@ -14,6 +14,7 @@ from pydantic import (  # pyright: ignore[reportMissingImports]
 
 from pound.catalog.manifest import CATALOG_KINDS
 from pound.catalog.metadata import CatalogMetadata
+from pound.climate.artifact import ClimateSource, PeriodDistributions
 
 
 class CanalConstraints(BaseModel):
@@ -473,3 +474,240 @@ class CanalRouteResponse(BaseModel):
     geometry: GeoJSONLineString
     day_geometries: list[RouteDayGeometry] = Field(default_factory=list)
     locks: list[RouteLock] = Field(default_factory=list)
+
+
+class Turnaround(BaseModel):
+    """A source-backed winding hole or a junction assumed to permit turning."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    turnaround_id: str = Field(min_length=1)
+    kind: Literal["winding_hole", "junction"]
+    node_uid: int = Field(ge=0)
+    coordinate: Coordinate
+    display_name: str
+    eligibility_basis: Literal["mapped_winding_hole", "junction_assumption"]
+    sources: list[dict] = Field(default_factory=list)
+    turning_limits: dict[str, FiniteFloat | bool] = Field(default_factory=dict)
+
+
+class TurnaroundCandidatesRequest(BaseModel):
+    """Finite constraints shared by manual and conversational out-and-back clients."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    artifact_revision: str = Field(min_length=1)
+    start: CanalPointHandle | None = None
+    waypoint: CanalPointHandle | None = None
+    start_uid: int | None = Field(ge=0, default=None)
+    waypoint_uid: int | None = Field(ge=0, default=None)
+    days: int = Field(gt=0)
+    hours_per_day: FiniteFloat = Field(gt=0, default=6.0)
+    movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
+    boat_length_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_beam_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_draft_m: FiniteFloat | None = Field(gt=0, default=None)
+    boat_height_m: FiniteFloat | None = Field(gt=0, default=None)
+
+    @model_validator(mode="after")
+    def finite_total_budget(self):
+        if (self.start is None) == (self.start_uid is None):
+            raise ValueError("Supply exactly one of start or start_uid")
+        if self.waypoint is not None and self.waypoint_uid is not None:
+            raise ValueError("Supply only one waypoint handle")
+        try:
+            finite = math.isfinite(self.days * self.hours_per_day * 60)
+        except OverflowError:
+            finite = False
+        if not finite:
+            raise ValueError("total day/time budget must be finite")
+        return self
+
+
+class OutAndBackRouteRequest(TurnaroundCandidatesRequest):
+    route_id: str | None = Field(min_length=1, default=None)
+    request_id: str | None = Field(min_length=1, default=None)
+
+    @model_validator(mode="after")
+    def require_selection_pair(self):
+        if (self.route_id is None) != (self.request_id is None):
+            raise ValueError("route_id and request_id must be supplied together")
+        return self
+
+
+class BranchChoice(BaseModel):
+    junction_uid: int
+    next_uid: int
+    junction_name: str
+    continuation_name: str
+
+
+class JourneyBudget(BaseModel):
+    available_minutes: float
+    used_minutes: float
+    remaining_minutes: float
+    days_used: int
+
+
+class TurnaroundRejection(BaseModel):
+    turnaround_id: str | None = None
+    code: str
+    message: str
+    fields: list[str] = Field(default_factory=list)
+
+
+class OutAndBackRoute(BaseModel):
+    journey_type: Literal["out_and_back"] = "out_and_back"
+    artifact_revision: str
+    request_id: str
+    route_id: str
+    branch_choices: list[BranchChoice]
+    turnaround: Turnaround
+    outbound_distance_km: float
+    selection_basis: Literal["furthest_reachable", "user_selected"] = "furthest_reachable"
+    budget: JourneyBudget
+    journey: CanalRouteResponse
+
+
+class TurnaroundCandidatesResponse(BaseModel):
+    artifact_revision: str
+    request_id: str
+    default_route_id: str
+    routes: list[OutAndBackRoute]
+    rejections: list[TurnaroundRejection] = Field(default_factory=list)
+
+
+# Attraction lookup contracts are additive to route-time node/place resolution.
+ATTRACTION_KINDS = [
+    "museum",
+    "gallery",
+    "historic_site",
+    "garden",
+    "wildlife_attraction",
+    "landmark",
+]
+
+
+class ResolvePlaceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    query: str = Field(min_length=1, max_length=200)
+    kinds: list[str] = Field(
+        default_factory=lambda: list(ATTRACTION_KINDS), min_length=1, max_length=16
+    )
+    scope_id: Literal["gb"] = "gb"
+
+    @field_validator("query")
+    @classmethod
+    def normalize_query(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("query must contain text")
+        return value
+
+    @field_validator("kinds")
+    @classmethod
+    def known_kinds(cls, value: list[str]) -> list[str]:
+        if set(value) - CATALOG_KINDS or len(set(value)) != len(value):
+            raise ValueError("kinds must be unique supported catalog kinds")
+        return value
+
+
+class ResolvedPlaceOption(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    option_ref: str
+    source: Literal["osm"] = "osm"
+    source_id: str
+    name: str
+    coordinate: Coordinate
+    locality: str | None
+    catalog_revision: str
+    attribution: str = "© OpenStreetMap contributors"
+
+
+class PlaceResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    status: Literal["resolved", "ambiguous", "not_found", "unavailable", "incomplete"]
+    options: list[ResolvedPlaceOption] = Field(default_factory=list, max_length=5)
+    reason: Literal[
+        "exact",
+        "selection_required",
+        "no_match",
+        "catalog_unavailable",
+        "work_limit",
+        "result_limit",
+    ]
+    work_used: int = Field(ge=0, default=0)
+
+    @model_validator(mode="after")
+    def consistent_outcome(self):
+        reasons = {
+            "resolved": {"exact"},
+            "ambiguous": {"selection_required"},
+            "not_found": {"no_match"},
+            "unavailable": {"catalog_unavailable"},
+            "incomplete": {"work_limit", "result_limit"},
+        }
+        if self.reason not in reasons[self.status]:
+            raise ValueError("reason does not match resolution status")
+        if self.status == "resolved" and len(self.options) != 1:
+            raise ValueError("resolved requires one option")
+        if self.status == "ambiguous" and not self.options:
+            raise ValueError("selection requires options")
+        if self.status in {"not_found", "unavailable"} and self.options:
+            raise ValueError("missing source result cannot contain options")
+        return self
+
+# Climate API contracts are independent of the routing artifact's revision.
+class ClimateSummaryDistribution(BaseModel):
+    """Historical daily statistics without the detail endpoint's sample arrays."""
+
+    model_config = ConfigDict(extra="forbid")
+    available: bool
+    missing_years: list[int]
+    start_year: int
+    end_year: int
+    n_days: int = Field(ge=0)
+    n_years: int = Field(ge=0)
+    p10: FiniteFloat | None
+    median: FiniteFloat | None
+    p90: FiniteFloat | None
+
+
+class ClimateLocationSummary(BaseModel):
+    id: str
+    name: str
+    coordinate: Coordinate
+    distribution: ClimateSummaryDistribution
+
+
+class ClimateLocationsResponse(BaseModel):
+    revision: str
+    end_year: int
+    source: ClimateSource
+    week_id: int = Field(ge=0, le=17)
+    week_label: str
+    period_years: Literal[5, 25]
+    metric: Literal["high", "low"]
+    locations: list[ClimateLocationSummary] = Field(max_length=500)
+
+
+class ClimateLocationInfo(BaseModel):
+    id: str
+    name: str
+    coordinate: Coordinate
+    source_coordinate: Coordinate
+    elevation: FiniteFloat | None
+
+
+class ClimateLocationResponse(BaseModel):
+    revision: str
+    end_year: int
+    source: ClimateSource
+    week_id: int = Field(ge=0, le=17)
+    week_label: str
+    location: ClimateLocationInfo
+    high: PeriodDistributions
+    low: PeriodDistributions

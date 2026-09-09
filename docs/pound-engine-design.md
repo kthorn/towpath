@@ -264,18 +264,25 @@ ineligible edges.)
 
 ### 5.3 Plan (`route/plan.py`) — `plan_route()`
 
-Modes driven by `CanalConstraints`:
+The point-to-point `CanalConstraints` entry point accepts `start` + `end` and uses
+shortest-path time cost. The additive out-and-back service accepts a required origin,
+finite day budget, and optional required outbound waypoint:
 
-- **Point-to-point:** `start` + `end` → shortest path by time cost.
-- **Round trip / ring:** `end is None` → find a closed loop returning to start
-  within the day budget (rings are the classic canal holiday; the Cheshire Ring,
-  Four Counties Ring, etc.). v1 can support an explicit `via` or a named ring;
-  general loop-finding within a time budget can be a later enhancement.
-- **Day budgeting:** split the path into days of ≤ `hours_per_day` cruising,
-  preferring to end days near moorings/amenities (winding holes for turning).
+- **Out and back:** enumerate every feasible simple branch path and retain the furthest
+  turning point on each continuation. Return all complete retraced journeys, with the
+  globally furthest as display default. Winding holes are mapped OSM turning points;
+  canal junctions permit turning by assumption, subject to known restrictions.
+- **Budget:** evaluate both directions, including repeated locks/bridges, and reject
+  out-and-back choices whose conservative uncapped day plan exceeds the requested budget.
+  Point-to-point retains its existing overflow-warning behavior. Day endpoints are not
+  vetted overnight moorings.
+- **Rings:** named circuits and general loop discovery remain deferred. Out-and-back
+  results close at origin with `is_ring=False`. The legacy `end=None` entry point does
+  not implicitly choose an out-and-back route; use the explicit round-trip service/API.
 
-Use Dijkstra/A*(NetworkX `shortest_path` with `weight=time_min`, or A* with a
-straight-line/time heuristic).
+See [the out-and-back specification](completed/2026-09-05-turnaround-out-and-back-design.md)
+for branch identity, API schemas, turnaround provenance, stale selections, and search limits.
+The pure entry points are `route.round_trip.discover_round_trips` and `plan_out_and_back`.
 
 Output a `RouteResult` (§6): ordered legs, per-leg distance/locks/time, totals,
 day breakdown, and amenities.

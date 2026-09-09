@@ -115,3 +115,12 @@ def test_fly_configuration_keeps_the_single_machine_warm():
         ],
     }
     assert fly["vm"] == [{"cpu_kind": "shared", "cpus": 2, "memory": "4gb"}]
+
+
+def test_temperature_artifacts_are_included_and_validated_when_present():
+    rules = (ROOT / '.dockerignore').read_text().splitlines()
+    assert '!artifacts/climate.json' in rules
+    assert '!artifacts/climate-grid.sqlite' in rules
+    dockerfile = (ROOT / 'Dockerfile').read_text()
+    assert 'load_climate' in dockerfile
+    assert 'ClimateGrid' in dockerfile

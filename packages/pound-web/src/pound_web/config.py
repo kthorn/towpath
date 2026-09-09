@@ -15,6 +15,9 @@ from pound_web.places import (
 )
 
 MAX_NETWORK_TRAVEL_MINUTES = 10_080
+MAX_ROUND_TRIP_WORK = 100_000
+MAX_ROUND_TRIP_ROUTES = 1_000
+MAX_ROUND_TRIP_VERTICES = 200_000
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,8 @@ class WebSettings:
     boat_hire_enrichment_path: Path
     candidate_pool_size: int = 20
     google_destination_limit: int = 10
+    climate_path: Path | None = None
+    climate_grid_path: Path | None = None
     catalog_path: Path | None = None
     catalog_max_kinds: int = MAX_CATALOG_KINDS
     catalog_max_viewport_span_deg: float = MAX_PLACES_VIEWPORT_SPAN_DEGREES
@@ -33,6 +38,9 @@ class WebSettings:
     catalog_max_route_vertices: int = MAX_CATALOG_ROUTE_COORDINATES
     catalog_query_work_budget: int = MAX_PLACES_QUERY_WORK
     places_max_targets: int = MAX_PLACES_TARGETS
+    round_trip_max_work: int = MAX_ROUND_TRIP_WORK
+    round_trip_max_routes: int = MAX_ROUND_TRIP_ROUTES
+    round_trip_max_vertices: int = MAX_ROUND_TRIP_VERTICES
 
     def __post_init__(self) -> None:
         if self.candidate_pool_size <= 0:
@@ -64,6 +72,18 @@ class WebSettings:
             )
         if not 0 < self.places_max_targets <= MAX_PLACES_TARGETS:
             raise ValueError(f"places_max_targets must be from 1 through {MAX_PLACES_TARGETS}")
+        if not 0 < self.round_trip_max_work <= MAX_ROUND_TRIP_WORK:
+            raise ValueError(
+                f"round_trip_max_work must be from 1 through {MAX_ROUND_TRIP_WORK}"
+            )
+        if not 0 < self.round_trip_max_routes <= MAX_ROUND_TRIP_ROUTES:
+            raise ValueError(
+                f"round_trip_max_routes must be from 1 through {MAX_ROUND_TRIP_ROUTES}"
+            )
+        if not 0 < self.round_trip_max_vertices <= MAX_ROUND_TRIP_VERTICES:
+            raise ValueError(
+                f"round_trip_max_vertices must be from 1 through {MAX_ROUND_TRIP_VERTICES}"
+            )
 
     @classmethod
     def from_env(cls) -> "WebSettings":
@@ -77,12 +97,16 @@ class WebSettings:
         if not boat_hire_enrichment_path:
             raise RuntimeError("POUND_BOAT_HIRE_ENRICHMENT_PATH is required")
 
+        climate_path = os.environ.get("POUND_CLIMATE_PATH")
+        climate_grid_path = os.environ.get("POUND_CLIMATE_GRID_PATH")
         catalog_path = os.environ.get("POUND_CATALOG_PATH")
         return cls(
             artifact_path=Path(artifact_path),
             static_dir=Path(os.environ.get("POUND_STATIC_DIR", "web/dist")),
             boat_hire_enrichment_path=Path(boat_hire_enrichment_path),
             catalog_path=Path(catalog_path) if catalog_path else None,
+            climate_path=Path(climate_path) if climate_path else None,
+            climate_grid_path=Path(climate_grid_path) if climate_grid_path else None,
             candidate_pool_size=int(os.environ.get("POUND_CANDIDATE_POOL_SIZE", "20")),
             google_destination_limit=int(os.environ.get("POUND_GOOGLE_DESTINATION_LIMIT", "10")),
             catalog_max_kinds=int(os.environ.get("POUND_CATALOG_MAX_KINDS", "16")),
@@ -97,4 +121,13 @@ class WebSettings:
                 os.environ.get("POUND_CATALOG_QUERY_WORK_BUDGET", "100000")
             ),
             places_max_targets=int(os.environ.get("POUND_PLACES_MAX_TARGETS", "64")),
+            round_trip_max_work=int(
+                os.environ.get("POUND_ROUND_TRIP_MAX_WORK", str(MAX_ROUND_TRIP_WORK))
+            ),
+            round_trip_max_routes=int(
+                os.environ.get("POUND_ROUND_TRIP_MAX_ROUTES", str(MAX_ROUND_TRIP_ROUTES))
+            ),
+            round_trip_max_vertices=int(
+                os.environ.get("POUND_ROUND_TRIP_MAX_VERTICES", str(MAX_ROUND_TRIP_VERTICES))
+            ),
         )

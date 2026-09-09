@@ -1,3 +1,4 @@
+import type { ClimateGridSurface } from '../climate-grid';
 import type {
   CanalCandidate,
   BoatHireBase,
@@ -47,7 +48,17 @@ export interface TransferRouter {
   route(origin: LatLon, destination: LatLon, mode: TransferMode): Promise<LandRoute>;
 }
 
+export interface ClimateMapMarker {
+  id: string;
+  coordinate: LatLon;
+  value: string;
+  color: string;
+  label: string;
+}
+
 export interface MapView {
+  climateGrid(surface: ClimateGridSurface | null, opacity: number): void;
+  climate(markers: ClimateMapMarker[], onSelect: (id: string) => void): void;
   marker(slot: EndpointSlot, coordinate: LatLon | null): void;
   candidates(slot: EndpointSlot, candidates: CanalCandidate[], selectedCandidateId?: string): void;
   land(slot: EndpointSlot, route: LandRoute | null): void;

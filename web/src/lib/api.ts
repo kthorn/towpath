@@ -5,6 +5,9 @@ import type {
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
+  TurnaroundCandidatesRequest,
+  TurnaroundCandidatesResponse,
+  TurnaroundRejection,
   HealthResponse,
   PlacesRequest,
   PlacesResponse,
@@ -17,6 +20,7 @@ export class PoundApiError extends Error implements PoundApiErrorDetail {
   readonly status: number;
   readonly code: string;
   readonly fields: string[];
+  readonly rejections: TurnaroundRejection[];
 
   constructor(status: number, detail: PoundApiErrorDetail) {
     super(detail.message);
@@ -24,7 +28,16 @@ export class PoundApiError extends Error implements PoundApiErrorDetail {
     this.status = status;
     this.code = detail.code;
     this.fields = detail.fields;
+    this.rejections = detail.rejections ?? [];
   }
+}
+
+function isRejection(value: unknown): value is TurnaroundRejection {
+  if (typeof value !== 'object' || value === null) return false;
+  const rejection = value as Record<string, unknown>;
+  return typeof rejection.code === 'string' && typeof rejection.message === 'string' &&
+    Array.isArray(rejection.fields) && rejection.fields.every((field) => typeof field === 'string') &&
+    (rejection.turnaround_id === undefined || rejection.turnaround_id === null || typeof rejection.turnaround_id === 'string');
 }
 
 function isErrorDetail(value: unknown): value is PoundApiErrorDetail {
@@ -34,7 +47,8 @@ function isErrorDetail(value: unknown): value is PoundApiErrorDetail {
     typeof detail.code === 'string' &&
     typeof detail.message === 'string' &&
     Array.isArray(detail.fields) &&
-    detail.fields.every((field) => typeof field === 'string')
+    detail.fields.every((field) => typeof field === 'string') &&
+    (detail.rejections === undefined || (Array.isArray(detail.rejections) && detail.rejections.every(isRejection)))
   );
 }
 
@@ -85,6 +99,9 @@ export function createPoundApi(fetchFn: typeof fetch = fetch) {
     },
     canalRoute(request: CanalRouteRequest): Promise<CanalRouteResponse> {
       return postJson(fetchFn, '/api/canal-route', request);
+    },
+    turnaroundCandidates(request: TurnaroundCandidatesRequest): Promise<TurnaroundCandidatesResponse> {
+      return postJson(fetchFn, '/api/turnaround-candidates', request);
     },
     routePois(request: RoutePoisRequest): Promise<RoutePoisResponse> {
       return postJson(fetchFn, '/api/route-pois', request);

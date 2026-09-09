@@ -3,6 +3,24 @@ import { describe, expect, it, vi } from "vitest";
 import { createGoogleAdapters } from "./sdk";
 
 describe("Google SDK production bridge", () => {
+	it("exposes the Places text-search adapter through the SDK facade", async () => {
+		const searchByText = vi.fn().mockResolvedValue({ places: [] });
+		const adapters = createGoogleAdapters({
+			maps: {},
+			marker: {},
+			places: { Place: { searchByText } },
+			routes: {},
+		});
+
+		await expect(
+			adapters.placeTextSearch?.search(
+				"Bletchley Park",
+				{ south: 51.9, west: -0.9, north: 52.1, east: -0.6 },
+			),
+		).resolves.toEqual({ status: "not_found", places: [] });
+		expect(searchByText).toHaveBeenCalledOnce();
+	});
+
 	it("wires Maps, Places, and AdvancedMarkerElement constructors", () => {
 		const MapCtor = vi.fn(function () {
 			return { addListener: vi.fn(), fitBounds: vi.fn() };

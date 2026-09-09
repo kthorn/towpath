@@ -263,3 +263,39 @@ def test_turning_point_remains_a_runtime_node():
     assert set(compact) == {0, 1, 2}
     assert compact.nodes[1]["turning_point"] is True
     assert compact.nodes[1]["turning_max_length_m"] == 21.5
+
+
+def test_turnaround_record_protects_node_and_graph_metadata():
+    source = nx.Graph()
+    _node(source, 0, 51.7500, -1.2600)
+    _node(source, 1, 51.7505, -1.2600)
+    _node(source, 2, 51.7510, -1.2600)
+    _edge(source, 0, 1)
+    _edge(source, 1, 2)
+    source.graph["turnarounds"] = [
+        {
+            "turnaround_id": "osm:node/99",
+            "kind": "winding_hole",
+            "node_uid": 1,
+            "coordinate": {"lat": 51.7505, "lon": -1.2600},
+            "display_name": "Hole",
+            "eligibility_basis": "mapped_winding_hole",
+            "sources": [
+                {
+                    "source": "overpass",
+                    "identity": "node/99",
+                    "source_date": "2026-09-05",
+                    "attribution": "© OpenStreetMap contributors",
+                }
+            ],
+            "turning_limits": {"boat_length_m": 18.0},
+        }
+    ]
+    source.graph["turnaround_report"] = {"attached": ["node/99"]}
+    _without_coords(source)
+
+    compact = compact_graph(source)
+
+    assert set(compact) == {0, 1, 2}
+    assert compact.graph["turnarounds"] == source.graph["turnarounds"]
+    assert compact.graph["turnaround_report"] == source.graph["turnaround_report"]

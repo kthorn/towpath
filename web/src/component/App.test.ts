@@ -98,6 +98,28 @@ const route = {
 	},
 };
 
+const outAndBackRoute = (routeId: string, displayName: string) => ({
+	journey_type: "out_and_back" as const,
+	artifact_revision: "r1",
+	request_id: "request-1",
+	route_id: routeId,
+	branch_choices: [{ junction_uid: 10, next_uid: 11 }],
+	turnaround: {
+		turnaround_id: `turn-${routeId}`,
+		kind: "junction" as const,
+		node_uid: 11,
+		coordinate: { lat: 51, lon: -1 },
+		display_name: displayName,
+		eligibility_basis: "junction_assumption" as const,
+		sources: [],
+		turning_limits: {},
+	},
+	outbound_distance_km: 10,
+	selection_basis: "furthest_reachable" as const,
+	budget: { available_minutes: 720, used_minutes: 420, remaining_minutes: 300, days_used: 1 },
+	journey: route,
+});
+
 function setup(
 	overrides: {
 		unavailable?: boolean;
@@ -106,6 +128,7 @@ function setup(
 		networkError?: string;
 		networkLoading?: boolean;
 		hasNetworkOverlay?: boolean;
+		journeyMode?: "point_to_point" | "out_and_back";
 	} = {},
 ) {
 	const state: TripState = {
@@ -138,6 +161,12 @@ function setup(
 		places: { enabledKinds: [], places: [], loading: false, error: null },
 		placesStatus: "unknown",
 		placesResultLimitExceeded: false,
+		journeyMode: overrides.journeyMode ?? "point_to_point",
+		outAndBackRoutes: [],
+		outAndBackRejections: [],
+		outAndBackRequestId: null,
+		defaultOutAndBackRouteId: null,
+		selectedOutAndBackRouteId: null,
 	};
 	const inner = writable(state);
 	const calls: Array<{
@@ -149,9 +178,12 @@ function setup(
 		setEndpointCoordinate: vi.fn(async (slot, place) => {
 			calls.push({ slot, place });
 		}),
+		clearEndpoint: vi.fn(),
 		selectCandidate: vi.fn(async () => {}),
 		confirmGeometricFallback: vi.fn(),
 		planCanalRoute: vi.fn(async () => route),
+		setJourneyMode: vi.fn(),
+		selectBranchRoute: vi.fn(),
 		togglePoiKind: vi.fn(),
 		selectDay: vi.fn(),
 		refreshRoutePois: vi.fn(async () => {}),
@@ -186,6 +218,7 @@ function setup(
 		hireBases: vi.fn(
 			(_bases: never[], _selectedIdentity: string | null) => {},
 		),
+		climate: vi.fn(), climateGrid: vi.fn(),
 		fitNetwork: vi.fn(),
 		places: vi.fn(),
 		pois: vi.fn(),
@@ -260,6 +293,35 @@ describe("trip planning interface", () => {
 			),
 		);
 		expect(screen.queryByText("Settings saved.")).not.toBeInTheDocument();
+	});
+
+	it("offers point-to-point and out-and-back modes", async () => {
+		const { dependencies, store } = setup();
+		render(App, { props: { dependencies } });
+		await fireEvent.click(screen.getByRole("radio", { name: /out-and-back/i }));
+		expect(store.setJourneyMode).toHaveBeenCalledWith("out_and_back");
+	});
+
+	it("labels the optional out-and-back waypoint and renders distinct alternatives", async () => {
+		const first = outAndBackRoute("route-1", "Canal junction");
+		const second = outAndBackRoute("route-2", "Canal junction");
+		const fixture = setup({ journeyMode: "out_and_back" });
+		const inner = writable({
+			...get(fixture.store),
+			canalRoute: first.journey,
+			outAndBackRoutes: [first, second],
+			defaultOutAndBackRouteId: first.route_id,
+			selectedOutAndBackRouteId: first.route_id,
+		});
+		const store = { ...fixture.store, subscribe: inner.subscribe };
+		render(App, { props: { dependencies: { ...fixture.dependencies, store } } });
+
+		expect(screen.getByLabelText(/search visit on the way/i)).toBeVisible();
+		await fireEvent.click(screen.getByRole("button", { name: "Clear visit on the way" }));
+		expect(store.clearEndpoint).toHaveBeenCalledWith("destination");
+		expect(screen.getAllByRole("button", { name: /canal junction/i })).toHaveLength(2);
+		fireEvent.click(screen.getAllByRole("button", { name: /canal junction/i })[1]);
+		expect(store.selectBranchRoute).toHaveBeenCalledWith("route-2");
 	});
 
 	it("preserves schedule inputs while visiting settings and marks the active page", async () => {
@@ -566,7 +628,7 @@ describe("trip planning interface", () => {
 			target: { value: "" },
 		});
 		await Promise.resolve();
-		expect(store.setNetworkRequest).not.toHaveBeenCalled();
+		expect(store.setNetworkRequest).toHaveBeenCalledWith(null);
 		await fireEvent.input(screen.getByLabelText(/^days/i), {
 			target: { value: "4" },
 		});
@@ -836,6 +898,7 @@ describe("trip planning interface", () => {
 			hireBases: vi.fn(
 				(_bases: never[], _selectedIdentity: string | null) => {},
 			),
+			climate: vi.fn(), climateGrid: vi.fn(),
 			fitNetwork: vi.fn(),
 			places: vi.fn(),
 			pois: vi.fn(),
@@ -858,6 +921,7 @@ describe("trip planning interface", () => {
 			hireBases: vi.fn(
 				(_bases: never[], _selectedIdentity: string | null) => {},
 			),
+			climate: vi.fn(), climateGrid: vi.fn(),
 			fitNetwork: vi.fn(),
 			places: vi.fn(),
 			pois: vi.fn(),
@@ -909,6 +973,7 @@ describe("trip planning interface", () => {
 			hireBases: vi.fn(
 				(_bases: never[], _selectedIdentity: string | null) => {},
 			),
+			climate: vi.fn(), climateGrid: vi.fn(),
 			fitNetwork: vi.fn(),
 			clearLand: vi.fn(),
 			onMapClick: vi.fn(() => removeClick),
@@ -1089,4 +1154,133 @@ describe("trip planning interface", () => {
 		await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 		expect(screen.queryByRole("status")).not.toBeInTheDocument();
 	});
+});
+
+describe('attraction discovery integration', () => {
+  it('mounts discovery separately from endpoints and cancels it on reset', async () => {
+    const { dependencies, store } = setup();
+    const state = writable({ status: 'idle', options: [], selected: null, access: [], error: '' });
+    const discovery = {
+      subscribe: state.subscribe, search: vi.fn(), searchGoogle: vi.fn(), select: vi.fn(),
+      selectManual: vi.fn(), cancel: vi.fn(), destroy: vi.fn(), walkingRoutes: vi.fn(),
+    };
+    render(App, { props: { dependencies: { ...dependencies, placeDiscovery: discovery } } });
+    expect(screen.getByRole('heading', { name: 'Visit an attraction' })).toBeVisible();
+    expect(store.setEndpointCoordinate).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Reset trip' }));
+    expect(discovery.cancel).toHaveBeenCalledOnce();
+  });
+});
+
+it('restores endpoint walking overlays when an attraction preview is cleared', async () => {
+  const { dependencies, map } = setup();
+  const selected = { option_ref: 'osm:node:1', name: 'Museum', locality: null,
+    coordinate: { lat: 51, lon: -1 }, source: 'osm' as const };
+  const access = { candidate: { candidate_id: 'access-1', display_name: 'Wharf',
+      coordinate: { lat: 51, lon: -1 }, straight_line_distance_m: 5,
+      handle: { edge: [1, 2] as [number, number], fraction: 0.5 } },
+    outward: { available: true as const, durationSeconds: 60, distanceMeters: 50 },
+    return: { available: true as const, durationSeconds: 90, distanceMeters: 60 }, complete: true };
+  const state = writable<import('../lib/places/controller').PlaceState>({
+    status: 'ready', options: [], selected, access: [access], error: '' });
+  const discovery = {
+    subscribe: state.subscribe, search: vi.fn(), searchGoogle: vi.fn(), select: vi.fn(),
+    selectManual: vi.fn(), destroy: vi.fn(),
+    cancel: vi.fn(async () => state.set({ status: 'cancelled', options: [], selected: null, access: [], error: '' })),
+    walkingRoutes: vi.fn(async () => ({
+      outward: { path: [{ lat: 51, lon: -1 }, { lat: 52, lon: -1 }], durationSeconds: 60, distanceMeters: 50 },
+      return: { path: [{ lat: 52, lon: -1 }, { lat: 51, lon: -1 }], durationSeconds: 90, distanceMeters: 60 },
+    })),
+  };
+  render(App, { props: { dependencies: { ...dependencies, placeDiscovery: discovery } } });
+  await waitFor(() => expect(map.onMapClick).toHaveBeenCalled());
+  await fireEvent.click(screen.getByLabelText('I understand canal access and mooring are unconfirmed'));
+  await fireEvent.click(screen.getByRole('button', { name: 'Preview walk' }));
+  await waitFor(() => expect(map.land).toHaveBeenCalledWith('origin', expect.objectContaining({ durationSeconds: 60 })));
+  vi.mocked(map.land).mockClear();
+  await fireEvent.click(screen.getByRole('button', { name: 'Clear attraction' }));
+  await waitFor(() => expect(map.land).toHaveBeenCalledWith('origin', endpoint('Bletchley Park', 1).landRoute));
+  expect(map.land).toHaveBeenCalledWith('destination', endpoint('Canal Base', 2).landRoute);
+});
+
+it('connects climate summaries and selection to the map across planner remounts', async () => {
+  history.replaceState(null, '', '/');
+  const { createClimateStore } = await import('../lib/stores/climate');
+  const distribution = {
+    available: true, missing_years: [], start_year: 2001, end_year: 2025,
+    n_days: 175, n_years: 25, p10: 17, median: 21, p90: 25,
+  };
+  const source = { name: 'Synthetic test source', url: 'https://example.org', attribution: 'Test', timezone: 'Europe/London', model: 'era5_land' };
+  const summaries = { revision: 'climate-r1', end_year: 2025, source, week_id: 8,
+    week_label: 'June 26–July 2', period_years: 25 as const, metric: 'high' as const,
+    locations: [{ id: 'oxford', name: 'Oxford', coordinate: { lat: 51.75, lon: -1.25 }, distribution }],
+  };
+  const api = {
+    locations: vi.fn(async () => summaries),
+    location: vi.fn(async () => ({ revision: 'climate-r1', end_year: 2025, source, week_id: 8,
+      week_label: 'June 26–July 2', location: { id: 'oxford', name: 'Oxford', coordinate: { lat: 51.75, lon: -1.25 }, source_coordinate: null, elevation: null },
+      high: { '25': { ...distribution, samples: [17, 21, 25] }, '5': { ...distribution, samples: [18, 22, 26] } },
+      low: { '25': { ...distribution, samples: [7, 11, 15] }, '5': { ...distribution, samples: [8, 12, 16] } },
+    })),
+  };
+  const climateStore = createClimateStore({ api });
+  const { dependencies } = setup();
+  dependencies.climateStore = climateStore;
+  render(App, { props: { dependencies } });
+  await waitFor(() => expect(dependencies.loadMapView).toHaveBeenCalled());
+  const map = await vi.mocked(dependencies.loadMapView).mock.results[0].value;
+  await climateStore.setEnabled(true);
+  await waitFor(() => expect(map.climate).toHaveBeenCalledWith(
+    [expect.objectContaining({ id: 'oxford', value: '21.0°', label: expect.stringContaining('2001–2025') })],
+    expect.any(Function),
+  ));
+  const paintsBeforeSelection = vi.mocked(map.climate).mock.calls.length;
+  const select = vi.mocked(map.climate).mock.lastCall![1];
+  select('oxford');
+  await waitFor(() => expect(api.location).toHaveBeenCalledWith('oxford', { week_id: 8 }));
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Oxford' })).toBeInTheDocument());
+  expect(vi.mocked(map.climate).mock.calls.length).toBe(paintsBeforeSelection);
+  const remountedMap = { ...map, climate: vi.fn(), climateGrid: vi.fn(), destroy: vi.fn() };
+  vi.mocked(dependencies.loadMapView).mockResolvedValueOnce(remountedMap);
+  await fireEvent.click(screen.getByRole('link', { name: 'Settings' }));
+  const oldPaintCount = vi.mocked(map.climate).mock.calls.length;
+  await fireEvent.click(screen.getByRole('link', { name: 'Plan trip' }));
+  await waitFor(() => expect(dependencies.loadMapView).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(remountedMap.climate).toHaveBeenLastCalledWith(
+    [expect.objectContaining({ id: 'oxford' })], expect.any(Function),
+  ));
+  expect(api.locations).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(map.climate).mock.calls.length).toBe(oldPaintCount);
+  await climateStore.setEnabled(false);
+  await waitFor(() => expect(remountedMap.climate).toHaveBeenLastCalledWith([], expect.any(Function)));
+});
+
+it('paints the grid surface, adjusts opacity without fetching, and clears on disable', async () => {
+  const { createClimateGridStore } = await import('../lib/stores/climate-grid');
+  const surface = {
+    revision: 'grid-r1', end_year: 2025,
+    source: { name: 'Test', url: 'https://example.org', attribution: 'Test', timezone: 'Europe/London', model: 'era5_land' },
+    week_id: 8, week_label: 'June 26–July 2', period_years: 25, view: 'high_p90',
+    threshold_c: null, unit: 'celsius', spacing_km: 10,
+    mask: { type: 'Polygon', coordinates: [[[-2,51],[0,51],[0,53],[-2,51]]] },
+    cells: [{ id: 'cell', coordinate: { lat: 52, lon: -1 }, value: 28, n_days: 175 }],
+  } as const;
+  const api = { grid: vi.fn(async () => surface as never), cell: vi.fn() };
+  const gridStore = createClimateGridStore({ api });
+  const { dependencies } = setup();
+  dependencies.climateGridStore = gridStore;
+  render(App, { props: { dependencies } });
+  await waitFor(() => expect(dependencies.loadMapView).toHaveBeenCalled());
+  const map = await vi.mocked(dependencies.loadMapView).mock.results[0].value;
+  await gridStore.setEnabled(true);
+  await waitFor(() => expect(map.climateGrid).toHaveBeenCalledWith(surface, 0.4));
+  gridStore.setOpacity(0.6);
+  await waitFor(() => expect(map.climateGrid).toHaveBeenLastCalledWith(surface, 0.6));
+  expect(api.grid).toHaveBeenCalledTimes(1);
+  await fireEvent.click(screen.getByRole('radio', { name: 'Inspect temperature from map' }));
+  const mapClick = vi.mocked(map.onMapClick).mock.lastCall![0];
+  mapClick({ lat: 52, lon: -1 });
+  await waitFor(() => expect(api.cell).toHaveBeenCalledWith('cell', { week_id: 8 }));
+  await gridStore.setEnabled(false);
+  await waitFor(() => expect(map.climateGrid).toHaveBeenLastCalledWith(null, 0.6));
 });

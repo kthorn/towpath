@@ -120,10 +120,24 @@ def plan_projected_route(
         )
 
     computed = _compute_route(constraints, graph)
+    if not computed.traversal.edges:
+        point = (start_point.lon, start_point.lat)
+        return CanalRouteResponse(
+            route=computed.route.model_copy(
+                update={"graph_source_date": str(artifact.metadata.get("fetched_at", ""))}
+            ),
+            geometry=GeoJSONLineString(coordinates=[point, point]),
+        )
+    return _route_response(
+        computed, graph, source_date=str(artifact.metadata.get("fetched_at", ""))
+    )
+
+
+def _route_response(
+    computed: _ComputedRoute, graph: nx.Graph, *, source_date: str = ""
+) -> CanalRouteResponse:
+    """Render the selected traversals, including repeated edges and day boundaries."""
     all_geometry = _joined_geometry(computed.traversal.edges, graph)
-    if not all_geometry:
-        end_point = project_handle(constraints.end, graph).coordinate
-        all_geometry = [(start_point.lat, start_point.lon), (end_point.lat, end_point.lon)]
     day_geometries = []
     for day, (start, end) in enumerate(computed.day_ranges, start=1):
         points = _joined_geometry((segment.edge for segment in computed.segments[start:end]), graph)
@@ -135,9 +149,7 @@ def plan_projected_route(
                 end=Coordinate(lat=points[-1][0], lon=points[-1][1]),
             )
         )
-    route = computed.route.model_copy(
-        update={"graph_source_date": str(artifact.metadata.get("fetched_at", ""))}
-    )
+    route = computed.route.model_copy(update={"graph_source_date": source_date})
     return CanalRouteResponse(
         route=route,
         geometry=_to_geojson(all_geometry),
@@ -453,6 +465,16 @@ def _report_segments(
 
 def _compute_route(constraints: ProjectedRouteConstraints, graph: nx.Graph) -> _ComputedRoute:
     traversal = _compute_traversal(constraints, graph)
+    return _render_traversal(traversal, constraints, graph)
+
+
+def _render_traversal(
+    traversal: ComputedTraversal,
+    constraints: ProjectedRouteConstraints,
+    graph: nx.Graph,
+    *,
+    day_ranges: list[tuple[int, int]] | None = None,
+) -> _ComputedRoute:
     segments = _report_segments(traversal, constraints, graph)
     legs = [
         RouteLeg(
@@ -474,7 +496,8 @@ def _compute_route(constraints: ProjectedRouteConstraints, graph: nx.Graph) -> _
         )
         for segment in segments
     ]
-    day_ranges = _day_path_ranges(legs, constraints.hours_per_day, constraints.days)
+    if day_ranges is None:
+        day_ranges = _day_path_ranges(legs, constraints.hours_per_day, constraints.days)
     access_segments = _access_segments(traversal, graph)
     unknown_edges = {
         str(_edge_data(edge, graph).get("osm_way_id"))
@@ -486,7 +509,15 @@ def _compute_route(constraints: ProjectedRouteConstraints, graph: nx.Graph) -> _
         warnings.append(f"draft/beam unknown on {len(unknown_edges)} segment(s)")
     warnings.extend(_access_warnings(access_segments))
     warnings.extend(_tunnel_warnings(traversal, graph, access_segments))
-    days = _chunk_days(legs, constraints.hours_per_day, constraints.days)
+    days = [
+        DayPlan(
+            day=index,
+            legs=legs[start:end],
+            end_near=legs[end - 1].to_place,
+            cruising_minutes=sum(leg.est_minutes for leg in legs[start:end]),
+        )
+        for index, (start, end) in enumerate(day_ranges, start=1)
+    ]
     if any(day.cruising_minutes > constraints.hours_per_day * 60 for day in days):
         warnings.append("one or more days exceed hours_per_day budget")
     return _ComputedRoute(

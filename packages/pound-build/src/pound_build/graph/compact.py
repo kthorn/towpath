@@ -8,6 +8,7 @@ from typing import Any, cast
 import networkx as nx
 from pound.geometry import node_key as _node_key  # pyright: ignore[reportMissingImports]
 from pound.models import WaterwayKind  # pyright: ignore[reportMissingImports]
+from pound.turnarounds import validate_turnarounds  # pyright: ignore[reportMissingImports]
 from pyproj import Transformer  # pyright: ignore[reportMissingImports]
 from shapely import transform
 from shapely.errors import GEOSException
@@ -98,8 +99,9 @@ def _discrete_edge(data: Mapping[str, object]) -> bool:
     return not _candidate_eligible(data)
 
 
-def _protected_nodes(graph: nx.Graph) -> set[int]:
+def _protected_nodes(graph: nx.Graph, turnaround_uids: set[int] = frozenset()) -> set[int]:
     protected: set[int] = set()
+    protected.update(turnaround_uids)
     for uid, data in graph.nodes(data=True):
         if graph.degree[uid] != 2:
             protected.add(uid)
@@ -318,7 +320,9 @@ def compact_graph(graph: nx.Graph, *, tolerance_m: float = 1.0) -> nx.Graph:
     ):
         raise ValueError("tolerance_m must be a finite nonnegative number")
 
-    protected = _protected_nodes(graph)
+    turnarounds = validate_turnarounds(graph)
+    turnaround_uids = {record["node_uid"] for record in turnarounds}
+    protected = _protected_nodes(graph, turnaround_uids)
     chains = _chain_paths(graph, protected)
     grouped: dict[tuple[int, int], list[tuple[int, ...]]] = {}
     for path in chains:
@@ -332,6 +336,9 @@ def compact_graph(graph: nx.Graph, *, tolerance_m: float = 1.0) -> nx.Graph:
             grouped.setdefault((low, high), []).append(path)
 
     compact = nx.Graph()
+    for key in ("turnarounds", "turnaround_report"):
+        if key in graph.graph:
+            compact.graph[key] = copy.deepcopy(graph.graph[key])
     retained_nodes = set(protected)
     for paths in grouped.values():
         retained_nodes.update((paths[0][0], paths[0][-1]))
