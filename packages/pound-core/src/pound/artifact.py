@@ -5,6 +5,7 @@ from pathlib import Path
 import networkx as nx
 
 from pound.models import RuntimePoi
+from pound.turnarounds import validate_turnarounds
 
 ROUTING_ARTIFACT_SCHEMA_VERSION = 1
 _PAYLOAD_FIELDS = {"graph", "pois", "gazetteer", "metadata"}
@@ -28,13 +29,20 @@ def load_artifact(path: Path) -> RuntimeArtifact:
     if not isinstance(payload, dict) or set(payload) != _PAYLOAD_FIELDS:
         raise InvalidArtifactError("invalid top-level artifact shape")
     metadata = payload["metadata"]
-    version = metadata.get("artifact_schema_version") if isinstance(metadata, dict) else None
+    if not isinstance(metadata, dict):
+        raise InvalidArtifactError("invalid metadata section type")
+    version = metadata.get("artifact_schema_version")
     if type(version) is not int or version != ROUTING_ARTIFACT_SCHEMA_VERSION:
         raise InvalidArtifactError("unsupported artifact schema version")
     if not isinstance(metadata.get("artifact_revision"), str) or not metadata["artifact_revision"]:
         raise InvalidArtifactError("artifact revision is required")
-    if not isinstance(payload["graph"], nx.Graph) or not isinstance(payload["pois"], (list, tuple)):
+    graph = payload["graph"]
+    if not isinstance(graph, nx.Graph) or not isinstance(payload["pois"], (list, tuple)):
         raise InvalidArtifactError("invalid artifact section type")
     if not isinstance(payload["gazetteer"], dict):
         raise InvalidArtifactError("invalid gazetteer section type")
-    return RuntimeArtifact(payload["graph"], tuple(payload["pois"]), payload["gazetteer"], metadata)
+    try:
+        validate_turnarounds(graph)
+    except ValueError as exc:
+        raise InvalidArtifactError(f"invalid turnaround index: {exc}") from exc
+    return RuntimeArtifact(graph, tuple(payload["pois"]), payload["gazetteer"], metadata)

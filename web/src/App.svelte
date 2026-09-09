@@ -17,6 +17,7 @@
   import RouteLayers from './component/RouteLayers.svelte';
   import TripSummary from './component/TripSummary.svelte';
   import type { AppDependencies } from './lib/app';
+  import type { JourneyMode } from './lib/types';
   import type { EndpointSlot, MapView } from './lib/google/contracts';
   import { createNavigation, type AppRoute } from './lib/navigation';
   import { parseSchedule } from './lib/schedule';
@@ -24,6 +25,7 @@
 
   let { dependencies }: { dependencies: AppDependencies } = $props();
   const store = $derived(dependencies.store);
+  const journeyMode = $derived($store.journeyMode ?? 'point_to_point');
   const defaultClimateStore = createClimateStore();
   const climateStore = $derived(dependencies.climateStore ?? defaultClimateStore);
   const defaultClimateGridStore = createClimateGridStore();
@@ -108,7 +110,7 @@
     }
   });
   $effect(() => {
-    if (networkRequest) store.setNetworkRequest(networkRequest);
+    store.setNetworkRequest(networkRequest);
   });
 
   const navigation = createNavigation();
@@ -157,6 +159,11 @@
     searchKey += 1;
   }
 
+  function changeJourneyMode(event: Event) {
+    if (!(event.currentTarget instanceof HTMLInputElement)) return;
+    store.setJourneyMode(event.currentTarget.value as JourneyMode);
+  }
+
   function handleNavClick(event: MouseEvent, route: AppRoute, ordinaryAction: () => void = () => navigation.navigate(route)) {
     if (!(event.currentTarget instanceof HTMLAnchorElement)) return;
     if (event.button !== 0) return;
@@ -184,7 +191,7 @@
     {/if}
     <BoatConstraints formId="route-actions" bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
     <div class="map-column">
-      <fieldset class="map-target"><legend>Map click action</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set destination from map</label>{#if $climateGridStore.enabled}<label><input type="radio" bind:group={active} value="temperature" /> Inspect temperature from map</label>{/if}</fieldset>
+      <fieldset class="map-target"><legend>Map click action</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set {journeyMode === 'out_and_back' ? 'visit on the way' : 'destination'} from map</label>{#if $climateGridStore.enabled}<label><input type="radio" bind:group={active} value="temperature" /> Inspect temperature from map</label>{/if}</fieldset>
       {#if active === 'temperature' && temperatureSelectionMessage}<p role="status">{temperatureSelectionMessage}</p>{/if}
     <MapCanvas
         load={dependencies.loadMapView}
@@ -209,6 +216,11 @@
     {/if}
 	</div>
     <div class="planner-column">
+		<fieldset class="journey-mode" aria-label="Journey mode">
+			<legend>Journey mode</legend>
+			<label><input type="radio" name="journey-mode" value="point_to_point" checked={journeyMode === 'point_to_point'} onchange={changeJourneyMode} /> Point to point</label>
+			<label><input type="radio" name="journey-mode" value="out_and_back" checked={journeyMode === 'out_and_back'} onchange={changeJourneyMode} /> Out-and-back</label>
+		</fieldset>
       {#if dependencies.placeDiscovery}
         <AttractionPanel controller={dependencies.placeDiscovery}
           onPreview={(routes) => { hasAttractionPreview = true; mapView?.land('origin', routes.outward); mapView?.land('destination', routes.return); }}
@@ -224,16 +236,16 @@
       </details>
 		{#key searchKey}
 			<EndpointPanel slot="origin" endpoint={$store.origin} {store} search={dependencies.placeSearch} />
-			<EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} />
+			<EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} title={journeyMode === 'out_and_back' ? 'Visit on the way' : 'Destination'} optional={journeyMode === 'out_and_back'} />
 		{/key}
       <form id="route-actions" class="route-actions" novalidate onsubmit={(event) => { event.preventDefault(); planTrip(); }}>
         <div class="constraint-actions">
-          <button type="submit">Plan canal route</button>
+          <button type="submit">{journeyMode === 'out_and_back' ? 'Plan out-and-back journey' : 'Plan canal route'}</button>
           <button type="button" onclick={resetTrip}>Reset trip</button>
         </div>
         {#if routeError}<p role="alert">{routeError}</p>{/if}
       </form>
-      <TripSummary state={$store} onDaySelect={store.selectDay} />
+      <TripSummary state={$store} {store} onDaySelect={store.selectDay} />
       <RouteLayers {store} />
     </div>
   </main>

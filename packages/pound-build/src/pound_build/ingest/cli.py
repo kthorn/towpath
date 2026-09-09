@@ -33,6 +33,7 @@ from pound_build.graph.compact import (
 from pound_build.graph.gazetteer import attach_node_names, build_gazetteer
 from pound_build.graph.locks import attach_locks
 from pound_build.graph.pois import PoiAttachmentIndex, PoiBuildAccumulator, attach_pois
+from pound_build.graph.turnarounds import build_turnarounds
 from pound_build.ingest.diagnostics import PoiDiagnostics
 from pound_build.ingest.osm import (
     prepare_great_britain_pbf,
@@ -168,6 +169,10 @@ def _build_graph_phases(features, profiler: BuildProfiler):
     with profiler.phase("graph_build", counts=lambda: graph_counts):
         graph = build_graph(features)
         graph_counts.update(nodes=graph.number_of_nodes(), edges=graph.number_of_edges())
+
+    # Turnaround attachments may split an edge. Do this before lock attachment
+    # so lock points and counts are retained on exactly one child edge.
+    graph, _ = build_turnarounds(graph, features, in_place=True)
 
     annotation_counts = {}
     with profiler.phase("graph_annotation", counts=lambda: annotation_counts):

@@ -15,7 +15,8 @@ from pound.route.plan import (  # pyright: ignore[reportMissingImports]
     RouteUnavailableError,
     plan_projected_route,
 )
-from pound.schemas import (  # pyright: ignore[reportMissingImports]
+from pound.route.round_trip import RoundTripError, discover_round_trips, plan_out_and_back
+from pound.schemas import (
     BoatHireBase,
     CanalCandidatesResponse,
     CanalNetworkResponse,
@@ -24,11 +25,15 @@ from pound.schemas import (  # pyright: ignore[reportMissingImports]
     ClimateLocationResponse,
     ClimateLocationsResponse,
     Coordinate,
+    OutAndBackRoute,
+    OutAndBackRouteRequest,
     PlacesRequest,
     PlacesResponse,
     ProjectedRouteConstraints,
     RoutePoisRequest,
     RoutePoisResponse,
+    TurnaroundCandidatesRequest,  # pyright: ignore[reportMissingImports]
+    TurnaroundCandidatesResponse,
 )
 from pydantic import (  # pyright: ignore[reportMissingImports]
     BaseModel,
@@ -486,3 +491,67 @@ def climate_location(
         ClimateLocationResponse.model_validate(payload).model_dump(mode="json"),
         f"detail:{location_id}:{week_id}",
     )
+
+
+def _check_round_trip_revision(body: TurnaroundCandidatesRequest, request: Request) -> None:
+    if body.artifact_revision != request.app.state.artifact_revision:
+        raise _error(
+            409,
+            code="artifact_revision_mismatch",
+            message="The routing artifact has changed; refresh turnaround candidates.",
+            fields=["artifact_revision"],
+        )
+
+
+def _round_trip_limits(request: Request) -> dict[str, int]:
+    """Read optional bounded-search settings without coupling the API to config shape."""
+
+    settings = getattr(request.app.state, "settings", None)
+    limits = {
+        "max_work": getattr(settings, "round_trip_max_work", None),
+        "max_routes": getattr(settings, "round_trip_max_routes", None),
+        "max_vertices": getattr(settings, "round_trip_max_vertices", None),
+    }
+    return {name: value for name, value in limits.items() if value is not None}
+
+
+@router.post("/turnaround-candidates", response_model=TurnaroundCandidatesResponse)
+def turnaround_candidates(
+    body: TurnaroundCandidatesRequest,
+    request: Request,
+) -> TurnaroundCandidatesResponse:
+    """Enumerate complete feasible out-and-back route alternatives."""
+
+    _check_round_trip_revision(body, request)
+    try:
+        return discover_round_trips(
+            body,
+            graph=request.app.state.graph,
+            **_round_trip_limits(request),
+        )
+    except RoundTripError as exc:
+        raise _round_trip_error(exc) from exc
+
+
+@router.post("/out-and-back-route", response_model=OutAndBackRoute)
+def out_and_back_route(body: OutAndBackRouteRequest, request: Request) -> OutAndBackRoute:
+    """Return the default or exact selected out-and-back route."""
+
+    _check_round_trip_revision(body, request)
+    try:
+        return plan_out_and_back(
+            body,
+            graph=request.app.state.graph,
+            **_round_trip_limits(request),
+        )
+    except RoundTripError as exc:
+        raise _round_trip_error(exc) from exc
+
+
+def _round_trip_error(exc: RoundTripError) -> HTTPException:
+    detail = {"code": exc.code, "message": exc.message, "fields": exc.fields}
+    if exc.rejections:
+        detail["rejections"] = [
+            r.model_dump() if hasattr(r, "model_dump") else r for r in exc.rejections
+        ]
+    return HTTPException(status_code=exc.status, detail=detail)

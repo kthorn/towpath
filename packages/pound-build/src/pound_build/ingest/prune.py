@@ -1,4 +1,4 @@
-"""Infra-node prune: drop lock_gate/lock/mooring/movable_bridge/marina nodes
+"""Infra-node prune: drop lock_gate/lock/turning_point/mooring/movable_bridge/marina nodes
 sitting *entirely* on non-navigable ways.
 
 Pure: takes WaterwayFeatures, returns a new WaterwayFeatures with affected
