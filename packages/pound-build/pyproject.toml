@@ -10,6 +10,7 @@ dependencies = [
 
 [project.optional-dependencies]
 bulk = ["osmium>=3.7"]
+climate = ["zarr>=2.18,<3"]
 
 [project.scripts]
 pound-ingest = "pound_build.ingest.cli:main"

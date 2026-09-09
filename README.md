@@ -696,3 +696,36 @@ missing or invalid grid data leaves routing available. See the
 [deployment runbook](docs/fly-runbook.md#optional-historical-temperature-artifacts) for
 packaging and post-release checks. The named-location temperature feature remains optional
 and independent.
+
+
+### Direct Copernicus temperature acquisition
+
+For the full UK grid, the optional offline importer reads ERA5-Land's geo-chunked
+2 m temperature archive directly. Configure `~/.cdsapirc` using the
+[CDS setup instructions](https://cds.climate.copernicus.eu/how-to-api) and accept
+the ERA5-Land dataset's CC-BY terms first. Credentials never enter the cache or artifact.
+
+```bash
+uv sync --all-packages --extra climate
+uv run --package pound-build --extra climate python -m scripts.build_climate_cds acquire \
+  --manifest data/climate-grid/uk-grid-manifest.json \
+  --cache-dir data/climate-cds --end-year 2025
+uv run --package pound-build --extra climate python -m scripts.build_climate_cds build \
+  --manifest data/climate-grid/uk-grid-manifest.json \
+  --cache-dir data/climate-cds --end-year 2025 \
+  --mask data/climate-grid/ons-uk-2024.geojson --out artifacts/climate-grid.sqlite
+```
+
+Acquisition resumes from atomic raw-chunk and annual caches. Build is offline. Use a
+new cache directory for incompatible metadata changes. A future-only archive extension
+is accepted only after comparing the historical portion of every affected cached chunk;
+the verification report is saved alongside the cache. A metadata fingerprint cannot
+detect provider corrections to older chunks whose metadata is unchanged. Preserve
+the raw cache to reproduce an acquisition. The final artifact revision identifies
+its derived contents.
+
+Daily highs/lows use all 24 hourly model samples in each London-local summer day.
+Missing hours invalidate that day's values. Each requested location uses the nearest
+finite ERA5-Land land point within 15 km, records the source coordinate, and stays
+unavailable if no such point exists. These direct values have no Open-Meteo elevation
+adjustment. Existing city reference data retains its original source independently.
