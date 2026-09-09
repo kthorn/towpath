@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Towpath · Chat lab</title>
+    <style>
+      :root {
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+        color: #213b37;
+        background: #f4f5ef;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      header {
+        padding: 24px 4vw;
+        border-bottom: 1px solid #cdd8cc;
+        background: #fff;
+      }
+      h1 {
+        font:
+          600 28px Georgia,
+          serif;
+        margin: 0;
+      }
+      header p {
+        margin: 6px 0;
+        color: #53645f;
+      }
+      .badge {
+        font: 12px system-ui;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #577b59;
+      }
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr);
+        gap: 24px;
+        padding: 24px 4vw;
+        max-width: 1600px;
+        margin: auto;
+      }
+      section,
+      aside {
+        min-width: 0;
+        background: white;
+        border: 1px solid #dbe2d8;
+        border-radius: 12px;
+        padding: 20px;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 0 0 12px;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      button {
+        font: inherit;
+        border: 1px solid #a9bcb0;
+        border-radius: 6px;
+        background: #fff;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #245a46;
+        color: white;
+        border-color: #245a46;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      textarea {
+        width: 100%;
+        resize: vertical;
+        font: inherit;
+        border: 1px solid #a9bcb0;
+        border-radius: 8px;
+        padding: 12px;
+        min-height: 90px;
+        margin: 16px 0 8px;
+      }
+      button:focus-visible,
+      textarea:focus-visible,
+      summary:focus-visible {
+        outline: 3px solid #d7ac35;
+        outline-offset: 2px;
+      }
+      #messages {
+        min-height: 260px;
+        max-height: 55vh;
+        overflow: auto;
+      }
+      .message {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        padding: 14px;
+        margin: 10px 0;
+        background: #f4f6f1;
+        border-radius: 8px;
+      }
+      .user {
+        background: #e7f0e9;
+      }
+      .role {
+        font-size: 12px;
+        font-weight: bold;
+        text-transform: uppercase;
+        display: block;
+        margin-bottom: 5px;
+      }
+      .muted {
+        font-size: 13px;
+        color: #647169;
+      }
+      #status {
+        min-height: 24px;
+        font-size: 14px;
+      }
+      #trace {
+        max-height: 65vh;
+        overflow: auto;
+      }
+      details {
+        border-top: 1px solid #dbe2d8;
+        padding: 10px 0;
+      }
+      summary {
+        cursor: pointer;
+        font-size: 14px;
+      }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-size: 12px;
+        color: #354f49;
+      }
+      a {
+        color: #245a46;
+      }
+      .empty {
+        color: #728075;
+        padding: 35px 5px;
+      }
+      .scope {
+        font-size: 13px;
+        margin: 12px 0 0;
+        max-width: 900px;
+      }
+      @media (max-width: 800px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+        #messages {
+          max-height: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="badge">Local development · GPT 5.6 Luna</div>
+      <h1>Towpath chat lab</h1>
+      <p>
+        Try a trip request. Inspect what the agent asked Pound and what came
+        back.
+      </p>
+      <div class="scope">
+        Real OSM lookup and route previews. Hire-base comparison, rings and
+        walking-route verification are not connected yet. Nothing here adopts a
+        route or changes the map.
+      </div>
+    </header>
+    <main>
+      <section aria-label="Conversation">
+        <div class="toolbar">
+          <button id="reset">New conversation</button
+          ><button id="download">Download session</button>
+        </div>
+        <div id="messages" role="log" aria-live="polite">
+          <p class="empty" id="empty">
+            Try “Find Bletchley Park and show its canal access options.”
+          </p>
+        </div>
+        <form id="form">
+          <label for="message">Your message</label
+          ><textarea
+            id="message"
+            maxlength="4000"
+            required
+            placeholder="What would you like to explore?"
+          ></textarea>
+          <div class="toolbar">
+            <button class="primary" id="send" type="submit">Send</button
+            ><button id="cancel" type="button" disabled>Stop</button>
+          </div>
+        </form>
+        <p id="status" role="status">Ready</p>
+        <p class="muted">
+          Follow-ups keep context in memory. Reset to start fresh. One shared
+          conversation per local server; requests incur OpenAI charges.
+        </p>
+      </section>
+      <aside>
+        <h2>Tool activity</h2>
+        <p class="muted">
+          Expand a call to inspect arguments, API requests, results or errors.
+          Route geometry is omitted from model summaries.
+        </p>
+        <div id="trace"><p class="empty">Tool calls will appear here.</p></div>
+      </aside>
+    </main>
+    <script>
+      const token = "__LAB_TOKEN__";
+      const $ = (id) => document.getElementById(id);
+      const headers = {
+        "content-type": "application/json",
+        "x-lab-token": token,
+      };
+      let running = false,
+        events = [],
+        controller;
+      function busy(value) {
+        running = value;
+        $("send").disabled = value;
+        $("reset").disabled = value;
+        $("cancel").disabled = !value;
+      }
+      function message(role, text) {
+        $("empty")?.remove();
+        const element = document.createElement("div");
+        element.className = "message " + role;
+        const label = document.createElement("span");
+        label.className = "role";
+        label.textContent = role;
+        const content = document.createElement("span");
+        content.textContent = text;
+        element.append(label, content);
+        $("messages").append(element);
+        return content;
+      }
+      function trace(event) {
+        if ($("trace").querySelector(".empty")) $("trace").textContent = "";
+        const details = document.createElement("details"),
+          heading = document.createElement("summary"),
+          body = document.createElement("pre");
+        heading.textContent = [
+          event.type,
+          event.tool ?? event.data?.toolName ?? event.data?.code ?? "",
+        ].join(" · ");
+        body.textContent = JSON.stringify(event, null, 2);
+        details.append(heading, body);
+        $("trace").append(details);
+      }
+      async function action(path) {
+        const response = await fetch(path, {
+          method: "POST",
+          headers,
+          body: "{}",
+        });
+        if (!response.ok) throw Error("Request failed: " + response.status);
+      }
+      $("form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (running) return;
+        const text = $("message").value.trim();
+        if (!text) return;
+        events.push({ type: "user", text });
+        message("user", text);
+        $("message").value = "";
+        const reply = message("assistant", "");
+        busy(true);
+        $("status").textContent = "Working…";
+        controller = new AbortController();
+        let completed = false;
+        try {
+          const response = await fetch("/chat", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ message: text }),
+            signal: controller.signal,
+          });
+          if (!response.ok) throw Error(await response.text());
+          const reader = response.body.getReader(),
+            decoder = new TextDecoder();
+          let buffer = "";
+          function handle(line) {
+            if (!line.trim()) return;
+            const event = JSON.parse(line);
+            events.push(event);
+            if (event.type === "text_delta") {
+              reply.textContent += event.data.delta;
+              $("messages").scrollTop = $("messages").scrollHeight;
+            } else {
+              trace(event);
+              if (event.type === "tool_status")
+                $("status").textContent =
+                  event.data.toolName + " · " + event.data.status;
+              if (event.type === "error")
+                $("status").textContent = "Error: " + event.data.code;
+              if (event.type === "summary") {
+                completed = true;
+                $("status").textContent =
+                  event.data.status +
+                  " · " +
+                  (event.data.elapsedMs / 1000).toFixed(1) +
+                  "s · " +
+                  event.data.toolCalls +
+                  " tool calls" +
+                  (event.data.contextFull ? " · Reset required" : "");
+              }
+            }
+          }
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let newline;
+            while ((newline = buffer.indexOf("\n")) >= 0) {
+              handle(buffer.slice(0, newline));
+              buffer = buffer.slice(newline + 1);
+            }
+          }
+          buffer += decoder.decode();
+          handle(buffer);
+          if (!completed)
+            $("status").textContent =
+              "Run ended before completion. Check the trace.";
+        } catch (error) {
+          $("status").textContent = "Error: " + error.message;
+          trace({ type: "connection_error", message: error.message });
+        } finally {
+          busy(false);
+          $("message").focus();
+        }
+      });
+      $("cancel").onclick = async () => {
+        try {
+          await action("/cancel");
+          $("status").textContent = "Stopping…";
+        } catch (error) {
+          controller?.abort();
+          $("status").textContent = error.message;
+        }
+      };
+      $("reset").onclick = async () => {
+        try {
+          await action("/reset");
+          $("messages").textContent = "";
+          $("trace").textContent = "";
+          events = [];
+          $("status").textContent = "Ready";
+          $("message").focus();
+        } catch (error) {
+          $("status").textContent = error.message;
+        }
+      };
+      $("download").onclick = () => {
+        const blob = new Blob(
+          [JSON.stringify({ model: "openai/gpt-5.6-luna", events }, null, 2)],
+          { type: "application/json" },
+        );
+        const url = URL.createObjectURL(blob),
+          a = document.createElement("a");
+        a.href = url;
+        a.download = "towpath-chat-session.json";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+    </script>
+  </body>
+</html>

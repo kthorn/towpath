@@ -4,6 +4,7 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
 export const TOOL_NAMES = [
   'resolve_place', 'get_canal_access_options', 'find_hire_trip_options',
   'get_trip_option', 'search_amenities', 'request_selection',
+  'plan_canal_route', 'plan_out_and_back',
 ] as const;
 export type ToolName = typeof TOOL_NAMES[number];
 export interface Limits {

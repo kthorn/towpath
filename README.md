@@ -62,7 +62,7 @@ Live-network, bulk-ingest, and browser smoke tests are opt-in. See the
 ## Optional agent
 
 The [Pi agent package](packages/towpath-agent/README.md) provides a bounded runtime
-and a live GPT 5.6 Luna tool-call smoke test. It uses an OpenAI API key stored in
+and a [local chat lab](docs/chat-lab.md) for testing GPT 5.6 Luna against real APIs. It uses an OpenAI API key stored in
 AWS Secrets Manager. The conversational website integration is still to come;
 Pound routing itself remains deterministic and makes no model calls.
 
