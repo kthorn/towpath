@@ -64,6 +64,20 @@ To experiment with prompting, create a local text file and restart with
 These instructions supplement the adapter's fixed safety instructions. Reset and
 repeat the same request when comparing variants; no prompt changes are auto-saved.
 
+## Exploration defaults
+
+The agent investigates before asking questions. For nearby same-name records representing an
+attraction, it chooses a plausible representative without merging their OSM identities. It
+chooses a nearby named canal candidate and, if no start is given, uses that as a provisional
+start for an out-and-back area preview. This is not a hire-base itinerary or verified walking
+access. Distinct destinations without a reasonable default still warrant one focused question.
+
+Unspecified schedules default to **3 days at 6 cruising hours per day**. Explicit user choices
+and follow-up changes take precedence, and boat dimensions remain unknown unless supplied.
+The agent states material assumptions briefly, uses readable names instead of internal IDs,
+and chains lookup, canal access, and route tools in one turn. Route parameters must use issued
+canal candidate references; OSM attraction references cannot be used as route waypoints.
+
 ## Current scope
 
 The lab wraps real OSM attraction resolution, geometric canal candidates,
@@ -108,3 +122,11 @@ The route evidence also exposed a dimensional parser gap: a mapped `maxlength=22
 was retained in source tags but absent from normalized turning limits. This is tracked
 in [#97](https://github.com/kthorn/towpath/issues/97), which blocks the public chat UI.
 Boat-fit conclusions need that fix and another artifact rebuild.
+
+## Default-first live check (2026-09-13)
+
+“I want to do a canal trip that passes through Bletchley Park” completed with three tool calls
+and no clarification: place lookup, canal candidates, then a successful out-and-back preview
+using the 3-day/6-hour defaults. A follow-up requesting five days at four hours recomputed the
+preview successfully. This checks the interaction and tool chain, not route-selection quality.
+The check used real Luna calls and the local API; no live-model tests run automatically in CI.

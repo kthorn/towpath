@@ -9,7 +9,8 @@ const obj = (value: unknown): Record<string, Json> => {
   return value as Record<string, Json>;
 };
 const list = (value: Json | undefined): Json[] => Array.isArray(value) ? value : [];
-const ref = Type.String({ minLength: 1, maxLength: 256 });
+const ref = Type.String({ minLength: 1, maxLength: 256,
+  description: 'An issued candidate_id from get_canal_access_options, never an OSM place option_ref.' });
 const schedule = {
   days: Type.Integer({ minimum: 1, maximum: 28 }),
   hours_per_day: Type.Number({ minimum: 1, maximum: 12 }),
@@ -69,7 +70,7 @@ export function createLabTools(request: PoundCall, trace: Trace): DomainTool[] {
   }
   return [
     tool('resolve_place', 'Search the real OSM catalog by name. Returns sourced place refs; '
-      + 'ask the user to choose when ambiguous. No Google fallback in this lab.',
+      + 'choose a representative for nearby same-attraction matches; ask only for materially different destinations. No Google fallback in this lab.',
     { query: Type.String({ minLength: 1, maxLength: 200 }) }, async (args, signal) => {
       const session = obj(await call('/api/place-sessions', {}, signal));
       const path = `/api/place-sessions/${encodeURIComponent(String(session.session_id))}`;
@@ -89,8 +90,9 @@ export function createLabTools(request: PoundCall, trace: Trace): DomainTool[] {
     }),
     tool('get_canal_access_options', 'Get geometric canal candidates for a resolved place_ref. '
       + 'These are unverified access points, not checked walking routes or moorings. '
-      + 'Use an option_ref from resolve_place; ask the user to choose material alternatives.',
-    { place_ref: ref }, async (args, signal) => {
+      + 'Use an option_ref from resolve_place; choose a suitable nearby named canal candidate for a provisional preview.',
+    { place_ref: Type.String({ minLength: 1, maxLength: 256,
+      description: 'An OSM option_ref returned by resolve_place.' }) }, async (args, signal) => {
       const coordinate = places.get(String(args.place_ref));
       if (!coordinate) throw new AgentError('invalid_tool_arguments');
       const result = obj(await call('/api/canal-candidates', coordinate, signal));
@@ -105,11 +107,13 @@ export function createLabTools(request: PoundCall, trace: Trace): DomainTool[] {
     }),
     ...(['plan_canal_route', 'plan_out_and_back'] as const).map(name => tool(name,
       name === 'plan_canal_route'
-        ? 'Preview a point-to-point route using two issued candidate refs and explicit schedule. '
+        ? 'Preview a point-to-point route using two issued candidate refs and a schedule (default 3 days, 6 hours/day if unspecified). '
           + 'Never adopt a route; missing boat dimensions stay unknown.'
         : 'Preview out-and-back alternatives from one issued start candidate, optionally visiting '
-          + 'a waypoint candidate. This does not compare hire bases or find rings. '
-          + 'Ask for schedule and candidate choices first. Results may be a bounded shortlist.',
+          + 'a waypoint candidate. Omit waypoint_ref when exploring from the attraction-adjacent start; '
+          + 'only include it for a separate canal location to visit. All route refs are candidate_id values, '
+          + 'not OSM option_ref values. This does not compare hire bases or find rings. '
+          + 'Choose a plausible issued candidate and use 3 days at 6 hours/day unless the user supplied a schedule. Results may be a bounded shortlist.',
       { start_ref: ref, ...(name === 'plan_canal_route' ? { end_ref: ref }
         : { waypoint_ref: Type.Optional(ref) }), ...schedule }, async (args, signal): Promise<Json> => {
         const start = candidate(args.start_ref);

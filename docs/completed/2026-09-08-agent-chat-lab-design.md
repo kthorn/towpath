@@ -28,3 +28,15 @@ The UI renders all model/tool text using textContent. It never changes the manua
 Offline tests cover real API mapping with mocked HTTP, unknown references, cancellation and
 follow-up context, and local HTTP request protections. Live validation is opt-in and bounded.
 The lab does not complete #20/#80; it makes their API and prompting gaps testable.
+
+## Default-first exploration (2026-09-13)
+
+System, lab and tool instructions permit reversible preview choices instead of requiring
+confirmation for every ambiguous record. Nearby same-attraction records use one sourced
+representative, preserving identity; materially distinct destinations still need clarification.
+Missing schedules default to three days and six cruising hours per day. A missing start uses
+a nearby canal candidate for an explicitly provisional area preview. Explicit preferences and
+unknown boat dimensions remain authoritative. The model chains tools in one turn and uses
+canal candidate references, never OSM place references, in route arguments. No API or route
+feasibility changes are required. Offline checks plus a minimal real two-turn browser check
+verify integration; route-quality evaluation remains interactive.
