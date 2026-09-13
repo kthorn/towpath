@@ -10,6 +10,9 @@ derelict_canal / disused:* / abandoned:* unconditionally. At the IR level we
 only *flag* derelict so the reader can drop it.
 """
 
+import math
+import re
+
 from pound.models import AccessCaveat, WaterwayKind, WayDimensions
 
 from pound_build.ingest.ir import NodeKind, WaterwayFeatures
@@ -57,24 +60,55 @@ def is_derelict(tags: dict[str, str] | None) -> bool:
     return any(key.startswith(_DERELICT_TAG_PREFIXES) for key in tags)
 
 
-def _parse_float(value: str) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
+# OSM dimension tags carry metres by default; only explicit unit spellings are
+# converted.  Values in any other unit (feet-and-inches shorthand, chains, prose)
+# stay unsupported so callers treat the constraint as unknown rather than guessed.
+_UNIT_TO_METRES = {
+    "m": 1.0,
+    "metre": 1.0,
+    "metres": 1.0,
+    "meter": 1.0,
+    "meters": 1.0,
+    "ft": 0.3048,
+    "foot": 0.3048,
+    "feet": 0.3048,
+}
+_DIMENSION_VALUE_RE = re.compile(
+    r"^\s*(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>[a-z]+)?\s*$", re.IGNORECASE
+)
+
+
+def parse_dimension_m(value: str) -> float | None:
+    """Parse an OSM dimension tag value into metres.
+
+    Accepts a bare number (metres) or an explicit supported unit suffix. Returns
+    None for missing, non-positive, non-finite, or unsupported values.
+    """
+    if not isinstance(value, str):
         return None
+    match = _DIMENSION_VALUE_RE.match(value)
+    if match is None:
+        return None
+    factor = _UNIT_TO_METRES.get((match.group("unit") or "m").lower())
+    if factor is None:
+        return None
+    metres = float(match.group("value")) * factor
+    if not math.isfinite(metres) or metres <= 0:
+        return None
+    return metres
 
 
 def extract_dimensions(tags: dict[str, str] | None) -> WayDimensions:
     """Extract restrictive max-dimension tags, trying aliases in order.
 
-    First present alias with a parseable float wins; missing/unparseable => None.
+    First present alias with a parseable value wins; missing/unparseable => None.
     """
     tags = tags or {}
     values: dict[str, float] = {}
     for field, aliases in _DIMENSION_ALIASES.items():
         for alias in aliases:
             if alias in tags:
-                parsed = _parse_float(tags[alias])
+                parsed = parse_dimension_m(tags[alias])
                 if parsed is not None:
                     values[field] = parsed
                     break
