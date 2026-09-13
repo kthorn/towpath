@@ -1,4 +1,5 @@
 import { writable, type Readable } from 'svelte/store';
+import { validClimateScale, type ClimateColorRange } from '../climate-scale';
 
 import {
   CLIMATE_WEEKS,
@@ -22,6 +23,7 @@ export interface ClimateGridState {
   view: ClimateGridView;
   thresholdC: number;
   opacity: number;
+  colorRange: ClimateColorRange | null;
   surface: ClimateGridSurface | null;
   detail: ClimateLocationResponse | null;
   loading: boolean;
@@ -38,6 +40,7 @@ export interface ClimateGridStore extends Readable<ClimateGridState> {
   setView(view: ClimateGridView): Promise<void>;
   setThreshold(thresholdC: number): Promise<void>;
   setOpacity(opacity: number): Promise<void>;
+  setColorRange(range: ClimateColorRange | null): Promise<void>;
   selectCell(id: string): Promise<void>;
   closeDetail(): void;
   refresh(): Promise<void>;
@@ -63,6 +66,7 @@ const initialState = (): ClimateGridState => ({
   view: DEFAULT_CLIMATE_GRID_VIEW,
   thresholdC: DEFAULT_CLIMATE_GRID_THRESHOLD_C,
   opacity: DEFAULT_CLIMATE_GRID_OPACITY,
+  colorRange: null,
   surface: null,
   detail: null,
   loading: false,
@@ -166,6 +170,7 @@ export function createClimateGridStore(
       weekId: nextWeekId,
       periodYears: nextPeriodYears,
       view: nextView,
+      colorRange: nextView === current.view ? current.colorRange : null,
       surface: null,
       loading: false,
       error: null,
@@ -285,6 +290,10 @@ export function createClimateGridStore(
     setOpacity: async (opacity) => {
       if (!Number.isFinite(opacity)) return Promise.reject(new Error('Invalid climate grid opacity.'));
       setState((current) => ({ ...current, opacity: Math.min(1, Math.max(0, opacity)) }));
+    },
+    setColorRange: async (colorRange) => {
+      if (colorRange && !validClimateScale(state.view, colorRange)) throw new Error('Invalid climate colour range.');
+      setState(current => ({...current, colorRange: colorRange ? {...colorRange} : null}));
     },
     selectCell,
     closeDetail: () => {

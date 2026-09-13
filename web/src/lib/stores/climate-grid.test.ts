@@ -161,3 +161,19 @@ describe('createClimateGridStore', () => {
     await expect(store.setThreshold(-21)).rejects.toThrow(/threshold/i);
   });
 });
+
+it('changes colour bounds locally, resets on view changes, and rejects invalid bounds', async () => {
+  const api = { grid: vi.fn(async () => surface()), cell: vi.fn() };
+  const store = createClimateGridStore({api});
+  await store.setEnabled(true);
+  await store.setColorRange({min: 10, max: 30});
+  expect(get(store).colorRange).toEqual({min: 10, max: 30});
+  expect(api.grid).toHaveBeenCalledTimes(1);
+  await expect(store.setColorRange({min: 30, max: 10})).rejects.toThrow();
+  await store.setView('high_exceedance');
+  expect(get(store).colorRange).toBeNull();
+  await expect(store.setColorRange({min: 0, max: 2})).rejects.toThrow();
+  await store.setColorRange({min: 0, max: 0.02});
+  await store.setColorRange(null);
+  expect(get(store).colorRange).toBeNull();
+});

@@ -24,7 +24,7 @@ const detail: ClimateLocationResponse = {
 };
 
 const baseState: ClimateGridState = {
-  enabled: true, weekId: 8, periodYears: 25, view: 'high_p90', thresholdC: 30, opacity: 0.4,
+  enabled: true, weekId: 8, periodYears: 25, view: 'high_p90', thresholdC: 30, opacity: 0.4, colorRange: null,
   surface: null, detail, loading: false, error: null, detailLoading: false, detailError: null, selection: 'cell-1',
 };
 
@@ -32,6 +32,7 @@ function fakeStore(initial = baseState): ClimateGridStore {
   const inner = writable(initial);
   return {
     subscribe: inner.subscribe,
+    setColorRange: vi.fn(async () => {}),
     setEnabled: vi.fn(async () => {}), setWeek: vi.fn(async () => {}), setPeriod: vi.fn(async () => {}),
     setView: vi.fn(async () => {}), setThreshold: vi.fn(async () => {}), setOpacity: vi.fn(async () => {}),
     selectCell: vi.fn(async () => {}), closeDetail: vi.fn(), refresh: vi.fn(async () => {}), retryDetail: vi.fn(async () => {}),

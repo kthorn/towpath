@@ -891,10 +891,10 @@ it('creates the climate raster lazily and destroys it without fitting the map', 
   expect(facade.createClimateRaster).not.toHaveBeenCalled();
   const surface = { revision: 'test' } as never;
   view.climateGrid(surface, 0.4);
-  expect(raster.setSurface).toHaveBeenCalledWith(surface, 0.4);
+  expect(raster.setSurface).toHaveBeenCalledWith(surface, 0.4, undefined);
   expect(facade.fitBounds).not.toHaveBeenCalled();
   view.climateGrid(null, 0.4);
-  expect(raster.setSurface).toHaveBeenLastCalledWith(null, 0.4);
+  expect(raster.setSurface).toHaveBeenLastCalledWith(null, 0.4, undefined);
   view.destroy();
   expect(raster.destroy).toHaveBeenCalledOnce();
 });

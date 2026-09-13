@@ -652,9 +652,9 @@ export function createGoogleMapView(
   documentRef.addEventListener('keydown', escapeListener);
 
   return {
-    climateGrid(surface, opacity) {
+    climateGrid(surface, opacity, range) {
       if (surface && !climateRaster) climateRaster = facade.createClimateRaster?.(map);
-      climateRaster?.setSurface(surface, opacity);
+      climateRaster?.setSurface(surface, opacity, range);
     },
     climate(markers, onSelect) {
       climateData = markers;
