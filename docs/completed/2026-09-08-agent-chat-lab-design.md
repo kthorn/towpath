@@ -40,3 +40,23 @@ unknown boat dimensions remain authoritative. The model chains tools in one turn
 canal candidate references, never OSM place references, in route arguments. No API or route
 feasibility changes are required. Offline checks plus a minimal real two-turn browser check
 verify integration; route-quality evaluation remains interactive.
+
+## Hire bases and API coverage (2026-09-13)
+
+Hire discovery exposes published public base records with their existing validated canal anchors,
+source-provider identities and source links. Comparisons first search canal connectivity from the
+attraction access point, using separate outward and return travel costs and half the full cruising
+budget for each direction. They inspect all public anchors before applying pagination; geographic
+proximity never establishes reachability. Each shortlisted base then uses the existing full
+out-and-back planner with the required attraction waypoint. Failure to reach a turnaround or fit
+daily scheduling remains a rejection even if the base passed the preliminary reachability test.
+The agent compares bounded batches and reports when more bases remain. The cruising budget does
+not include a land visit, walking transfer, pickup allowance, or booking availability.
+
+Named tools cover server-side planning endpoints, with strict arguments and bounded summaries.
+Conversation-local preview references retain geometry for place/POI follow-ups and original
+request/route IDs for exact out-and-back replay. Model-supplied handles, route geometry, arbitrary
+URLs and credentials remain outside the tool surface. Large network geometry, climate masks and
+sample arrays are processed by the host rather than copied into model context. Google place and
+walking verification remains an application-owned browser protocol; model-authored callbacks
+cannot establish provider results.

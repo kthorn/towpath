@@ -1,6 +1,7 @@
 """HTTP API for candidate selection and pure artifact-backed routing."""
 
 import hashlib
+import math
 import threading
 from collections import OrderedDict
 from typing import Annotated, Literal
@@ -8,9 +9,14 @@ from typing import Annotated, Literal
 import networkx as nx
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response  # pyright: ignore[reportMissingImports]
+from pound.geometry import haversine_m as _haversine_m  # pyright: ignore[reportMissingImports]
 from pound.models import RETAINED_POI_KINDS  # pyright: ignore[reportMissingImports]
 from pound.route.candidates import nearest_candidates  # pyright: ignore[reportMissingImports]
 from pound.route.cost import resolve_movable_bridge_delay  # pyright: ignore[reportMissingImports]
+from pound.route.hire_reachability import (
+    HireReachabilityError,
+    compute_hire_base_reachability,
+)
 from pound.route.plan import (  # pyright: ignore[reportMissingImports]
     RouteUnavailableError,
     plan_projected_route,
@@ -41,6 +47,7 @@ from pydantic import (  # pyright: ignore[reportMissingImports]
     Field,
     FiniteFloat,
     field_validator,
+    model_validator,
 )
 
 from pound_web.boat_hire import select_boat_hire_reachability
@@ -89,6 +96,87 @@ class CanalNetworkRequest(BaseModel):
     boat_height_m: FiniteFloat | None = Field(gt=0, default=None)
     movable_bridge_delay_min: FiniteFloat | None = Field(ge=0, default=None)
     selected_base_identity: str | None = Field(default=None, min_length=1)
+
+
+class HireBasesRequest(BaseModel):
+    """Strict bounded query for source-backed boat-hire bases."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    lat: FiniteFloat = Field(ge=-90, le=90)
+    lon: FiniteFloat = Field(ge=-180, le=180)
+    limit: int = Field(default=6, ge=1, le=20)
+    offset: int = Field(default=0, ge=0, le=1000)
+    radius_km: FiniteFloat = Field(default=100.0, ge=1, le=250)
+    target: CanalPointHandle | None = None
+    artifact_revision: str | None = Field(default=None, min_length=1)
+    days: int | None = Field(default=None, gt=0, le=365)
+    hours_per_day: FiniteFloat = Field(default=6.0, gt=0, le=24)
+    movable_bridge_delay_min: FiniteFloat | None = Field(default=None, ge=0)
+    boat_length_m: FiniteFloat | None = Field(default=None, gt=0)
+    boat_beam_m: FiniteFloat | None = Field(default=None, gt=0)
+    boat_draft_m: FiniteFloat | None = Field(default=None, gt=0)
+    boat_height_m: FiniteFloat | None = Field(default=None, gt=0)
+
+    @field_validator(
+        "lat",
+        "lon",
+        "radius_km",
+        "hours_per_day",
+        "movable_bridge_delay_min",
+        "boat_length_m",
+        "boat_beam_m",
+        "boat_draft_m",
+        "boat_height_m",
+        mode="before",
+    )
+    @classmethod
+    def reject_nonfinite_values(cls, value: object) -> object:
+        # Keep FastAPI's JSON validation response serializable when a non-standard
+        # JSON parser accepts NaN or Infinity before Pydantic sees it.
+        if isinstance(value, float) and not math.isfinite(value):
+            return repr(value)
+        return value
+
+    @model_validator(mode="after")
+    def require_network_constraints(self):
+        if self.target is not None and (self.artifact_revision is None or self.days is None):
+            raise ValueError("target requires artifact_revision and days")
+        return self
+
+
+class HireBaseResponse(BaseModel):
+    """Published source-provider base details and its artifact projection."""
+
+    base_ref: str
+    name: str
+    provider_name: str
+    provider_id: str
+    coordinate: Coordinate
+    straight_line_distance_m: FiniteFloat = Field(ge=0)
+    one_way_minutes: FiniteFloat | None = Field(default=None, ge=0)
+    return_minutes: FiniteFloat | None = Field(default=None, ge=0)
+    handle: CanalPointHandle
+    canal_coordinate: Coordinate
+    snap_distance_m: FiniteFloat = Field(ge=0)
+    provider_url: str | None = None
+    evidence_url: str | None = None
+    booking_url: str | None = None
+
+
+class HireBasesResponse(BaseModel):
+    """Bounded source-backed boat-hire base results."""
+
+    artifact_revision: str
+    total_matches: int = Field(ge=0)
+    truncated: bool
+    next_offset: int | None = Field(default=None, ge=0)
+    budget_minutes: FiniteFloat | None = Field(default=None, ge=0)
+    cutoff_minutes: FiniteFloat | None = Field(default=None, ge=0)
+    ranking_basis: Literal["straight_line_distance", "canal_travel_time"] = (
+        "straight_line_distance"
+    )
+    bases: list[HireBaseResponse]
 
 
 class CanalRouteRequest(BaseModel):
@@ -273,6 +361,107 @@ def canal_network(body: CanalNetworkRequest, request: Request) -> CanalNetworkRe
         artifact_revision=request.app.state.artifact_revision,
         lines=list(lines),
         highlight_lines=list(highlight_lines),
+        bases=bases,
+    )
+
+
+@router.post("/hire-bases", response_model=HireBasesResponse)
+def hire_bases(body: HireBasesRequest, request: Request) -> HireBasesResponse:
+    """Return nearby published source-provider bases with runtime projections."""
+
+    public_anchors = tuple(
+        anchor
+        for anchor in request.app.state.boat_hire_anchors
+        if anchor.seed.is_public_place
+    )
+    ranking_basis: Literal["straight_line_distance", "canal_travel_time"]
+    budget_minutes: float | None = None
+    cutoff_minutes: float | None = None
+    if body.target is not None:
+        if body.artifact_revision != request.app.state.artifact_revision:
+            raise _error(
+                409,
+                code="artifact_revision_mismatch",
+                message="The routing artifact has changed; refresh the canal waypoint.",
+                fields=["artifact_revision"],
+            )
+        ranking_basis = "canal_travel_time"
+        budget_minutes = body.days * body.hours_per_day * 60
+        cutoff_minutes = budget_minutes / 2
+        matches = []
+        if public_anchors:
+            try:
+                matches = [
+                    (match.one_way_minutes, match.identity, match.anchor, match)
+                    for match in compute_hire_base_reachability(
+                        body.target,
+                        public_anchors,
+                        graph=request.app.state.graph,
+                        cutoff_min=cutoff_minutes,
+                        boat_length_m=body.boat_length_m,
+                        boat_beam_m=body.boat_beam_m,
+                        boat_draft_m=body.boat_draft_m,
+                        boat_height_m=body.boat_height_m,
+                        movable_bridge_delay_min=body.movable_bridge_delay_min,
+                    )
+                ]
+            except HireReachabilityError as exc:
+                raise _error(413, code=exc.code, message=exc.message) from exc
+            except ValueError as exc:
+                raise _error(
+                    400,
+                    code="invalid_hire_target",
+                    message="The canal waypoint is not valid for this routing artifact.",
+                    fields=["target"],
+                ) from exc
+        matches.sort(key=lambda match: (match[0], match[1]))
+    else:
+        ranking_basis = "straight_line_distance"
+        radius_m = body.radius_km * 1000.0
+        matches = []
+        for anchor in public_anchors:
+            seed = anchor.seed
+            distance_m = _haversine_m((body.lat, body.lon), (seed.latitude, seed.longitude))
+            if distance_m <= radius_m:
+                matches.append((distance_m, seed.identity, anchor, None))
+        matches.sort(key=lambda match: (match[0], match[1]))
+
+    total_matches = len(matches)
+    page_end = body.offset + body.limit
+    bases = []
+    for _distance_or_minutes, _identity, anchor, reachability in matches[body.offset:page_end]:
+        seed = anchor.seed
+        distance_m = _haversine_m((body.lat, body.lon), (seed.latitude, seed.longitude))
+        bases.append(
+            HireBaseResponse(
+                base_ref=seed.identity,
+                name=seed.name,
+                provider_name=seed.operator,
+                provider_id=seed.source_provider_id,
+                coordinate=Coordinate(lat=seed.latitude, lon=seed.longitude),
+                straight_line_distance_m=distance_m,
+                one_way_minutes=(
+                    reachability.one_way_minutes if reachability is not None else None
+                ),
+                return_minutes=(
+                    reachability.return_minutes if reachability is not None else None
+                ),
+                handle=anchor.handle,
+                canal_coordinate=anchor.projected,
+                snap_distance_m=anchor.snap_distance_m,
+                provider_url=seed.source_provider_website or None,
+                evidence_url=seed.evidence_url or None,
+                booking_url=seed.booking_url or None,
+            )
+        )
+    return HireBasesResponse(
+        artifact_revision=request.app.state.artifact_revision,
+        total_matches=total_matches,
+        truncated=page_end < total_matches,
+        next_offset=page_end if page_end < total_matches else None,
+        budget_minutes=budget_minutes,
+        cutoff_minutes=cutoff_minutes,
+        ranking_basis=ranking_basis,
         bases=bases,
     )
 

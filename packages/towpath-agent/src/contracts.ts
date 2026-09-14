@@ -2,9 +2,11 @@ import type { TSchema } from 'typebox';
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export const TOOL_NAMES = [
-  'resolve_place', 'get_canal_access_options', 'find_hire_trip_options',
+  'resolve_place', 'get_canal_access_options', 'find_hire_bases', 'find_hire_trip_options',
   'get_trip_option', 'search_amenities', 'request_selection',
   'plan_canal_route', 'plan_out_and_back',
+  'get_api_status', 'search_places', 'get_route_pois', 'get_canal_network',
+  'get_climate_locations', 'get_climate_location', 'get_climate_grid', 'get_climate_cell',
 ] as const;
 export type ToolName = typeof TOOL_NAMES[number];
 export interface Limits {

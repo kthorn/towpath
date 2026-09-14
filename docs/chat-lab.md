@@ -8,7 +8,8 @@ not included in the production website image.
 
 1. Start the current Pound backend with graph, catalog, and boat-hire data as described
    in the [development guide](development.md#map-prototype-local-development).
-   Check `/api/health` before opening a chat. Use current Great Britain artifacts;
+   Set `POUND_CLIMATE_PATH` and `POUND_CLIMATE_GRID_PATH` to the local climate artifacts
+   to enable climate tools. Check `/api/health` before opening a chat. Use current Great Britain artifacts;
    artifacts from before the package split cannot be loaded by current main.
 2. With Node 24.15+, install and build the agent package:
 
@@ -41,11 +42,10 @@ Stop the process with Ctrl-C. It is not a hosted authentication/session solution
 
 ## Try a conversation
 
-- “Find Bletchley Park and show its canal access options.”
-- Choose one of the returned canal candidates and ask for an out-and-back preview,
-  specifying days and hours per day. Follow up with “Make that five days.”
-- Try an ambiguous or missing attraction, or ask for a ring/hire-base comparison,
-  and check that the response acknowledges the ambiguity or missing capability.
+- “Find hire bases for a seven-day canal trip visiting Bletchley Park at six cruising hours per day. Compare a couple of options.”
+- “Show the daily plan and pubs along the first day of that option.”
+- “What is the historical summer temperature near there?”
+- Follow up with a changed cruising budget and inspect the recomputed routes.
 
 Expand **Tool activity** to see model arguments, actual Pound API requests, summary
 results and error codes. Route summaries retain Pound's distances, lock counts,
@@ -68,9 +68,8 @@ repeat the same request when comparing variants; no prompt changes are auto-save
 
 The agent investigates before asking questions. For nearby same-name records representing an
 attraction, it chooses a plausible representative without merging their OSM identities. It
-chooses a nearby named canal candidate and, if no start is given, uses that as a provisional
-start for an out-and-back area preview. This is not a hire-base itinerary or verified walking
-access. Distinct destinations without a reasonable default still warrant one focused question.
+chooses a nearby named canal candidate and, if no start is given, searches published hire
+bases that can reach that waypoint within the cruising budget. Walking access is not verified. Distinct destinations without a reasonable default still warrant one focused question.
 
 Unspecified schedules default to **3 days at 6 cruising hours per day**. Explicit user choices
 and follow-up changes take precedence, and boat dimensions remain unknown unless supplied.
@@ -80,15 +79,36 @@ canal candidate references; OSM attraction references cannot be used as route wa
 
 ## Current scope
 
-The lab wraps real OSM attraction resolution, geometric canal candidates,
-point-to-point routes and out-and-back previews. It only accepts place/candidate
-references previously returned in that conversation. Pound owns route feasibility
-and rejects stale artifact revisions. Unknown boat dimensions remain unknown.
+The agent has typed tools for every server-side planning API:
 
-Multi-base trip discovery (#78), Google place fallback, verified walking transfers,
-ring search, and map route adoption are not connected. The lab exposes those gaps;
-it does not replace #20's hosted backend or #80's final map conversation UI.
-Model prose is still exploratory output, not evidence of bookability or access.
+| Tools | API capability |
+| --- | --- |
+| `get_api_status` | Backend health and artifact revisions |
+| `resolve_place`, `get_canal_access_options` | OSM place resolution and canal candidates |
+| `plan_canal_route`, `plan_out_and_back`, `get_trip_option` | Route previews and exact replay of stored selections |
+| `find_hire_bases`, `find_hire_trip_options` | Published hire bases and reachable out-and-back comparisons |
+| `search_places`, `get_route_pois` | Nearby/viewport catalog searches and POIs along a route or day |
+| `get_canal_network` | Budgeted canal network summary |
+| `get_climate_locations`, `get_climate_location` | Historical climate location summaries and detail |
+| `get_climate_grid`, `get_climate_cell` | Historical climate grid summaries and cell detail |
+
+Hire trip discovery searches all published base anchors by canal connectivity, allowing at
+most half the trip's cruising minutes in each direction between the base and attraction
+waypoint. It does not apply a geographic radius first. It then previews complete trips from
+up to six bases per call, retaining the required waypoint and supplied boat constraints.
+Pagination is explicit. “Longest” means longest among the returned recommended previews,
+not a global optimum over all bases and route branches. Provider names and source links come
+from the published dataset; availability, prices, and current operator identity are not checked.
+
+References are scoped to the conversation. Stored previews retain geometry for subsequent
+day searches and exact replay, while model results omit bulky geometry and climate samples.
+Pound owns route feasibility and rejects stale revisions. Unknown boat dimensions remain unknown.
+
+The Google fallback, walking verification, and selection callback protocol is browser-owned:
+its session/task credentials and verified results are not model-authored tool arguments.
+Those integrations, ring search, and map route adoption remain outside the local lab.
+The broader trip-discovery work (#78) and public conversation UI (#80) remain open.
+Climate results describe historical summer conditions, not a weather forecast.
 
 ## Checks
 
@@ -130,3 +150,15 @@ and no clarification: place lookup, canal candidates, then a successful out-and-
 using the 3-day/6-hour defaults. A follow-up requesting five days at four hours recomputed the
 preview successfully. This checks the interaction and tool chain, not route-selection quality.
 The check used real Luna calls and the local API; no live-model tests run automatically in CI.
+
+## Expanded API live check (2026-09-14)
+
+Real API checks exercised catalog search, the canal network, and climate location/grid summaries
+and details. A Luna conversation created a 49.82 km, 32-lock out-and-back preview, then replayed
+its exact daily plan and queried first-day pubs using the retained route geometry.
+
+The seven-day Bletchley hire search found a published Leighton Buzzard base within the half-trip
+budget, but the full turnaround planner rejected its itinerary. Reachability alone is therefore
+reported separately from a complete trip preview; the lab does not invent a second base or claim
+a route exists when the API rejects it. The rejection is tracked in
+[#103](https://github.com/kthorn/towpath/issues/103), which blocks the public chat UI.
