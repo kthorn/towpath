@@ -61,3 +61,10 @@ one run. There is no HTTP listener, cross-run conversation memory, or live Pound
 See the [integration reference](../../docs/agent-runtime.md) for the embedding example,
 session/browser-task APIs, execution limits, and deployment responsibilities, and the
 [runtime design](../../docs/completed/2026-09-05-pi-agent-runtime-design.md) for the #20 handoff.
+
+## Local chat lab
+
+With a local Pound API running and `OPENAI_API_KEY` set, run `npm run chat:lab` and
+open <http://127.0.0.1:8787>. The page streams chat, shows real API/tool traces, and
+supports follow-ups, stop/reset, and session download. See the
+[chat lab guide](../../docs/chat-lab.md) for setup, prompt experiments, and current gaps.
