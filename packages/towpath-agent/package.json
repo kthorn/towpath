@@ -12,7 +12,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/test/*.test.js",
     "demo": "npm run build && node dist/test/demo.js",
-    "smoke:live": "npm run build && node dist/src/live-cli.js"
+    "smoke:live": "npm run build && node dist/src/live-cli.js",
+    "chat:lab": "npm run build && node dist/src/lab-cli.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.2",
