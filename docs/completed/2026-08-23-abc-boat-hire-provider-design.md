@@ -36,8 +36,8 @@ or coordinate-proximity identity inference is permitted.
 | `base:aldermaston-wharf` | Aldermaston Wharf | 51.400800 | -1.134460 | active |
 | `base:march-marina` | March Marina | 52.554174 | 0.064960 | active |
 | `base:alvechurch-marina` | Alvechurch Marina | 52.347199 | -1.970306 | active |
-| `base:falkirk` | Falkirk Canal | 56.000526 | -3.842200 | excluded |
-| `base:goytre-wharf` | Goytre Wharf | 51.751262 | -2.997115 | excluded |
+| `base:falkirk` | Falkirk Canal | 56.000526 | -3.842200 | active |
+| `base:goytre-wharf` | Goytre Wharf | 51.751262 | -2.997115 | active |
 | `base:anderton-marina` | Anderton Marina | 53.276055 | -2.523323 | active |
 | `base:blackwater-meadow-marina` | Blackwater Meadow Marina | 52.902436 | -2.889776 | active |
 | `base:gailey-base` | Gailey Marina | 52.690789 | -2.119703 | active |
@@ -50,33 +50,37 @@ or coordinate-proximity identity inference is permitted.
 | `base:springwood-haven` | Springwood Haven | 52.541490 | -1.492940 | active |
 | `base:nantwich-canal-centre` | Nantwich Canal Centre | 53.071111 | -2.541386 | active |
 
-Falkirk Canal and Goytre Wharf are explicit out-of-coverage records with
-`exclude=true`; add only those two exact identities to the exclusion set.
-Wrenbury Mill remains active: ABC's own location page gives its address as
-"Nr Nantwich, Cheshire, CW5 8HG." Its Welsh Borders marketing grouping is not
-an out-of-England location classification.
+All 16 records are active. The deployment artifact is the Great Britain graph
+(`POUND_ARTIFACT_PATH=/app/artifacts/great-britain.pkl`), so Falkirk Canal and
+Goytre Wharf are in coverage. An earlier draft excluded those two for an
+England-only graph; that exclusion is dropped and the exclusion set stays at the
+two existing `uk-canal-boating` identities. Wrenbury Mill was never at issue:
+ABC's own location page gives its address as "Nr Nantwich, Cheshire, CW5 8HG,"
+and its Welsh Borders marketing grouping is not an out-of-England location
+classification.
 
 ## Validation
 
 Extend the offline data test with an identity-keyed, 16-entry ABC map
-attestation table containing the marker name, raw slug, latitude, longitude,
-and exclusion value. Assert that every and only ABC map-evidence row equals
-this set, with exact canonical identity, coordinate strings, review identity,
-status, blank OSM URL, map/source URLs, and notes. Update CSV structural counts
-from 117 to 133 total rows and 106 to 122 `company_base` rows. Update the
-explicit exclusion set from 13 to 15 identities.
+attestation table containing the marker name, raw slug, latitude, and longitude.
+Assert that every and only ABC map-evidence row equals this set, with exact
+canonical identity, coordinate strings, review identity, status, blank OSM URL,
+blank operator/contact/booking fields, map/source URLs, and notes. Update CSV
+structural counts from 155 to 171 total rows and 144 to 160 `company_base` rows.
+The explicit exclusion set is unchanged.
 
 No resolution-queue rows are required: every new source row enters with
 first-party map evidence and has no manual-evidence handoff.
 
 ## Runtime and deployment behavior
 
-No runtime code changes are required. The existing loader will include the 14
-active ABC seeds and ignore the two excluded ones. The existing 250 m,
-routing-eligible-edge startup gate remains unchanged. A deployment check against
-the intended England graph must pass for every active ABC seed; a failure must
-stop curation for manual review rather than broaden the threshold or exclude a
-row implicitly.
+No runtime code changes are required. The existing loader includes all 16 ABC
+seeds. The existing 250 m, routing-eligible-edge startup gate remains unchanged.
+Against `/home/kurtt/towpath/pound/artifacts/deploy-main-preserved/great-britain.pkl`,
+every ABC marker projects to a routing-eligible edge at 1.9 m to 177.6 m, so all
+16 seeds pass the gate with the published coordinates. A failure must stop
+curation for manual review rather than broaden the threshold or exclude a row
+implicitly.
 
 ## Non-goals
 
