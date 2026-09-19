@@ -43,9 +43,9 @@ def test_boat_hire_enrichment_seed_has_distinct_location_rows():
         rows = list(reader)
 
     assert reader.fieldnames == EXPECTED_FIELDS
-    assert len(rows) == 155
+    assert len(rows) == 171
     assert Counter(row["record_type"] for row in rows) == {
-        "company_base": 144,
+        "company_base": 160,
         "review_positive": 11,
     }
     assert len({(row["source_provider_id"], row["location_id"]) for row in rows}) == len(rows)
@@ -859,3 +859,70 @@ def test_canal_holidays_base_62_row_is_offline_attested():
         assert row[field] == value
     for note in CANAL_HOLIDAYS_BASE_62_NOTES:
         assert note in row["notes"]
+
+
+ABC_BOAT_HIRE_MAP_URL = "https://www.abcboathire.com/our-locations"
+ABC_BOAT_HIRE_MAP_ATTESTATIONS = {
+    "aldermaston-wharf": ("Aldermaston Wharf", "51.400800", "-1.134460"),
+    "march-marina": ("March Marina", "52.554174", "0.064960"),
+    "alvechurch-marina": ("Alvechurch Marina", "52.347199", "-1.970306"),
+    "falkirk": ("Falkirk Canal", "56.000526", "-3.842200"),
+    "goytre-wharf": ("Goytre Wharf", "51.751262", "-2.997115"),
+    "anderton-marina": ("Anderton Marina", "53.276055", "-2.523323"),
+    "blackwater-meadow-marina": ("Blackwater Meadow Marina", "52.902436", "-2.889776"),
+    "gailey-base": ("Gailey Marina", "52.690789", "-2.119703"),
+    "gayton-marina": ("Gayton Marina", "52.191493", "-0.945934"),
+    "hilperton-marina": ("Hilperton Marina", "51.338480", "-2.204374"),
+    "whitchurch-marina": ("Whitchurch Marina", "52.968024", "-2.708846"),
+    "worcester-marina": ("Worcester Marina", "52.196215", "-2.216549"),
+    "wrenbury-mill": ("Wrenbury Mill", "53.028227", "-2.612507"),
+    "kings-orchard": ("Kings Orchard Marina", "52.691398", "-1.780221"),
+    "springwood-haven": ("Springwood Haven", "52.541490", "-1.492940"),
+    "nantwich-canal-centre": ("Nantwich Canal Centre", "53.071111", "-2.541386"),
+}
+ABC_BOAT_HIRE_BLANK_FIELDS = (
+    "operator_id",
+    "operator_name",
+    "location_area",
+    "waterway",
+    "review_rank",
+    "osm_url",
+    "existing_website",
+    "booking_url",
+    "hire_type",
+    "phone",
+    "email",
+)
+
+
+def test_abc_boat_hire_map_rows_are_offline_attested():
+    with CSV_PATH.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+
+    abc_rows = {
+        row["location_id"]: row for row in rows if row["source_provider_id"] == "abc-boat-hire"
+    }
+    assert set(abc_rows) == {f"base:{slug}" for slug in ABC_BOAT_HIRE_MAP_ATTESTATIONS}
+    for slug, (name, latitude, longitude) in ABC_BOAT_HIRE_MAP_ATTESTATIONS.items():
+        row = abc_rows[f"base:{slug}"]
+        identity = f"abc-boat-hire/base:{slug}"
+        assert row["record_type"] == "company_base", identity
+        assert row["source_provider_name"] == "ABC Boat Hire", identity
+        assert row["source_provider_website"] == "https://www.abcboathire.com/", identity
+        assert row["location_name"] == name, identity
+        assert row["official_location_name"] == name, identity
+        assert row["review_identity"] == f"abc-boat-hire-map/{slug}", identity
+        assert row["latitude"] == latitude, identity
+        assert row["longitude"] == longitude, identity
+        assert row["source_url"] == ABC_BOAT_HIRE_MAP_URL, identity
+        assert row["evidence_url"] == ABC_BOAT_HIRE_MAP_URL, identity
+        assert row["source_kind"] == "official_location_map", identity
+        assert row["enrichment_status"] == "provider_map_verified", identity
+        assert row["exclude"] == "", identity
+        assert name in row["notes"] and slug in row["notes"], identity
+        search_term = name.replace(" ", "+")
+        assert row["google_search_url"] == (
+            f"https://www.google.com/search?q=ABC+Boat+Hire+{search_term}+boat+hire"
+        ), identity
+        for field in ABC_BOAT_HIRE_BLANK_FIELDS:
+            assert row[field] == "", f"{identity} {field}"
