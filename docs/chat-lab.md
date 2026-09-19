@@ -59,6 +59,21 @@ turns / 48 KB; the lab asks for a reset when full or expired. **Download session
 saves the visible conversation and traces as JSON for a bug report. It can contain
 your prompts and place/route data; the key and provider reasoning are not included.
 
+The server also appends JSONL diagnostics to `packages/towpath-agent/.local/chat-lab/events.jsonl`
+(the absolute path is printed at startup). Use `--log-file /path/events.jsonl` to override it.
+Each line contains `timestamp`, `lab_id`, an optional `turn_id`, and `event`. Logs include user
+messages, tool arguments, API requests/results, streamed replies, errors, reset/cancel events,
+and run summaries. They survive restarts, are git-ignored, and are created with owner-only file
+permissions. HTTP headers, server credentials, and provider reasoning are not logged. Prompts
+and place data are retained locally; delete or archive the log when no longer needed.
+
+From the agent package directory, inspect lookup traffic with:
+
+```bash
+jq -c 'select(.event.tool == "resolve_place")' .local/chat-lab/events.jsonl
+tail -f .local/chat-lab/events.jsonl
+```
+
 To experiment with prompting, create a local text file and restart with
 `npm run chat:lab -- --prompt-file /path/to/prompt.txt` (up to 4000 bytes).
 These instructions supplement the adapter's fixed safety instructions. Reset and
@@ -162,3 +177,19 @@ budget, but the full turnaround planner rejected its itinerary. Reachability alo
 reported separately from a complete trip preview; the lab does not invent a second base or claim
 a route exists when the API rejects it. The rejection is tracked in
 [#103](https://github.com/kthorn/towpath/issues/103), which blocks the public chat UI.
+
+## Qualified lookup fix (2026-09-19)
+
+The model appended address qualifiers to catalogue-name searches, e.g. “Bletchley Park,
+Bletchley, Milton Keynes.” The catalogue matches place names, so that query returned no match
+even though “Bletchley Park” has four records. Failed comma-qualified lookups now retry the name
+once and retain the suffix as an explicitly unverified locality hint. Successful, ambiguous,
+incomplete, and unavailable queries are not broadened. City-name substring matches are named
+attractions, not city boundaries; a separate Milton Keynes visit still needs an appropriate
+location and cannot silently be treated as verified by a single-waypoint trip.
+
+The exact reported one-week/six-hour Bletchley Park and Milton Keynes prompt was rerun through
+the local HTTP lab. It resolved Bletchley Park, continued to published hire-base discovery, and
+completed with 333 correlated JSONL records. The existing turnaround rejection (#103) remains
+separate from this lookup fix. All 41 agent tests pass, including qualified-query recovery,
+log append/permissions, and HTTP trace correlation without logging authentication headers.

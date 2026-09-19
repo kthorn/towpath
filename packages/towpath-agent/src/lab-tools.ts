@@ -133,8 +133,8 @@ export function createLabTools(request: PoundCall, trace: Trace): DomainTool[] {
       operator_basis: 'published_source_provider_not_verified_operating_company' };
   }
   return [
-    tool('resolve_place', 'Search the real OSM catalog by name. Returns sourced place refs; '
-      + 'choose a representative for nearby same-attraction matches; ask only for materially different destinations. No Google fallback in this lab.',
+    tool('resolve_place', 'Search OSM attraction/amenity names, not addresses or cities. Use the place name alone '
+      + '(e.g. Bletchley Park), without appending town/county. Failed comma-qualified queries retry the name once, retaining the locality as an unverified hint. Returns sourced place refs; choose among nearby same-attraction matches. City-name matches may be attractions, not the city itself. No Google fallback.',
     { query: Type.String({ minLength: 1, maxLength: 200 }),
       kinds: Type.Optional(Type.Array(resolveKindSchema,
         { minItems: 1, maxItems: 16, description: 'Optional catalog kinds such as museum, historic_site, pub, marina. Defaults to attractions.' })) }, async (args, signal) => {
@@ -144,7 +144,15 @@ export function createLabTools(request: PoundCall, trace: Trace): DomainTool[] {
       try {
         const result = obj(await call(`${path}/resolve`, args, signal, { token }));
         signal.throwIfAborted();
-        const osm = obj(result.osm);
+        let osm = obj(result.osm);
+        const query = String(args.query);
+        const comma = query.indexOf(',');
+        const name = comma > 0 ? query.slice(0, comma).trim() : '';
+        if (osm.status === 'not_found' && osm.reason === 'no_match' && name) {
+          const retried = obj(await call(`${path}/resolve`, { ...args, query: name }, signal, { token }));
+          osm = { ...obj(retried.osm), requested_query: query, lookup_query: name,
+            locality_hint: query.slice(comma + 1).trim(), locality_verified: false };
+        }
         for (const item of list(osm.options)) {
           const place = obj(item);
           remember(places, String(place.option_ref), place.coordinate!);

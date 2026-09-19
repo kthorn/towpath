@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage } from 'node:http';
-import { AgentError } from './contracts.js';
+import { randomUUID } from 'node:crypto';
+import { AgentError, type Json } from './contracts.js';
 import type { LabChat } from './lab-chat.js';
 
 async function readBody(request: IncomingMessage) {
@@ -15,7 +16,7 @@ async function readBody(request: IncomingMessage) {
   return body as Record<string, unknown>;
 }
 
-export function createLabServer(chat: LabChat, page: string, token: string) {
+export function createLabServer(chat: LabChat, page: string, token: string, log: (entry: Json) => void = () => {}) {
   return createServer(async (request, response) => {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -37,17 +38,21 @@ export function createLabServer(chat: LabChat, page: string, token: string) {
       || request.headers['content-type'] !== 'application/json') {
       response.writeHead(403).end(); return;
     }
+    const turnId = randomUUID();
+    const record = (event: Json) => log({ turn_id: turnId, event });
     const controller = new AbortController();
     response.on('close', () => controller.abort());
     try {
       const body = await readBody(request);
-      if (request.url === '/reset') { chat.reset(); response.end('{}'); return; }
-      if (request.url === '/cancel') { chat.cancel(); response.end('{}'); return; }
+      if (request.url === '/reset') { chat.reset(); record({ type: 'conversation_reset' }); response.end('{}'); return; }
+      if (request.url === '/cancel') { chat.cancel(); record({ type: 'cancel_requested' }); response.end('{}'); return; }
       if (typeof body.message !== 'string' || Object.keys(body).length !== 1) {
         throw new AgentError('invalid_request');
       }
+      record({ type: 'user_message', message: body.message });
       response.setHeader('Content-Type', 'application/x-ndjson');
       await chat.send(body.message, event => {
+        record(event);
         if (controller.signal.aborted) return;
         if (!response.write(JSON.stringify(event) + '\n')) controller.abort();
       }, controller.signal);
@@ -57,6 +62,7 @@ export function createLabServer(chat: LabChat, page: string, token: string) {
       const code = error instanceof AgentError ? error.code
         : message.startsWith('context_full') ? 'context_full'
           : message === 'payload_limit' ? 'payload_limit' : 'invalid_request';
+      record({ type: 'error', data: { code } });
       if (!response.headersSent) response.statusCode = code === 'payload_limit' ? 413 : code === 'busy' ? 409 : 400;
       if (!response.destroyed) response.end(JSON.stringify({ type: 'error', data: { code } }) + '\n');
     }

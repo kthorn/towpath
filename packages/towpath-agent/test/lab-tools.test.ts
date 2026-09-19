@@ -129,3 +129,38 @@ test('exact trip inspection replays the stored selection and constraints without
   assert.ok(!JSON.stringify(result).includes('coordinates'));
   await assert.rejects(call('get_trip_option', { preview_ref: 'invented' }));
 });
+
+test('qualified place names retry once by name and preserve the unverified locality hint', async () => {
+  const queries: Json[] = [];
+  const tools = createLabTools(async (path, body): Promise<Json> => {
+    if (path === '/api/place-sessions') return { session_id: 's', token: 'secret' };
+    if (path.endsWith('/resolve')) {
+      queries.push(body!);
+      if ((body as Record<string, Json>).query !== 'Bletchley Park') return { osm: { status: 'not_found', reason: 'no_match', options: [] } };
+      return { osm: { status: 'ambiguous', options: [{ option_ref: 'osm:park', name: 'Bletchley Park', coordinate: { lat: 52, lon: -1 } }] } };
+    }
+    return {};
+  }, () => {});
+  const result = await tools.find(t => t.name === 'resolve_place')!.execute({ query: 'Bletchley Park, Bletchley, Milton Keynes', kinds: ['museum'] }, context) as Record<string, Json>;
+  assert.equal(result.status, 'ambiguous');
+  assert.deepEqual(queries, [
+    { query: 'Bletchley Park, Bletchley, Milton Keynes', kinds: ['museum'] },
+    { query: 'Bletchley Park', kinds: ['museum'] },
+  ]);
+  assert.equal(result.lookup_query, 'Bletchley Park');
+  assert.equal(result.locality_hint, 'Bletchley, Milton Keynes');
+  assert.equal(result.locality_verified, false);
+});
+
+test('successful or unavailable qualified lookups are not broadened', async () => {
+  for (const status of ['resolved', 'ambiguous', 'incomplete', 'unavailable']) {
+    let lookups = 0;
+    const tools = createLabTools(async (path): Promise<Json> => {
+      if (path === '/api/place-sessions') return { session_id: 's', token: 'secret' };
+      if (path.endsWith('/resolve')) { lookups++; return { osm: { status, options: [] } }; }
+      return {};
+    }, () => {});
+    await tools[0]!.execute({ query: 'Museum, A Place' }, context);
+    assert.equal(lookups, 1);
+  }
+});

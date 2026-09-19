@@ -51,3 +51,6 @@ scripts/local/
 
 # Disposable implementation plans
 /docs/superpowers/plans/
+
+# Local chat diagnostic logs
+packages/towpath-agent/.local/
