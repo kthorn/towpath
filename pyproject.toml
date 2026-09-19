@@ -3,13 +3,14 @@ package = false
 
 [tool.uv.workspace]
 members = ["packages/*"]
+exclude = ["packages/towpath-agent"]
 
 [dependency-groups]
 dev = [
   "httpx>=0.28",
   "pytest>=8",
   "pytest-cov>=5",
-  "ruff>=0.16.5",
+  "ruff>=0.16.6",
 ]
 
 [tool.pytest.ini_options]

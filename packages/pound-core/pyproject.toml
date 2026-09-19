@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2.13.5",
   "networkx>=3.3",
-  "pyproj>=3.7,<4",
+  "pyproj>=3.8.0,<4",
   "shapely>=2.1,<3",
 ]
 
