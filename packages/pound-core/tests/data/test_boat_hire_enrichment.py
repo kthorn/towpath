@@ -65,8 +65,10 @@ def _is_https_url(value: str) -> bool:
     return parsed.scheme == "https" and bool(parsed.netloc)
 
 
+# uk-canal-boating/base:goytre-wharf keeps exclude=true: its published coordinate
+# projects 459.9 m from the nearest routing-eligible edge on the Great Britain
+# artifact, beyond the 250 m startup threshold.
 REMAINING_EXCLUDED_IDENTITIES = {
-    ("uk-canal-boating", "base:falkirk-wharf"),
     ("uk-canal-boating", "base:goytre-wharf"),
 }
 
@@ -175,7 +177,7 @@ NEW_HIRE_BASE_ATTESTATIONS = {
         "55.99924144999999",
         "-3.8350832999999995",
         "Falkirk-location.html",
-        "true",
+        "",
     ),
     ("uk-canal-boating", "base:gailey-wharf"): (
         "Gailey Wharf",
