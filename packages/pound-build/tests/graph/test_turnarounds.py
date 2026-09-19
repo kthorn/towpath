@@ -286,6 +286,40 @@ def test_turning_restrictions_and_provenance_are_normalized():
     }
 
 
+def test_turning_limits_parse_unit_bearing_mapped_values():
+    attached, _ = build_turnarounds(
+        _graph(),
+        _features(
+            [
+                _turning_node(
+                    maxlength="22 m", maxwidth="2.4m", maxdraft="13'6\"", maxheight="7ft 0in"
+                )
+            ]
+        ),
+    )
+
+    record = attached.graph["turnarounds"][0]
+    assert record["turning_limits"] == pytest.approx(
+        {
+            "boat_length_m": 22.0,
+            "boat_beam_m": 2.4,
+            "boat_draft_m": 4.1148,
+            "boat_height_m": 2.1336,
+        }
+    )
+    assert attached.nodes[record["node_uid"]]["turning_max_length_m"] == pytest.approx(22.0)
+
+
+def test_turning_limits_ignore_unsupported_units():
+    attached, _ = build_turnarounds(
+        _graph(), _features([_turning_node(maxlength="22 chains", maxwidth="2.4 m")])
+    )
+
+    record = attached.graph["turnarounds"][0]
+    assert record["turning_limits"] == pytest.approx({"boat_beam_m": 2.4})
+    assert attached.nodes[record["node_uid"]]["turning_max_length_m"] is None
+
+
 def test_private_turning_point_is_excluded_from_index():
     attached, report = build_turnarounds(_graph(), _features([_turning_node(access="private")]))
 
