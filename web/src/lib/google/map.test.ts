@@ -162,14 +162,30 @@ describe('Google map adapter', () => {
     view.marker('origin', { lat: 51, lon: -1 });
     view.marker('origin', { lat: 52, lon: -2 });
     view.candidates('origin', [candidate(1), candidate(2)], 'candidate-2');
-    view.candidates('origin', [candidate(3)]);
+    expect(markers).toHaveLength(3);
+    expect(markers[2].title).toBe('Candidate 2 (selected)');
+    view.candidates('destination', [candidate(3), candidate(4)], 'candidate-3');
+    view.candidates('origin', [candidate(1), candidate(2)], 'candidate-1');
 
     expect(markers[0].map).toBeNull();
     expect(markers[1].map).not.toBeNull();
     expect(markers[2].map).toBeNull();
-    expect(markers[3].map).toBeNull();
+    expect(markers[3].map).not.toBeNull();
     expect(markers[4].map).not.toBeNull();
+    expect(markers[4].title).toBe('Candidate 1 (selected)');
+    expect(markers).toHaveLength(5);
     expect(facade.fitBounds).not.toHaveBeenCalled();
+  });
+
+  it('clears candidate markers when there is no matching selection', () => {
+    const { view, markers } = setup();
+    view.candidates('origin', [candidate(1), candidate(2)], 'candidate-1');
+    view.candidates('origin', [candidate(1), candidate(2)]);
+    expect(markers).toHaveLength(1);
+    expect(markers[0].map).toBeNull();
+    view.candidates('origin', [candidate(1), candidate(2)], 'candidate-99');
+    view.candidates('origin', []);
+    expect(markers).toHaveLength(1);
   });
 
   it('owns land and canal overlays independently and converts GeoJSON while drawing', () => {
