@@ -164,3 +164,29 @@ test('successful or unavailable qualified lookups are not broadened', async () =
     assert.equal(lookups, 1);
   }
 });
+
+test('reachable base discovery uses the half-trip network budget without requiring a turnaround preview', async () => {
+  const requests: { path: string; body?: Json }[] = [];
+  const tools = createLabTools(async (path, body): Promise<Json> => {
+    requests.push({ path, body });
+    if (path === '/api/place-sessions') return { session_id: 's', token: 'secret' };
+    if (path.endsWith('/resolve')) return { osm: { options: [{ option_ref: 'park', coordinate: { lat: 52, lon: -1 } }] } };
+    if (path === '/api/canal-candidates') return { artifact_revision: 'rev', candidates: [{ candidate_id: 'canal', handle: { edge: [1, 2], fraction: 0.5 } }] };
+    if (path === '/api/hire-bases') return { artifact_revision: 'rev', budget_minutes: 2520, cutoff_minutes: 1260, ranking_basis: 'canal_travel_time', total_matches: 1, truncated: false, next_offset: null, bases: [{ base_ref: 'wyvern/leighton', name: 'Leighton Buzzard', provider_name: 'Wyvern', handle: { edge: [3, 4], fraction: 0.3 }, one_way_minutes: 201, return_minutes: 201 }] };
+    assert.ok(!path.includes('turnaround') && !path.includes('out-and-back'), 'base lookup must not require a complete itinerary');
+    return {};
+  }, () => {});
+  const call = async (name: string, args: Json) => {
+    const tool = tools.find(t => t.name === name);
+    assert.ok(tool, `${name} must be available`);
+    return tool.execute(args, context) as Promise<Record<string, Json>>;
+  };
+  await call('resolve_place', { query: 'Bletchley Park' });
+  await call('get_canal_access_options', { place_ref: 'park' });
+  const result = await call('find_reachable_hire_bases', { place_ref: 'park', waypoint_ref: 'canal', days: 7, hours_per_day: 6, boat_beam_m: 2 });
+  assert.deepEqual(requests.find(r => r.path === '/api/hire-bases')!.body, { lat: 52, lon: -1, limit: 6, offset: 0, target: { edge: [1, 2], fraction: 0.5 }, artifact_revision: 'rev', days: 7, hours_per_day: 6, boat_beam_m: 2 });
+  assert.equal(result.itinerary, 'not_computed');
+  assert.equal(result.turnaround, 'not_checked');
+  assert.equal((result.bases as Record<string, Json>[])[0]!.one_way_minutes, 201);
+  assert.equal(result.next_offset, null);
+});

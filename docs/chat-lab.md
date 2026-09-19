@@ -101,7 +101,7 @@ The agent has typed tools for every server-side planning API:
 | `get_api_status` | Backend health and artifact revisions |
 | `resolve_place`, `get_canal_access_options` | OSM place resolution and canal candidates |
 | `plan_canal_route`, `plan_out_and_back`, `get_trip_option` | Route previews and exact replay of stored selections |
-| `find_hire_bases`, `find_hire_trip_options` | Published hire bases and reachable out-and-back comparisons |
+| `find_hire_bases`, `find_reachable_hire_bases`, `find_hire_trip_options` | Nearby bases, budgeted network reachability, and complete trip comparisons |
 | `search_places`, `get_route_pois` | Nearby/viewport catalog searches and POIs along a route or day |
 | `get_canal_network` | Budgeted canal network summary |
 | `get_climate_locations`, `get_climate_location` | Historical climate location summaries and detail |
@@ -193,3 +193,20 @@ the local HTTP lab. It resolved Bletchley Park, continued to published hire-base
 completed with 333 correlated JSONL records. The existing turnaround rejection (#103) remains
 separate from this lookup fix. All 41 agent tests pass, including qualified-query recovery,
 log append/permissions, and HTTP trace correlation without logging authentication headers.
+
+## Base-search call-limit fix (2026-09-19)
+
+A logged departure-base question spent six model calls on lookup, access, three similar full
+trip searches, and an equivalent direct route retry. It already had a reachable base after the
+first trip search, but exhausted the model-call budget without summarizing that evidence.
+
+`find_reachable_hire_bases` now exposes the existing network reachability result directly.
+Base-only questions use lookup → access → reachable bases, retaining the half-budget check in
+each direction, dimensions, provenance and pagination. This does not verify turning, daily
+scheduling, walking access or a complete itinerary. Full trip requests retain the existing
+preview tool, with instructions to try at most one alternative after rejection and never repeat
+the same request through `plan_out_and_back`. The six-model-call and ten-tool-call limits remain.
+
+The exact logged failing question completed in 7.965 seconds with three tool calls after this
+change, returning Leighton Buzzard at about 3 hours 22 minutes each way. The live check asserted
+completion and no calls to `/api/turnaround-candidates`. All 42 agent tests pass.

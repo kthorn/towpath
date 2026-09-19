@@ -183,7 +183,23 @@ export function createLabTools(request: PoundCall, trace: Trace): DomainTool[] {
       + 'attraction. Returns source links and issued start_ref values from the API validated base '
       + 'anchors, ordered by straight-line proximity. It does not establish canal reachability, '
       + 'prices, availability or the actual operating rental company. Use find_hire_trip_options '
-      + 'to compare real return-trip previews.', hireSearch, hireBases),
+      + 'for complete itineraries, or find_reachable_hire_bases for budgeted departure-base searches.', hireSearch, hireBases),
+    tool('find_reachable_hire_bases', 'Find departure bases that can reach an attraction canal waypoint '
+      + 'and return within the cruising budget. Use this for questions about where to hire/depart '
+      + 'from, including week-long trips. Searches all published base anchors by canal travel time, '
+      + 'allowing half the full budget in each direction, with no geographic-radius prefilter. '
+      + 'Returns base/provider names, source links and directional travel times. This answers base '
+      + 'reachability without computing a full itinerary or verifying a turnaround. Stop and '
+      + 'present these results when the user asks for bases; do not automatically try trip previews. '
+      + 'Use next_offset only when non-null. Prices, availability and walking access are unknown.',
+    { place_ref: placeRef, waypoint_ref: ref, limit: hireSearch.limit, offset: hireSearch.offset, ...schedule },
+    async (args, signal): Promise<Json> => {
+      const waypoint = candidate(args.waypoint_ref);
+      const search = await hireBases(args, signal, waypoint);
+      if (search.artifact_revision !== waypoint.revision) throw new AgentError('stale_revision');
+      return { ...search, itinerary: 'not_computed', turnaround: 'not_checked',
+        walking: 'not_checked', boat_fit: 'not_verified' };
+    }),
     tool('find_hire_trip_options', 'Compare out-and-back trip previews from up to six reachable published '
       + 'hire bases via the attraction canal waypoint. Supply place_ref from resolve_place and '
       + 'waypoint_ref from get_canal_access_options for that attraction. Uses real base anchors and '
@@ -192,7 +208,9 @@ export function createLabTools(request: PoundCall, trace: Trace): DomainTool[] {
       + 'No geographical-radius prefilter. Use next_offset to inspect more reachable bases. '
       + 'Compares each base API-recommended turnaround, not every possible '
       + 'trip or operator. Use 3 days at 6 hours/day when schedule is unspecified. Returns source '
-      + 'links, route facts and rejection reasons; prices and availability are unknown.',
+      + 'links, route facts and rejection reasons; prices and availability are unknown. For base-only '
+      + 'questions use find_reachable_hire_bases. A rejection already includes the underlying '
+      + 'out-and-back check: do not retry plan_out_and_back with the same base, waypoint and constraints.',
     { place_ref: placeRef, limit: hireSearch.limit, offset: hireSearch.offset, waypoint_ref: ref, ...schedule }, async (args, signal): Promise<Json> => {
       const waypoint = candidate(args.waypoint_ref);
       const search = await hireBases(args, signal, waypoint);
