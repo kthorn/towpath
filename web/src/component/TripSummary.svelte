@@ -1,13 +1,13 @@
 <script lang="ts">
   import type { TripState, TripStore } from '../lib/stores/trip';
-  import type { OutAndBackRoute } from '../lib/types';
+  import type { LoopRoute, OutAndBackRoute } from '../lib/types';
   let { state, onDaySelect, store }: { state: TripState; onDaySelect: (day: number | null) => void; store?: TripStore } = $props();
   const transfer = (seconds: number, metres: number) => `${Math.round(seconds / 60)} min · ${(metres / 1000).toFixed(1)} km`;
   const hours = (minutes: number) => Number.isInteger(minutes / 60) ? `${minutes / 60} hr` : `${(minutes / 60).toFixed(1)} hr`;
   function onBranchRoute(routeId: string) {
     if (store && store.selectBranchRoute) store.selectBranchRoute(routeId);
   }
-  const branchLabel = (candidate: OutAndBackRoute) => candidate.branch_choices.length
+  const branchLabel = (candidate: OutAndBackRoute | LoopRoute) => candidate.branch_choices.length
     ? candidate.branch_choices.map((choice, index) => `${choice.junction_name ?? `Branch ${index + 1}`} → ${choice.continuation_name ?? `Branch ${index + 1} continuation`}`).join(' · ')
     : 'Direct branch';
   const sourceLabel = (source: Record<string, unknown>) => {
@@ -26,7 +26,7 @@
   <h2>Trip summary</h2>
   <div class="transfers">
     <p><span>Origin transfer</span>{#if state.origin.landRoute}<strong>{transfer(state.origin.landRoute.durationSeconds, state.origin.landRoute.distanceMeters)}</strong>{:else}<strong>Unavailable</strong>{/if}</p>
-    {#if state.journeyMode !== 'out_and_back'}
+    {#if state.journeyMode !== 'out_and_back' && state.journeyMode !== 'loop'}
       <p><span>Destination transfer</span>{#if state.destination.landRoute}<strong>{transfer(state.destination.landRoute.durationSeconds, state.destination.landRoute.distanceMeters)}</strong>{:else}<strong>Unavailable</strong>{/if}</p>
     {/if}
   </div>
@@ -64,6 +64,25 @@
       {/if}
       {#if state.outAndBackRejections?.length}
         <ul class="route-rejections">{#each state.outAndBackRejections as rejection}<li>{rejection.message}</li>{/each}</ul>
+      {/if}
+    </section>
+  {/if}
+  {#if state.journeyMode === 'loop' && (state.loopRoutes?.length || state.loopRejections?.length)}
+    <section class="loop-options" aria-label="Loop routes">
+      <h3>Loop routes</h3>
+      {#if state.loopRoutes?.length}
+        <div class="route-options">
+          {#each state.loopRoutes as candidate, index}
+            <button type="button" class:active={state.selectedLoopRouteId === candidate.route_id} aria-pressed={state.selectedLoopRouteId === candidate.route_id} onclick={() => onBranchRoute(candidate.route_id)}>
+              <strong>Route {index + 1}: {candidate.connecting_distance_km > 0 ? 'Circuit with return connection' : 'Circuit through base'}{#if candidate.route_id === state.defaultLoopRouteId} · Default{/if}</strong>
+              <span>{branchLabel(candidate)}</span>
+              <small>{candidate.loop_distance_km.toFixed(1)} km circuit · {candidate.connecting_distance_km.toFixed(1)} km one-way connection · {candidate.journey.route.total_km.toFixed(1)} km total · {hours(candidate.journey.route.total_minutes)} cruising · {Math.round(candidate.budget.remaining_minutes)} min remaining</small>
+            </button>
+          {/each}
+        </div>
+      {/if}
+      {#if state.loopRejections?.length}
+        <ul class="route-rejections">{#each state.loopRejections as rejection}<li>{rejection.message}</li>{/each}</ul>
       {/if}
     </section>
   {/if}

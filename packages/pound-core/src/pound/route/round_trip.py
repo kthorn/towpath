@@ -95,7 +95,9 @@ def _request_id(body: TurnaroundCandidatesRequest) -> str:
     return _digest([POLICY_VERSION, _request_values(body)])
 
 
-def _check_inputs(body: TurnaroundCandidatesRequest, graph: nx.Graph) -> None:
+def _check_inputs(
+    body: TurnaroundCandidatesRequest, graph: nx.Graph, *, require_turnarounds: bool = True
+) -> None:
     # HTTP also checks the app's artifact envelope. Honor a graph revision when supplied.
     revision = graph.graph.get("artifact_revision")
     if revision is not None and revision != body.artifact_revision:
@@ -114,7 +116,7 @@ def _check_inputs(body: TurnaroundCandidatesRequest, graph: nx.Graph) -> None:
         raise RoundTripError(
             "invalid_node_handle", "Select valid canal endpoints again.", fields=missing, status=400
         )
-    if "turnarounds" not in graph.graph:
+    if require_turnarounds and "turnarounds" not in graph.graph:
         raise RoundTripError(
             "turnarounds_unavailable", "Rebuild the artifact with turnarounds.", status=503
         )
@@ -211,6 +213,12 @@ def _turning_rejection(turn: Turnaround, body: TurnaroundCandidatesRequest):
     return None
 
 
+def _fits_budget(minutes: float, budget: float) -> bool:
+    # Summed directional and reporting costs can differ at an exact boundary
+    # solely through float accumulation. Never round away a real minute fraction.
+    return minutes <= budget or math.isclose(minutes, budget, rel_tol=1e-12, abs_tol=1e-9)
+
+
 def _schedule(costs: list[float], hours: float) -> tuple[list[tuple[int, int]], float, bool]:
     """Uncapped greedy packing using conservative per-traversal estimates."""
     budget = hours * 60
@@ -218,13 +226,13 @@ def _schedule(costs: list[float], hours: float) -> tuple[list[tuple[int, int]], 
     start, current = 0, 0.0
     weights = [max(cost, round(cost)) for cost in costs]
     for index, minutes in enumerate(weights):
-        if index > start and current + minutes > budget:
+        if index > start and not _fits_budget(current + minutes, budget):
             ranges.append((start, index))
             start, current = index, 0.0
         current += minutes
     if weights:
         ranges.append((start, len(weights)))
-    return ranges, math.fsum(weights), all(minutes <= budget for minutes in weights)
+    return ranges, math.fsum(weights), all(_fits_budget(minutes, budget) for minutes in weights)
 
 
 @dataclass

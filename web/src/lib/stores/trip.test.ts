@@ -10,6 +10,8 @@ import type {
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
+  LoopCandidatesResponse,
+  LoopRoute,
   OutAndBackRoute,
   GeoJSONLineString,
   HealthResponse,
@@ -45,6 +47,13 @@ const outAndBack = (routeId: string, totalKm: number): OutAndBackRoute => ({
   outbound_distance_km: totalKm / 2, selection_basis: 'furthest_reachable',
   budget: { available_minutes: 360, used_minutes: totalKm * 2, remaining_minutes: 360 - totalKm * 2, days_used: 1 },
   journey: { ...canal, route: { ...canal.route, total_km: totalKm, start: 'a', end: 'a' } },
+});
+const loopRoute = (routeId: string, loopKm: number, connectingKm: number): LoopRoute => ({
+  journey_type: 'loop', artifact_revision: 'r1', request_id: 'loop-request-1', route_id: routeId,
+  branch_choices: [{ junction_uid: 10, next_uid: 11 }], loop_distance_km: loopKm,
+  connecting_distance_km: connectingKm, selection_basis: 'longest_feasible',
+  budget: { available_minutes: 720, used_minutes: loopKm * 2, remaining_minutes: 720 - loopKm * 2, days_used: 1 },
+  journey: { ...canal, route: { ...canal.route, is_ring: true, total_km: loopKm + connectingKm * 2 } },
 });
 const networkRequest = (days = 7): CanalNetworkRequest => ({
   days, hours_per_day: 6,
@@ -101,6 +110,7 @@ function setup(options: {
   places?: (request: unknown) => Promise<PlacesResponse>;
   placesHealth?: () => Promise<HealthResponse>;
   turnaroundCandidates?: (request: unknown) => Promise<TurnaroundCandidatesResponse>;
+  loopCandidates?: (request: unknown) => Promise<LoopCandidatesResponse>;
 } = {}) {
   const canalCandidates = vi.fn(async ({ lat }: LatLon) => lat < 52 ? response('r1', [1, 2]) : response('r1', [3, 4]));
   const canalNetwork = options.canalNetwork ?? vi.fn(async (_request: CanalNetworkRequest) => networkResponse());
@@ -109,6 +119,7 @@ function setup(options: {
   const places = options.places ?? vi.fn(async () => ({ places: [] }));
   const placesHealth = options.placesHealth ?? vi.fn(async () => ({ status: 'healthy', artifact_revision: 'r1', places_status: 'available' as const }));
   const turnaroundCandidates = options.turnaroundCandidates ?? vi.fn(async () => ({ artifact_revision: 'r1', request_id: 'request-1', default_route_id: 'route-1', routes: [], rejections: [] }));
+  const loopCandidates = options.loopCandidates ?? vi.fn(async () => ({ artifact_revision: 'r1', request_id: 'loop-request-1', default_route_id: 'loop-1', routes: [], rejections: [] }));
   const matrices = options.matrices ?? [[
     { available: true, durationSeconds: 20, distanceMeters: 100 },
     { available: true, durationSeconds: 10, distanceMeters: 200 },
@@ -118,11 +129,63 @@ function setup(options: {
     matrix: vi.fn(async () => matrices[Math.min(matrixIndex++, matrices.length - 1)]),
     route: vi.fn(async () => { if (options.routeError) throw options.routeError; return land; }),
   };
-  const store = createTripStore({ poundApi: { canalCandidates, canalNetwork, canalRoute, turnaroundCandidates, routePois, places, health: placesHealth }, transferRouter, mapView: options.map, transferMode: 'WALK' });
-  return { store, canalCandidates, canalNetwork, canalRoute, turnaroundCandidates, transferRouter, places, placesHealth };
+  const store = createTripStore({ poundApi: { canalCandidates, canalNetwork, canalRoute, turnaroundCandidates, loopCandidates, routePois, places, health: placesHealth }, transferRouter, mapView: options.map, transferMode: 'WALK' });
+  return { store, canalCandidates, canalNetwork, canalRoute, turnaroundCandidates, loopCandidates, transferRouter, places, placesHealth };
 }
 
 describe('trip store', () => {
+  it('plans loop candidates from an origin without requiring a destination', async () => {
+    const candidate = loopRoute('loop-1', 18, 0);
+    const loopCandidates = vi.fn(async () => ({
+      artifact_revision: 'r1', request_id: 'loop-request-1', default_route_id: candidate.route_id,
+      routes: [candidate], rejections: [],
+    }));
+    const { store, loopCandidates: api } = setup({ loopCandidates });
+    store.setJourneyMode('loop');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+
+    await store.planCanalRoute({ days: 3, hours_per_day: 6 });
+
+    expect(api).toHaveBeenCalledWith(expect.objectContaining({
+      start: candidateHandle(2), waypoint: null, days: 3, hours_per_day: 6,
+    }));
+    expect(get(store).canalRoute).toEqual(candidate.journey);
+    expect(get(store).loopRoutes).toEqual([candidate]);
+  });
+
+  it('keeps loop alternatives distinct and displays a selected returned journey directly', async () => {
+    const first = loopRoute('loop-1', 18, 0);
+    const second = loopRoute('loop-2', 11, 2);
+    const { store } = setup({ loopCandidates: vi.fn(async () => ({
+      artifact_revision: 'r1', request_id: 'loop-request-1', default_route_id: first.route_id,
+      routes: [first, second], rejections: [],
+    })) });
+    store.setJourneyMode('loop');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    await store.planCanalRoute({ days: 3, hours_per_day: 6 });
+
+    expect(get(store).canalRoute).toEqual(first.journey);
+    expect(get(store).selectedLoopRouteId).toBe(first.route_id);
+    store.selectBranchRoute(second.route_id);
+    expect(get(store).canalRoute).toEqual(second.journey);
+    expect(get(store).selectedLoopRouteId).toBe(second.route_id);
+  });
+
+  it('ignores stale loop responses after mode invalidation', async () => {
+    let resolveOld!: (value: LoopCandidatesResponse) => void;
+    const old = loopRoute('loop-old', 18, 0);
+    const pendingResponse = new Promise<LoopCandidatesResponse>((resolve) => { resolveOld = resolve; });
+    const { store } = setup({ loopCandidates: vi.fn(async () => pendingResponse) });
+    store.setJourneyMode('loop');
+    await store.setEndpointCoordinate('origin', place('origin', 51));
+    const pending = store.planCanalRoute({ days: 3, hours_per_day: 6 });
+    store.setJourneyMode('point_to_point');
+    resolveOld({ artifact_revision: 'r1', request_id: 'loop-old-request', default_route_id: old.route_id, routes: [old], rejections: [] });
+    await pending;
+    expect(get(store).canalRoute).toBeNull();
+    expect(get(store).loopRoutes ?? []).toEqual([]);
+  });
+
   it('plans out-and-back from an origin without requiring a destination', async () => {
     const candidate = outAndBack('route-1', 12);
     const turnaroundCandidates = vi.fn(async () => ({

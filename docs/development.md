@@ -102,6 +102,33 @@ lowered to restrict requests. Limit exhaustion returns `candidate_search_limit`,
 truncated list presented as complete. See the
 [design specification](completed/2026-09-05-turnaround-out-and-back-design.md).
 
+### Loop journeys
+
+Choose **Loop**, select a base and cruising budget, and optionally add **Visit on the way**.
+Pound discovers circuits through the base and circuits reached by a connecting stretch that
+is retraced on the return. Each trip cruises its circuit once. Both cruising directions are
+shown as separate alternatives; each preview includes the full return cost, locks, bridge
+delays, boat restrictions, warnings, and day plans. Alternatives are longest total distance
+first. Select another route to display its exact preview on the map.
+
+`POST /api/loop-candidates` accepts the same base, optional waypoint, boat dimensions,
+artifact revision, days and hours-per-day fields as `/api/turnaround-candidates` above.
+It returns `default_route_id` and complete `routes` with `journey_type: "loop"`,
+`loop_distance_km`, `connecting_distance_km` (one way), `branch_choices`, `budget` and
+`journey`. The journey has `is_ring: true` and begins and ends at the exact base position.
+No turnaround index or artifact-format change is required.
+
+Send the same constraints with paired `route_id` and `request_id` to `POST /api/loop-route`
+to revalidate that exact alternative, or omit both IDs for the default. An invalidated
+selection returns `stale_route_selection`. A base with no feasible circuit returns
+`no_feasible_loop`; choose another base, visit or budget.
+
+Loop discovery shares the `POUND_ROUND_TRIP_MAX_*` limits. Dense networks can contain
+thousands of distinct trips even within a few days. A search that exceeds its work,
+result or geometry limit returns `candidate_search_limit`; reduce the cruising budget.
+The response never silently omits alternatives or returns a partial list as complete.
+See the [loop design](completed/2026-09-13-loop-trips-design.md).
+
 ### Places API
 
 The unified places endpoint is `POST /api/places`. It is available only when

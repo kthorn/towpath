@@ -1,7 +1,7 @@
 # Towpath
 
 Canal-trip planning for UK inland waterways, powered by the deterministic Pound routing
-engine. The web app supports point-to-point and out-and-back journeys, hire bases,
+engine. The web app supports point-to-point, out-and-back, and loop journeys, hire bases,
 nearby places, and optional historical temperature overlays.
 
 ## Local development
@@ -72,6 +72,7 @@ Pound routing itself remains deterministic and makes no model calls.
   places, routing CLI, boat-hire review, and temperature data.
 - [Deployment runbook](docs/fly-runbook.md): production builds and operations.
 - [Pound engine design](docs/pound-engine-design.md).
+- [Loop journeys](docs/completed/2026-09-13-loop-trips-design.md).
 - [Out-and-back journeys](docs/completed/2026-09-05-turnaround-out-and-back-design.md).
 - [Agent runtime design](docs/completed/2026-09-05-pi-agent-runtime-design.md).
 
