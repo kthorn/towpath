@@ -8,6 +8,7 @@ from pound_build.ingest.filters import (
     filter_navigable_ways,
     is_derelict,
     is_navigable,
+    parse_dimension_m,
 )
 from pound_build.ingest.ir import NodeKind, WaterwayFeatures, WaterwayNode, WaterwayWay
 
@@ -57,6 +58,63 @@ def test_is_derelict_empty():
 
 
 # --- extract_dimensions ---
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("22", 22.0),
+        ("22 m", 22.0),
+        ("2.4m", 2.4),
+        ("2.1 metres", 2.1),
+        ("2.1 METERS", 2.1),
+        (".5", 0.5),
+        ("60cm", 0.6),
+        ("60 ft", 18.288),
+        ("8ft", 2.4384),
+        ("70Ft", 21.336),
+        ("12 feet", 3.6576),
+        ("1 foot", 0.3048),
+        ("35'", 10.668),
+        ("8.5in", 0.2159),
+        ('8.5"', 0.2159),
+        ("12 inches", 0.3048),
+        ("13'6\"", 4.1148),
+        ("115'0\"", 35.052),
+        ("6'6\"", 1.9812),
+        ("70'", 21.336),
+        ("6ft 10in", 2.0828),
+        ("5ft 10in", 1.778),
+        ("1ft 2in", 0.3556),
+        ("12'9\"", 3.8862),
+    ],
+)
+def test_parse_dimension_m_supported_values(value, expected):
+    assert parse_dimension_m(value) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "narrow",
+        "0",
+        "-1",
+        ".5 m extra",
+        "3.60;0.80",
+        "15-30ft",
+        "<4m",
+        "1,5",
+        "1'500",
+        "6'12\"",
+        "12in 6ft",
+        "2 (approx)",
+        "varies",
+        None,
+    ],
+)
+def test_parse_dimension_m_rejects_unsupported_values(value):
+    assert parse_dimension_m(value) is None
 
 
 def test_extract_dimensions_all_aliases():

@@ -60,39 +60,62 @@ def is_derelict(tags: dict[str, str] | None) -> bool:
     return any(key.startswith(_DERELICT_TAG_PREFIXES) for key in tags)
 
 
-# OSM dimension tags carry metres by default; only explicit unit spellings are
-# converted.  Values in any other unit (feet-and-inches shorthand, chains, prose)
-# stay unsupported so callers treat the constraint as unknown rather than guessed.
+# OSM dimension tags carry metres by default.  The conversions below cover the
+# unit spellings that actually appear on waterway features; anything else
+# (ranges, `;` lists, prose, comma decimals) stays unsupported so callers treat
+# the constraint as unknown rather than guessed.
+_FEET_M = 0.3048
+_INCH_M = 0.0254
+_METRE_UNITS = {"m": 1.0, "metre": 1.0, "metres": 1.0, "meter": 1.0, "meters": 1.0, "cm": 0.01}
+_FEET_UNITS = ("ft", "foot", "feet", "'", "\u2032")
+_INCH_UNITS = ("in", "inch", "inches", '"', "\u2033")
 _UNIT_TO_METRES = {
-    "m": 1.0,
-    "metre": 1.0,
-    "metres": 1.0,
-    "meter": 1.0,
-    "meters": 1.0,
-    "ft": 0.3048,
-    "foot": 0.3048,
-    "feet": 0.3048,
+    **_METRE_UNITS,
+    **dict.fromkeys(_FEET_UNITS, _FEET_M),
+    **dict.fromkeys(_INCH_UNITS, _INCH_M),
 }
+_NUMBER = r"\d*\.?\d+"
+_SUFFIX_RE = "|".join(re.escape(unit) for unit in sorted(_UNIT_TO_METRES, key=len, reverse=True))
+_FEET_RE = "|".join(re.escape(unit) for unit in sorted(_FEET_UNITS, key=len, reverse=True))
+_INCH_RE = "|".join(re.escape(unit) for unit in sorted(_INCH_UNITS, key=len, reverse=True))
 _DIMENSION_VALUE_RE = re.compile(
-    r"^\s*(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>[a-z]+)?\s*$", re.IGNORECASE
+    rf"^\s*(?P<value>{_NUMBER})\s*(?P<unit>{_SUFFIX_RE})?\s*$", re.IGNORECASE
+)
+_FEET_INCHES_RE = re.compile(
+    rf"^\s*(?P<feet>{_NUMBER})\s*(?:{_FEET_RE})\s*"
+    rf"(?:(?P<inches>{_NUMBER})\s*(?:{_INCH_RE})?)?\s*$",
+    re.IGNORECASE,
 )
 
 
 def parse_dimension_m(value: str) -> float | None:
     """Parse an OSM dimension tag value into metres.
 
-    Accepts a bare number (metres) or an explicit supported unit suffix. Returns
-    None for missing, non-positive, non-finite, or unsupported values.
+    Accepts a bare number (metres), an explicit `m`/`metre(s)`/`meter(s)`/`cm`
+    suffix, feet (`ft`/`foot`/`feet`/`'`), inches (`in`/`inch`/`inches`/`"`), and
+    feet-and-inches (`13'6"`, `5ft 10in`). Returns None for missing,
+    non-positive, non-finite, or unsupported values; an inches part of 12 or
+    more is rejected rather than rolled into feet.
     """
     if not isinstance(value, str):
         return None
-    match = _DIMENSION_VALUE_RE.match(value)
-    if match is None:
-        return None
-    factor = _UNIT_TO_METRES.get((match.group("unit") or "m").lower())
-    if factor is None:
-        return None
-    metres = float(match.group("value")) * factor
+    feet_inches = _FEET_INCHES_RE.match(value)
+    if feet_inches is not None:
+        metres = float(feet_inches.group("feet")) * _FEET_M
+        inches_text = feet_inches.group("inches")
+        if inches_text is not None:
+            inches = float(inches_text)
+            if inches >= 12:
+                return None
+            metres += inches * _INCH_M
+    else:
+        match = _DIMENSION_VALUE_RE.match(value)
+        if match is None:
+            return None
+        factor = _UNIT_TO_METRES.get((match.group("unit") or "m").lower())
+        if factor is None:
+            return None
+        metres = float(match.group("value")) * factor
     if not math.isfinite(metres) or metres <= 0:
         return None
     return metres
