@@ -33,7 +33,7 @@
   let mapView = $state<MapView | undefined>();
   $effect(() => {
     const grid = $climateGridStore;
-    mapView?.climateGrid(grid.enabled ? grid.surface : null, grid.opacity);
+    mapView?.climateGrid(grid.enabled ? grid.surface : null, grid.opacity, grid.colorRange);
   });
   let paintedClimateView: MapView | undefined;
   let paintedClimateSignature = "";

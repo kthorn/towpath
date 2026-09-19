@@ -5,6 +5,7 @@
     climateColor,
     type ClimateMetric,
   } from '../lib/climate';
+  import { resolveClimateScale, climateScaleDomain, validClimateScale, zoomClimateScale, type ClimateColorRange } from '../lib/climate-scale';
   import type {
     ClimateGridCell,
     ClimateGridSurface,
@@ -21,6 +22,7 @@
     onViewChange?: (view: ClimateGridView) => void;
     onThresholdChange?: (thresholdC: number) => void;
     onOpacityChange?: (opacity: number) => void;
+    onColorRangeChange?: (range: ClimateColorRange | null) => void;
     onCellChange?: (id: string) => void;
     onRetry?: () => void;
   }
@@ -32,6 +34,7 @@
     view: 'high_p90',
     thresholdC: 30,
     opacity: 0.4,
+    colorRange: null,
     surface: null,
     detail: null,
     loading: false,
@@ -46,6 +49,7 @@
   let observedState = $state<ClimateGridState | null>(null);
   let searchTerm = $state('');
   let page = $state(0);
+  let scaleError = $state('');
 
   $effect(() => {
     if (!props.store) {
@@ -74,9 +78,16 @@
   });
   const temperatureMetric = $derived(currentState.view.startsWith('low') ? 'low' as ClimateMetric : 'high' as ClimateMetric);
   const availableCellCount = $derived(currentState.surface?.cells.filter((cell) => cell.value !== null && Number.isFinite(cell.value)).length ?? 0);
+  const hotCellCount = $derived(currentState.surface?.cells.filter((cell) => cell.value !== null && Number.isFinite(cell.value) && cell.value > 0).length ?? 0);
+  const scale = $derived(resolveClimateScale(currentState.view, currentState.surface?.cells ?? [], currentState.colorRange));
+  const scaleFactor = $derived(currentState.view === 'high_exceedance' ? 100 : 1);
+  const scaleUnit = $derived(currentState.view === 'high_exceedance' ? '%' : '°C');
+  const scaleDomain = $derived(climateScaleDomain(currentState.view));
+  const legendTicks = $derived([0, 0.25, 0.5, 0.75, 1].map(p => scale.min + p * (scale.max - scale.min)));
   const legendGradient = $derived.by(() => {
     const limits = CLIMATE_COLOR_LIMITS[temperatureMetric];
-    const stops = [0, 0.25, 0.5, 0.75, 1]
+    const positions = [0, 0.25, 0.5, 0.75, 1];
+    const stops = positions
       .map((position) => climateColor(temperatureMetric, limits.min + position * (limits.max - limits.min)))
       .join(', ');
     return `linear-gradient(90deg, ${stops})`;
@@ -130,6 +141,30 @@
     if (props.onOpacityChange) props.onOpacityChange(opacity);
     else void props.store?.setOpacity(opacity);
   }
+
+  function setColorRange(range: ClimateColorRange | null) {
+    if (range && !validClimateScale(currentState.view, range)) {
+      scaleError = 'Enter finite bounds with minimum below maximum, within the allowed range.';
+      return;
+    }
+    scaleError = '';
+    if (props.onColorRangeChange) props.onColorRangeChange(range);
+    else void props.store?.setColorRange(range);
+  }
+
+  function scaleLabel(value: number): string {
+    const spacing = (scale.max - scale.min) * scaleFactor / 4;
+    const precision = Math.min(12, Math.max(0, Math.ceil(-Math.log10(spacing)) + 1));
+    return `${Number((value * scaleFactor).toFixed(precision))}${scaleUnit}`;
+  }
+
+  function editScale(bound: 'min' | 'max', input: HTMLInputElement) {
+    const range = {...scale, [bound]: input.valueAsNumber / scaleFactor};
+    setColorRange(range);
+    if (!validClimateScale(currentState.view, range)) input.value = String(scale[bound] * scaleFactor);
+  }
+
+  $effect(() => { currentState.view; scaleError = ''; });
 
   function selectCell(id: string) {
     if (!id) return;
@@ -244,16 +279,32 @@
       <input id="climate-grid-opacity" type="range" min="0" max="1" step="0.05" value={currentState.opacity} aria-label="Grid opacity" oninput={(event) => setOpacity(Number((event.currentTarget as HTMLInputElement).value))} />
     </div>
 
+    <fieldset class="grid-control-group">
+      <legend>Colour scale ({scaleUnit})</legend>
+      <div class="scale-bounds">
+        <label>Minimum <input type="number" aria-label="Colour scale minimum" min={scaleDomain.min * scaleFactor} max={scaleDomain.max * scaleFactor} step="any" value={Number((scale.min * scaleFactor).toPrecision(12))} onchange={event => editScale('min', event.currentTarget)} /></label>
+        <label>Maximum <input type="number" aria-label="Colour scale maximum" min={scaleDomain.min * scaleFactor} max={scaleDomain.max * scaleFactor} step="any" value={Number((scale.max * scaleFactor).toPrecision(12))} onchange={event => editScale('max', event.currentTarget)} /></label>
+      </div>
+      <div class="scale-actions">
+        <button type="button" aria-label="Zoom colour scale in" onclick={() => setColorRange(zoomClimateScale(currentState.view, scale, 0.5))}>Zoom in</button>
+        <button type="button" aria-label="Zoom colour scale out" onclick={() => setColorRange(zoomClimateScale(currentState.view, scale, 2))}>Zoom out</button>
+        <button type="button" aria-label="Auto colour scale" aria-pressed={!currentState.colorRange} onclick={() => setColorRange(null)}>Auto</button>
+      </div>
+      {#if scaleError}<p role="alert" class="grid-error">{scaleError}</p>{/if}
+    </fieldset>
+    <div class="grid-legend" aria-label={currentState.view === 'high_exceedance' ? 'High exceedance legend' : `${temperatureMetric === 'high' ? 'High' : 'Low'} temperature legend`}>
+      <div class="probability-scale">
+        <div class="legend-swatch" style={`background: ${legendGradient}`}></div>
+        <div class="probability-ticks">{#each legendTicks as tick}<span>{scaleLabel(tick)}</span>{/each}</div>
+      </div>
+    </div>
     {#if currentState.view === 'high_exceedance'}
-      <div class="grid-legend" aria-label="High exceedance legend">
-        <span>0%</span><span class="legend-swatch" style={`background: ${legendGradient}`}></span><span>100%</span>
-      </div>
-    {:else}
-      <div class="grid-legend" aria-label={`${temperatureMetric === 'high' ? 'High' : 'Low'} temperature legend`}>
-        <span>{CLIMATE_COLOR_LIMITS[temperatureMetric].min}°C</span><span class="legend-swatch" style={`background: ${legendGradient}`}></span><span>{CLIMATE_COLOR_LIMITS[temperatureMetric].max}°C</span>
-      </div>
+      <p class="grid-exceedance-note">Auto sets the maximum to the 99.9th percentile of available UK grid cells, allowing roughly the hottest 0.1% to saturate. It stays independent of map zoom. If that percentile is zero, Auto uses the highest nonzero value; an all-zero grid uses a 1% maximum.</p>
+      {#if currentState.surface && !currentState.loading && currentState.surface.view === 'high_exceedance'}
+        <p class="grid-exceedance-note">{hotCellCount} of {availableCellCount} available cells recorded days above {currentState.thresholdC}°C in this week and period. Zero recorded days does not rule out hotter weather.</p>
+      {/if}
     {/if}
-    <p class="grid-caveat">The smoothed display interpolates between approximately 10 km grid cells; it does not represent finer-resolution observations. Fixed colours clip at the legend limits.</p>
+    <p class="grid-caveat">The smoothed display interpolates between approximately 10 km grid cells; it does not represent finer-resolution observations. Values outside the colour bounds saturate at the legend endpoints; cell details retain exact values.</p>
     {#if currentState.surface}
       <div class="grid-provenance">
         <p>Weather: <a href={currentState.surface.source.url} target="_blank" rel="noreferrer">{currentState.surface.source.name}</a> · {currentState.surface.source.attribution}; {currentState.surface.source.model}; timezone {currentState.surface.source.timezone}.</p>
@@ -286,6 +337,12 @@
   .grid-page-controls { align-items: center; flex-wrap: wrap; }
   .grid-page-controls button { padding: 0.25rem 0.45rem; }
   .grid-legend { align-items: center; }
+  .scale-bounds, .scale-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .scale-bounds label { flex: 1; min-width: 8rem; }
+  .scale-bounds input { width: 5rem; padding: 0.3rem; }
+  .scale-actions button { padding: 0.3rem 0.5rem; }
+  .probability-scale { width: 100%; }
+  .probability-ticks { display: flex; justify-content: space-between; margin-top: 0.2rem; }
   .legend-swatch { height: 0.75rem; flex: 1; border-radius: 99px; border: 1px solid #c4d0ca; }
   .grid-exceedance-note, .grid-caveat, .grid-metadata, .grid-error, .grid-provenance p { margin: 0; color: #536861; font-size: 0.78rem; }
   .grid-provenance { display: grid; gap: 0.2rem; }

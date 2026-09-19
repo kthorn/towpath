@@ -1,3 +1,4 @@
+import type { ClimateColorRange } from '../climate-scale';
 import type { ClimateGridSurface } from '../climate-grid';
 import type {
   CanalCandidate,
@@ -57,7 +58,7 @@ export interface ClimateMapMarker {
 }
 
 export interface MapView {
-  climateGrid(surface: ClimateGridSurface | null, opacity: number): void;
+  climateGrid(surface: ClimateGridSurface | null, opacity: number, range?: ClimateColorRange | null): void;
   climate(markers: ClimateMapMarker[], onSelect: (id: string) => void): void;
   marker(slot: EndpointSlot, coordinate: LatLon | null): void;
   candidates(slot: EndpointSlot, candidates: CanalCandidate[], selectedCandidateId?: string): void;

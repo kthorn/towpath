@@ -11,7 +11,7 @@ const state = (overrides: Partial<ClimateGridState> = {}): ClimateGridState => (
   periodYears: 25,
   view: 'high_p90',
   thresholdC: 30,
-  opacity: 0.4,
+  opacity: 0.4, colorRange: null,
   surface: null,
   detail: null,
   loading: false,
@@ -26,6 +26,7 @@ function fakeStore(initial = state()): ClimateGridStore {
   const inner = writable(initial);
   return {
     subscribe: inner.subscribe,
+    setColorRange: vi.fn(async () => {}),
     setEnabled: vi.fn(async (enabled) => inner.update((current) => ({ ...current, enabled }))),
     setWeek: vi.fn(async (weekId) => inner.update((current) => ({ ...current, weekId }))),
     setPeriod: vi.fn(async (periodYears) => inner.update((current) => ({ ...current, periodYears }))),
@@ -131,4 +132,57 @@ describe('ClimateGridControls', () => {
     expect(screen.getByText(/Boundary attribution/)).toBeInTheDocument();
     expect(screen.getByText(/1 available of 2 cells/i)).toBeInTheDocument();
   });
+});
+
+it('labels the automatic probability scale and reports cells with recorded hot days', () => {
+  render(ClimateGridControls, { props: { state: state({ enabled: true, view: 'high_exceedance', surface: {
+    ...gridSurface, view: 'high_exceedance', unit: 'probability', threshold_c: 30,
+    cells: [
+      { ...gridSurface.cells[0], value: 1 / 175 },
+      { ...gridSurface.cells[0], id: 'zero', value: 0 },
+      gridSurface.cells[1],
+    ],
+  } }) } });
+  expect(screen.getByRole('spinbutton', {name: /colour scale minimum/i})).toHaveValue(0);
+  expect(screen.getByRole('spinbutton', {name: /colour scale maximum/i})).toHaveValue(0.571428571429);
+  expect(screen.getByText(/99.9th percentile/i)).toBeInTheDocument();
+  expect(screen.getByText(/1 of 2 available cells recorded days above 30°C/i)).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: /0.6%/ })).toBeInTheDocument();
+});
+
+
+it('updates both colour bounds, zooms the colour range, and restores Auto', async () => {
+  const onColorRangeChange = vi.fn();
+  render(ClimateGridControls, { props: { state: state({ enabled: true, view: 'high_exceedance', colorRange: {min: 0, max: 0.1} }), onColorRangeChange } });
+  await fireEvent.change(screen.getByRole('spinbutton', {name: /colour scale minimum/i}), {target: {value: '1'}});
+  expect(onColorRangeChange).toHaveBeenLastCalledWith({min: 0.01, max: 0.1});
+  await fireEvent.change(screen.getByRole('spinbutton', {name: /colour scale maximum/i}), {target: {value: '5'}});
+  expect(onColorRangeChange).toHaveBeenLastCalledWith({min: 0, max: 0.05});
+  await fireEvent.click(screen.getByRole('button', {name: 'Zoom colour scale in'}));
+  expect(onColorRangeChange.mock.lastCall![0].max - onColorRangeChange.mock.lastCall![0].min).toBeCloseTo(0.05);
+  await fireEvent.click(screen.getByRole('button', {name: 'Auto colour scale'}));
+  expect(onColorRangeChange).toHaveBeenLastCalledWith(null);
+});
+
+it('keeps ticks distinct when the probability colour scale is tightly zoomed', () => {
+  const {container} = render(ClimateGridControls, {props: {state: state({enabled: true, view: 'high_exceedance', colorRange: {min: 0.00101, max: 0.00104}})}});
+  const labels = Array.from(container.querySelectorAll('.probability-ticks span')).map(e => e.textContent);
+  expect(new Set(labels).size).toBe(5);
+});
+
+it('restores rejected input and clears validation on Auto', async () => {
+  const {createClimateGridStore} = await import('../lib/stores/climate-grid');
+  const store = createClimateGridStore();
+  await store.setView('high_exceedance');
+  // Explicit enabled state avoids making a network call while retaining the real store.
+  const {rerender} = render(ClimateGridControls, {props: {store, state: {...get(store), enabled: true}}});
+  const maximum = screen.getByRole('spinbutton', {name: /colour scale maximum/i});
+  await fireEvent.change(maximum, {target: {value: '-1'}});
+  expect(screen.getByRole('alert')).toBeInTheDocument();
+  await fireEvent.click(screen.getByRole('button', {name: 'Auto colour scale'}));
+  expect(maximum).toHaveValue(1);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  await fireEvent.change(maximum, {target: {value: '-1'}});
+  await rerender({store, state: state({enabled: true, view: 'low_p10'})});
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });

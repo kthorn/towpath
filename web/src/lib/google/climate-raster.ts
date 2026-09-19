@@ -1,4 +1,5 @@
 import { CLIMATE_COLOR_LIMITS } from '../climate';
+import { resolveClimateScale, type ClimateColorRange } from '../climate-scale';
 import type { ClimateGridSurface } from '../climate-grid';
 
 type Coordinate = { lat: number; lon: number };
@@ -61,10 +62,10 @@ export function createClimateInterpolator(cells: readonly Cell[]): (point: Coord
   };
 }
 
-/** Fixed metric domains match the named-location legend; probabilities use 0–1. */
-export function climateRasterColor(view: View, value: number): [number, number, number] {
-  const limits = view === 'high_exceedance' ? { min: 0, max: 1 }
-    : CLIMATE_COLOR_LIMITS[view.startsWith('low') ? 'low' : 'high'];
+/** Fixed metric domains match the named-location legend; optional ranges allow zooming the colour scale. */
+export function climateRasterColor(view: View, value: number, range?: ClimateColorRange): [number, number, number] {
+  const limits = range ?? (view === 'high_exceedance' ? { min: 0, max: 1 }
+    : CLIMATE_COLOR_LIMITS[view.startsWith('low') ? 'low' : 'high']);
   const position = Math.min(1, Math.max(0, (value - limits.min) / (limits.max - limits.min)));
   // Same HSL scale as climateColor, converted directly for ImageData pixels.
   const hue = (220 - 220 * position) / 60;
@@ -83,21 +84,34 @@ export function rasterDimensions(width: number, height: number, dpr = 1): { widt
 }
 
 type ClipContext = Pick<CanvasRenderingContext2D, 'beginPath' | 'moveTo' | 'lineTo' | 'closePath' | 'clip'>;
-export function traceLandMask(context: ClipContext, mask: Mask, project: (lon: number, lat: number) => Point | null): void {
+function* landMaskSteps(context: ClipContext, mask: Mask, project: (lon: number, lat: number) => Point | null): Generator<void> {
   context.beginPath();
   const polygons = mask.type === 'Polygon' ? [mask.coordinates] : mask.coordinates;
   for (const polygon of polygons) {
     for (const ring of polygon) {
-      const points = ring.map(([lon, lat]) => project(lon, lat));
-      if (points.some((point) => !point) || !points.length) continue;
-      points.forEach((point, index) => {
-        if (index === 0) context.moveTo(point!.x, point!.y);
-        else context.lineTo(point!.x, point!.y);
-      });
+      const points: Point[] = [];
+      let valid = true;
+      for (const [lon, lat] of ring) {
+        const point = project(lon, lat);
+        if (point) points.push(point); else valid = false;
+        yield;
+      }
+      if (!valid || !points.length) continue;
+      for (let index = 0; index < points.length; index++) {
+        const point = points[index];
+        if (index === 0) context.moveTo(point.x, point.y);
+        else context.lineTo(point.x, point.y);
+        yield;
+      }
       context.closePath();
     }
   }
   context.clip('evenodd');
+}
+
+export function traceLandMask(context: ClipContext, mask: Mask, project: (lon: number, lat: number) => Point | null): void {
+  const steps = landMaskSteps(context, mask, project);
+  while (!steps.next().done) { /* Synchronous helper for small masks and tests. */ }
 }
 
 interface LatLng { lat(): number; lng(): number }
@@ -119,7 +133,7 @@ interface Overlay {
 }
 export interface ClimateRasterMapsNamespace { OverlayView: new () => Overlay }
 export interface ClimateRaster {
-  setSurface(surface: ClimateGridSurface | null, opacity: number): void;
+  setSurface(surface: ClimateGridSurface | null, opacity: number, range?: ClimateColorRange | null): void;
   destroy(): void;
 }
 
@@ -132,10 +146,25 @@ export function createClimateRaster(map: ClimateRasterMap, maps: ClimateRasterMa
   canvas.setAttribute('aria-hidden', 'true');
   Object.assign(canvas.style, { position: 'absolute', pointerEvents: 'none' });
   let surface: ClimateGridSurface | null = null;
+  let colorRange: ClimateColorRange | undefined;
   let interpolate: ReturnType<typeof createClimateInterpolator> | null = null;
   let destroyed = false;
   let attached = false;
   let pending: number | undefined;
+  let settled: number | undefined;
+  let bounds: { topLeft: LatLng; bottomRight: LatLng } | null = null;
+
+  // Google moves the overlay pane during gestures; project only the two anchors
+  // to scale the already painted image. Never resample temperatures during a draw.
+  const position = () => {
+    if (!bounds || !attached) return;
+    const projection = overlay.getProjection();
+    const topLeft = projection?.fromLatLngToDivPixel(bounds.topLeft);
+    const bottomRight = projection?.fromLatLngToDivPixel(bounds.bottomRight);
+    if (!topLeft || !bottomRight) return;
+    Object.assign(canvas.style, { left: `${topLeft.x}px`, top: `${topLeft.y}px`,
+      width: `${bottomRight.x - topLeft.x}px`, height: `${bottomRight.y - topLeft.y}px` });
+  };
 
   const paint = () => {
     pending = undefined;
@@ -154,38 +183,75 @@ export function createClimateRaster(map: ClimateRasterMap, maps: ClimateRasterMa
     const size = rasterDimensions(width, height, windowRef.devicePixelRatio);
     // Keep the geographic coastline crisp while bounding costly interpolation separately.
     const backingScale = Math.min(Math.max(1, Math.min(windowRef.devicePixelRatio || 1, 2)), 1536 / Math.max(width, height));
-    canvas.width = Math.max(1, Math.round(width * backingScale));
-    canvas.height = Math.max(1, Math.round(height * backingScale));
-    Object.assign(canvas.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` });
     const context = canvas.getContext('2d');
     if (!context) return;
     const image = context.createImageData(size.width, size.height);
-    for (let y = 0; y < size.height; y++) {
-      for (let x = 0; x < size.width; x++) {
-        const coordinate = projection.fromDivPixelToLatLng({
-          x: left + (x + 0.5) * width / size.width,
-          y: top + (y + 0.5) * height / size.height,
-        });
-        if (!coordinate) continue;
-        const value = interpolate({ lat: coordinate.lat(), lon: coordinate.lng() });
-        if (value === null) continue;
-        const offset = (y * size.width + x) * 4;
-        const color = climateRasterColor(surface.view, value);
-        image.data.set([...color, 255], offset);
+    const paintSurface = surface;
+    const sample = interpolate;
+    const paintRange = colorRange;
+    let y = 0;
+    const rows = () => {
+      pending = undefined;
+      if (destroyed || !attached || surface !== paintSurface) return;
+      const started = windowRef.performance.now();
+      while (y < size.height) {
+        for (let x = 0; x < size.width; x++) {
+          const coordinate = projection.fromDivPixelToLatLng({
+            x: left + (x + 0.5) * width / size.width,
+            y: top + (y + 0.5) * height / size.height,
+          });
+          if (!coordinate) continue;
+          const value = sample({ lat: coordinate.lat(), lon: coordinate.lng() });
+          if (value === null) continue;
+          const offset = (y * size.width + x) * 4;
+          const color = climateRasterColor(paintSurface.view, value, paintRange);
+          image.data.set([...color, 255], offset);
+        }
+        y++;
+        if (y < size.height && windowRef.performance.now() - started >= 6) {
+          pending = windowRef.requestAnimationFrame(rows);
+          return;
+        }
       }
-    }
-    // putImageData ignores clipping; paint to an offscreen source, then drawImage.
-    const source = documentRef.createElement('canvas');
-    source.width = size.width;
-    source.height = size.height;
-    source.getContext('2d')?.putImageData(image, 0, 0);
-    context.save();
-    traceLandMask(context, surface.mask, (lon, lat) => {
-      const pixel = projection.fromLatLngToDivPixel({ lat, lng: lon });
-      return pixel ? { x: (pixel.x - left) * canvas.width / width, y: (pixel.y - top) * canvas.height / height } : null;
-    });
-    context.drawImage(source, 0, 0, canvas.width, canvas.height);
-    context.restore();
+      // Build the clipped replacement offscreen, retaining the previous image
+      // while coastline projection yields across frames just like interpolation.
+      const source = documentRef.createElement('canvas');
+      source.width = size.width;
+      source.height = size.height;
+      source.getContext('2d')?.putImageData(image, 0, 0);
+      const replacement = documentRef.createElement('canvas');
+      replacement.width = Math.max(1, Math.round(width * backingScale));
+      replacement.height = Math.max(1, Math.round(height * backingScale));
+      const clipped = replacement.getContext('2d');
+      if (!clipped) return;
+      const steps = landMaskSteps(clipped, paintSurface.mask, (lon, lat) => {
+        const pixel = projection.fromLatLngToDivPixel({ lat, lng: lon });
+        return pixel ? { x: (pixel.x - left) * replacement.width / width, y: (pixel.y - top) * replacement.height / height } : null;
+      });
+      const coastline = () => {
+        pending = undefined;
+        if (destroyed || !attached || surface !== paintSurface) return;
+        const started = windowRef.performance.now();
+        while (!steps.next().done) {
+          if (windowRef.performance.now() - started >= 6) {
+            pending = windowRef.requestAnimationFrame(coastline);
+            return;
+          }
+        }
+        clipped.drawImage(source, 0, 0, replacement.width, replacement.height);
+        canvas.width = replacement.width;
+        canvas.height = replacement.height;
+        Object.assign(canvas.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` });
+        context.drawImage(replacement, 0, 0);
+        const topLeft = projection.fromDivPixelToLatLng({ x: left, y: top });
+        const bottomRight = projection.fromDivPixelToLatLng({ x: left + width, y: top + height });
+        bounds = topLeft && bottomRight ? { topLeft, bottomRight } : null;
+      };
+      // Start a separate frame so the last temperature rows and first coastline
+      // segment do not consume two time budgets in a single callback.
+      pending = windowRef.requestAnimationFrame(coastline);
+    };
+    rows();
   };
   const schedule = () => {
     if (destroyed || pending !== undefined) return;
@@ -194,17 +260,33 @@ export function createClimateRaster(map: ClimateRasterMap, maps: ClimateRasterMa
   const cancel = () => {
     if (pending !== undefined) windowRef.cancelAnimationFrame(pending);
     pending = undefined;
+    if (settled !== undefined) windowRef.clearTimeout(settled);
+    settled = undefined;
   };
   const overlay = new maps.OverlayView();
   overlay.onAdd = () => { overlay.getPanes()?.overlayLayer.append(canvas); schedule(); };
-  overlay.draw = schedule;
-  overlay.onRemove = () => { cancel(); canvas.remove(); };
+  overlay.draw = () => {
+    if (destroyed || !surface || !attached) return;
+    position();
+    cancel();
+    settled = windowRef.setTimeout(() => { settled = undefined; schedule(); }, 150);
+  };
+  overlay.onRemove = () => { cancel(); bounds = null; canvas.remove(); };
   return {
-    setSurface(next, opacity) {
+    setSurface(next, opacity, manualRange) {
       if (destroyed) return;
       const changed = surface !== next;
+      const nextRange = next ? resolveClimateScale(next.view, next.cells, manualRange) : undefined;
+      const rangeChanged = colorRange?.min !== nextRange?.min || colorRange?.max !== nextRange?.max;
+      colorRange = nextRange;
       surface = next;
-      if (changed) interpolate = next ? createClimateInterpolator(next.cells) : null;
+      if (changed || rangeChanged) {
+        cancel();
+        bounds = null;
+        // Do not display the previous metric/week while the new surface is painted.
+        canvas.width = 0;
+        if (changed) interpolate = next ? createClimateInterpolator(next.cells) : null;
+      }
       canvas.style.opacity = String(Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 0);
       if (!next) {
         cancel();
@@ -213,7 +295,7 @@ export function createClimateRaster(map: ClimateRasterMap, maps: ClimateRasterMa
         canvas.remove();
       } else {
         if (!attached) { attached = true; overlay.setMap(map); }
-        if (changed) schedule();
+        if (changed || rangeChanged) { cancel(); schedule(); }
       }
     },
     destroy() {

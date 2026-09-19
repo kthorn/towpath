@@ -43,6 +43,7 @@ import { createClimateRaster } from './climate-raster';
 import type { ClimateGridSurface } from '../climate-grid';
 
 it('attaches only when enabled, coalesces draws and removes pending work on detach/destroy', () => {
+  vi.useFakeTimers();
   const pane = document.createElement('div');
   const element = document.createElement('div');
   const callbacks = new Map<number, FrameRequestCallback>();
@@ -67,6 +68,8 @@ it('attaches only when enabled, coalesces draws and removes pending work on deta
   expect(pane.querySelector('canvas')?.style.opacity).toBe('0.4');
   Overlay.current.draw();
   Overlay.current.draw();
+  expect(callbacks.size).toBe(0);
+  vi.advanceTimersByTime(200);
   expect(callbacks.size).toBe(1);
   raster.setSurface(surface, 0.7);
   expect(pane.querySelector('canvas')?.style.opacity).toBe('0.7');
@@ -80,6 +83,7 @@ it('attaches only when enabled, coalesces draws and removes pending work on deta
   raster.setSurface(surface, 0.4);
   expect(pane.children).toHaveLength(0);
   expect(callbacks.size).toBe(0);
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -112,12 +116,133 @@ it('renders normalized pixel colors through a high-resolution coastline clip', (
   const raster = createClimateRaster({ getDiv: () => element, getCenter: () => ({ lat: () => 55, lng: () => 0 }) }, { OverlayView: Overlay });
   raster.setSurface({ cells: [cell(0, 0)], view: 'high_exceedance', mask: { type: 'Polygon', coordinates: [[[0, 54], [1, 54], [0, 55], [0, 54]]] } } as unknown as ClimateGridSurface, 0.4);
   scheduled?.(0);
+  scheduled?.(0);
   expect(context.putImageData).toHaveBeenCalledOnce();
   const image = context.putImageData.mock.calls[0][0];
   expect(Array.from(image.data.slice(0, 4))).toEqual([...climateRasterColor('high_exceedance', 0), 255]);
   expect(context.clip).toHaveBeenCalledWith('evenodd');
-  expect(context.drawImage).toHaveBeenCalledOnce();
+  expect(context.drawImage).toHaveBeenCalledTimes(2);
   expect(context.clip.mock.invocationCallOrder[0]).toBeLessThan(context.drawImage.mock.invocationCallOrder[0]);
   raster.destroy();
   vi.restoreAllMocks();
+});
+
+it('gives rare exceedances visible contrast without changing temperature colours', () => {
+  const zero = climateRasterColor('high_exceedance', 0);
+  const rare = climateRasterColor('high_exceedance', 1 / 175, { min: 0, max: 0.02 });
+  expect(Math.max(...rare.map((v, i) => Math.abs(v - zero[i])))).toBeGreaterThan(30);
+  expect(climateRasterColor('high_exceedance', 0.01, { min: 0, max: 0.02 })).toEqual(climateRasterColor('high_p90', 17.5));
+});
+
+it('repositions the painted image during zoom and only resamples after movement settles', () => {
+  vi.useFakeTimers();
+  const element = document.createElement('div');
+  Object.defineProperties(element, { clientWidth: { value: 8 }, clientHeight: { value: 8 } });
+  const pane = document.createElement('div');
+  const context = {
+    createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+    putImageData: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(),
+    moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), clip: vi.fn(), drawImage: vi.fn(),
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+  let zoom = 1;
+  const unproject = vi.fn(({ x, y }: { x: number; y: number }) => {
+    const lat = 55 - y / (100 * zoom), lng = x / (100 * zoom);
+    return { lat: () => lat, lng: () => lng };
+  });
+  class Overlay {
+    static current: Overlay;
+    constructor() { Overlay.current = this; }
+    onAdd = () => {}; onRemove = () => {}; draw = () => {};
+    setMap(map: unknown) { if (map) this.onAdd(); else this.onRemove(); }
+    getPanes() { return { overlayLayer: pane }; }
+    getProjection() { return {
+      fromDivPixelToLatLng: unproject,
+      fromLatLngToDivPixel: (ll: { lat: number | (() => number); lng: number | (() => number) }) => ({
+        x: (typeof ll.lng === 'function' ? ll.lng() : ll.lng) * 100 * zoom,
+        y: (55 - (typeof ll.lat === 'function' ? ll.lat() : ll.lat)) * 100 * zoom,
+      }),
+    }; }
+  }
+  const raster = createClimateRaster({ getDiv: () => element, getCenter: () => ({ lat: () => 55, lng: () => 0 }) }, { OverlayView: Overlay });
+  raster.setSurface({ cells: [cell(0, 20)], view: 'high_p90', mask: { type: 'Polygon', coordinates: [] } } as unknown as ClimateGridSurface, 0.4);
+  vi.advanceTimersByTime(200);
+  expect(context.putImageData).toHaveBeenCalledTimes(1);
+  unproject.mockClear();
+  zoom = 2;
+  for (let i = 0; i < 20; i++) { Overlay.current.draw(); vi.advanceTimersByTime(16); }
+  expect(unproject).not.toHaveBeenCalled();
+  expect(context.putImageData).toHaveBeenCalledTimes(1);
+  expect(pane.querySelector('canvas')!.style.width).toBe('16px');
+  vi.advanceTimersByTime(200);
+  expect(context.putImageData).toHaveBeenCalledTimes(2);
+  Overlay.current.draw();
+  raster.destroy();
+  vi.advanceTimersByTime(500);
+  expect(context.putImageData).toHaveBeenCalledTimes(2);
+  expect(pane.children).toHaveLength(0);
+  vi.useRealTimers(); vi.restoreAllMocks();
+});
+
+
+it('yields long raster work between frames and cancels an unfinished surface', () => {
+  vi.useFakeTimers();
+  const element = document.createElement('div');
+  Object.defineProperties(element, { clientWidth: { value: 8 }, clientHeight: { value: 100 } });
+  const pane = document.createElement('div');
+  const context = {
+    createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+    putImageData: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(),
+    moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), clip: vi.fn(), drawImage: vi.fn(),
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+  let clock = 0;
+  vi.spyOn(window.performance, 'now').mockImplementation(() => clock += 4);
+  class Overlay {
+    onAdd = () => {}; onRemove = () => {}; draw = () => {};
+    setMap(map: unknown) { if (map) this.onAdd(); else this.onRemove(); }
+    getPanes() { return { overlayLayer: pane }; }
+    getProjection() { return {
+      fromLatLngToDivPixel: () => ({x: 0, y: 0}),
+      fromDivPixelToLatLng: () => ({lat: () => 55, lng: () => 0}),
+    }; }
+  }
+  const raster = createClimateRaster({getDiv: () => element, getCenter: () => ({lat: () => 55, lng: () => 0})}, {OverlayView: Overlay});
+  raster.setSurface({cells: [cell(0, 20)], view: 'high_p90', mask: {type: 'Polygon', coordinates: []}} as unknown as ClimateGridSurface, 0.4);
+  vi.advanceTimersByTime(17);
+  expect(context.putImageData).not.toHaveBeenCalled();
+  raster.setSurface(null, 0.4);
+  vi.advanceTimersByTime(2000);
+  expect(context.putImageData).not.toHaveBeenCalled();
+  raster.destroy();
+  vi.useRealTimers(); vi.restoreAllMocks();
+});
+
+it('yields coastline projection and cancels it without publishing a partial image', () => {
+  vi.useFakeTimers();
+  const element = document.createElement('div');
+  Object.defineProperties(element, {clientWidth: {value: 1}, clientHeight: {value: 1}});
+  const pane = document.createElement('div');
+  const context = {
+    createImageData: () => ({data: new Uint8ClampedArray(4)}), putImageData: vi.fn(),
+    save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), clip: vi.fn(), drawImage: vi.fn(),
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+  let clock = 0;
+  vi.spyOn(window.performance, 'now').mockImplementation(() => clock += 4);
+  class Overlay {
+    onAdd = () => {}; onRemove = () => {}; draw = () => {};
+    setMap(map: unknown) { if (map) this.onAdd(); else this.onRemove(); }
+    getPanes() { return {overlayLayer: pane}; }
+    getProjection() { return {fromLatLngToDivPixel: () => ({x: 0, y: 0}), fromDivPixelToLatLng: () => ({lat: () => 55, lng: () => 0})}; }
+  }
+  const raster = createClimateRaster({getDiv: () => element, getCenter: () => ({lat: () => 55, lng: () => 0})}, {OverlayView: Overlay});
+  raster.setSurface({cells: [cell(0,20)], view: 'high_p90', mask: {type: 'Polygon', coordinates: [Array.from({length: 100}, (_,i) => [i / 100, 55])]}} as unknown as ClimateGridSurface, 0.4);
+  vi.advanceTimersByTime(17);
+  expect(context.clip).not.toHaveBeenCalled();
+  expect(context.drawImage).not.toHaveBeenCalled();
+  raster.destroy();
+  vi.advanceTimersByTime(5000);
+  expect(context.drawImage).not.toHaveBeenCalled();
+  vi.useRealTimers(); vi.restoreAllMocks();
 });
