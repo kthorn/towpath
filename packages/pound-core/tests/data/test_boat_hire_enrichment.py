@@ -43,9 +43,9 @@ def test_boat_hire_enrichment_seed_has_distinct_location_rows():
         rows = list(reader)
 
     assert reader.fieldnames == EXPECTED_FIELDS
-    assert len(rows) == 171
+    assert len(rows) == 174
     assert Counter(row["record_type"] for row in rows) == {
-        "company_base": 160,
+        "company_base": 163,
         "review_positive": 11,
     }
     assert len({(row["source_provider_id"], row["location_id"]) for row in rows}) == len(rows)
@@ -256,6 +256,33 @@ NEW_HIRE_BASE_ATTESTATIONS = {
         "Wrenbury-location.html",
         "",
     ),
+    ("cheshire-canal-boat-hire", "base:aqueduct-marina"): (
+        "Aqueduct Marina",
+        "53.1229033",
+        "-2.5093372",
+        "https://www.cheshirecanalboathire.co.uk/contact-us",
+        "01829 270462",
+        "cheshirecanalboathire@gmail.com",
+        "",
+    ),
+    ("andersen-boats", "base:middlewich-boatyard"): (
+        "Middlewich Boatyard",
+        "53.1914043",
+        "-2.4415286",
+        "https://www.andersenboats.com/directions-to-middlewich-base",
+        "+44 (0)1606 833668",
+        "info@andersenboats.com",
+        "",
+    ),
+    ("lancashire-canal-cruises", "base:burscough-slipway"): (
+        "Burscough",
+        "53.6042600",
+        "-2.8597665",
+        "https://lancashirecanalcruises.co.uk/contact/",
+        "07391904734",
+        "info@lancashirecanalcruises.com",
+        "",
+    ),
 }
 
 
@@ -272,6 +299,9 @@ def test_user_supplied_hire_bases_are_offline_attested():
             "duck-island-boat-company",
             "crabtree-narrowboat-hire",
             "uk-canal-boating",
+            "cheshire-canal-boat-hire",
+            "andersen-boats",
+            "lancashire-canal-cruises",
         }
     }
     assert set(found) == set(NEW_HIRE_BASE_ATTESTATIONS)
