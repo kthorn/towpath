@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response  # pyright: ignore[reportMi
 from pound.models import RETAINED_POI_KINDS  # pyright: ignore[reportMissingImports]
 from pound.route.candidates import nearest_candidates  # pyright: ignore[reportMissingImports]
 from pound.route.cost import resolve_movable_bridge_delay  # pyright: ignore[reportMissingImports]
+from pound.route.loops import discover_loops, plan_loop
 from pound.route.plan import (  # pyright: ignore[reportMissingImports]
     RouteUnavailableError,
     plan_projected_route,
@@ -25,6 +26,10 @@ from pound.schemas import (
     ClimateLocationResponse,
     ClimateLocationsResponse,
     Coordinate,
+    LoopCandidatesRequest,
+    LoopCandidatesResponse,
+    LoopRoute,
+    LoopRouteRequest,
     OutAndBackRoute,
     OutAndBackRouteRequest,
     PlacesRequest,
@@ -555,3 +560,25 @@ def _round_trip_error(exc: RoundTripError) -> HTTPException:
             r.model_dump() if hasattr(r, "model_dump") else r for r in exc.rejections
         ]
     return HTTPException(status_code=exc.status, detail=detail)
+
+
+@router.post("/loop-candidates", response_model=LoopCandidatesResponse)
+def loop_candidates(body: LoopCandidatesRequest, request: Request) -> LoopCandidatesResponse:
+    """Discover complete circuits through or connected to the selected base."""
+    _check_round_trip_revision(body, request)
+    try:
+        return discover_loops(
+            body, graph=request.app.state.graph, **_round_trip_limits(request)
+        )
+    except RoundTripError as exc:
+        raise _round_trip_error(exc) from exc
+
+
+@router.post("/loop-route", response_model=LoopRoute)
+def loop_route(body: LoopRouteRequest, request: Request) -> LoopRoute:
+    """Return the default or the exact selected circular journey."""
+    _check_round_trip_revision(body, request)
+    try:
+        return plan_loop(body, graph=request.app.state.graph, **_round_trip_limits(request))
+    except RoundTripError as exc:
+        raise _round_trip_error(exc) from exc

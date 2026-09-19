@@ -577,6 +577,42 @@ class TurnaroundCandidatesResponse(BaseModel):
     rejections: list[TurnaroundRejection] = Field(default_factory=list)
 
 
+class LoopCandidatesRequest(TurnaroundCandidatesRequest):
+    """The same finite base, visit and boat constraints, without a turnaround."""
+
+
+class LoopRouteRequest(LoopCandidatesRequest):
+    route_id: str | None = Field(min_length=1, default=None)
+    request_id: str | None = Field(min_length=1, default=None)
+
+    @model_validator(mode="after")
+    def require_selection_pair(self):
+        if (self.route_id is None) != (self.request_id is None):
+            raise ValueError("route_id and request_id must be supplied together")
+        return self
+
+
+class LoopRoute(BaseModel):
+    journey_type: Literal["loop"] = "loop"
+    artifact_revision: str
+    request_id: str
+    route_id: str
+    branch_choices: list[BranchChoice]
+    loop_distance_km: float
+    connecting_distance_km: float
+    selection_basis: Literal["longest_feasible", "user_selected"] = "longest_feasible"
+    budget: JourneyBudget
+    journey: CanalRouteResponse
+
+
+class LoopCandidatesResponse(BaseModel):
+    artifact_revision: str
+    request_id: str
+    default_route_id: str
+    routes: list[LoopRoute]
+    rejections: list[TurnaroundRejection] = Field(default_factory=list)
+
+
 # Attraction lookup contracts are additive to route-time node/place resolution.
 ATTRACTION_KINDS = [
     "museum",

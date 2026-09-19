@@ -317,12 +317,14 @@ button {
 .days {
 	padding-left: 1.5rem;
 }
-.out-and-back-options {
+.out-and-back-options,
+.loop-options {
 	margin-top: 1rem;
 	border-top: 1px solid #dbe2dd;
 	padding-top: 1rem;
 }
-.out-and-back-options h3 {
+.out-and-back-options h3,
+.loop-options h3 {
 	font-size: 0.95rem;
 	margin: 0 0 0.6rem;
 }

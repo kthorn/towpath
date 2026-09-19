@@ -191,7 +191,7 @@
     {/if}
     <BoatConstraints formId="route-actions" bind:days={plannerSession.days} bind:hours={plannerSession.hours} />
     <div class="map-column">
-      <fieldset class="map-target"><legend>Map click action</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set {journeyMode === 'out_and_back' ? 'visit on the way' : 'destination'} from map</label>{#if $climateGridStore.enabled}<label><input type="radio" bind:group={active} value="temperature" /> Inspect temperature from map</label>{/if}</fieldset>
+      <fieldset class="map-target"><legend>Map click action</legend><label><input type="radio" bind:group={active} value="origin" /> Set origin from map</label><label><input type="radio" bind:group={active} value="destination" /> Set {journeyMode === 'out_and_back' || journeyMode === 'loop' ? 'visit on the way' : 'destination'} from map</label>{#if $climateGridStore.enabled}<label><input type="radio" bind:group={active} value="temperature" /> Inspect temperature from map</label>{/if}</fieldset>
       {#if active === 'temperature' && temperatureSelectionMessage}<p role="status">{temperatureSelectionMessage}</p>{/if}
     <MapCanvas
         load={dependencies.loadMapView}
@@ -220,6 +220,7 @@
 			<legend>Journey mode</legend>
 			<label><input type="radio" name="journey-mode" value="point_to_point" checked={journeyMode === 'point_to_point'} onchange={changeJourneyMode} /> Point to point</label>
 			<label><input type="radio" name="journey-mode" value="out_and_back" checked={journeyMode === 'out_and_back'} onchange={changeJourneyMode} /> Out-and-back</label>
+			<label><input type="radio" name="journey-mode" value="loop" checked={journeyMode === 'loop'} onchange={changeJourneyMode} /> Loop</label>
 		</fieldset>
       {#if dependencies.placeDiscovery}
         <AttractionPanel controller={dependencies.placeDiscovery}
@@ -236,11 +237,11 @@
       </details>
 		{#key searchKey}
 			<EndpointPanel slot="origin" endpoint={$store.origin} {store} search={dependencies.placeSearch} />
-			<EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} title={journeyMode === 'out_and_back' ? 'Visit on the way' : 'Destination'} optional={journeyMode === 'out_and_back'} />
+			<EndpointPanel slot="destination" endpoint={$store.destination} {store} search={dependencies.placeSearch} title={journeyMode === 'out_and_back' || journeyMode === 'loop' ? 'Visit on the way' : 'Destination'} optional={journeyMode === 'out_and_back' || journeyMode === 'loop'} />
 		{/key}
       <form id="route-actions" class="route-actions" novalidate onsubmit={(event) => { event.preventDefault(); planTrip(); }}>
         <div class="constraint-actions">
-          <button type="submit">{journeyMode === 'out_and_back' ? 'Plan out-and-back journey' : 'Plan canal route'}</button>
+          <button type="submit">{journeyMode === 'out_and_back' ? 'Plan out-and-back journey' : journeyMode === 'loop' ? 'Plan loop journey' : 'Plan canal route'}</button>
           <button type="button" onclick={resetTrip}>Reset trip</button>
         </div>
         {#if routeError}<p role="alert">{routeError}</p>{/if}

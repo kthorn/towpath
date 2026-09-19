@@ -16,7 +16,7 @@ import type {
 	SelectedPlace,
 } from "../lib/google/contracts";
 import type { TripState, TripStore } from "../lib/stores/trip";
-import type { BoatHireBase } from "../lib/types";
+import type { BoatHireBase, LoopRoute } from "../lib/types";
 
 function storedSettings(): unknown {
 	try {
@@ -119,6 +119,18 @@ const outAndBackRoute = (routeId: string, displayName: string) => ({
 	budget: { available_minutes: 720, used_minutes: 420, remaining_minutes: 300, days_used: 1 },
 	journey: route,
 });
+const loopRoute = (routeId: string, loopKm: number, connectingKm: number): LoopRoute => ({
+	journey_type: "loop",
+	artifact_revision: "r1",
+	request_id: "loop-request-1",
+	route_id: routeId,
+	branch_choices: [{ junction_uid: 10, next_uid: 11, junction_name: "First junction", continuation_name: "Left branch" }],
+	loop_distance_km: loopKm,
+	connecting_distance_km: connectingKm,
+	selection_basis: "longest_feasible",
+	budget: { available_minutes: 720, used_minutes: 420, remaining_minutes: 300, days_used: 1 },
+	journey: { ...route, route: { ...route.route, is_ring: true, total_km: loopKm + connectingKm * 2 } },
+});
 
 function setup(
 	overrides: {
@@ -128,7 +140,7 @@ function setup(
 		networkError?: string;
 		networkLoading?: boolean;
 		hasNetworkOverlay?: boolean;
-		journeyMode?: "point_to_point" | "out_and_back";
+		journeyMode?: "point_to_point" | "out_and_back" | "loop";
 	} = {},
 ) {
 	const state: TripState = {
@@ -302,6 +314,14 @@ describe("trip planning interface", () => {
 		expect(store.setJourneyMode).toHaveBeenCalledWith("out_and_back");
 	});
 
+	it("offers loop mode and labels its optional visit and action", async () => {
+		const { dependencies, store } = setup({ journeyMode: "loop" });
+		render(App, { props: { dependencies } });
+		await fireEvent.click(screen.getByRole("radio", { name: "Point to point" }));
+		await fireEvent.click(screen.getByRole("radio", { name: "Loop" }));
+		expect(store.setJourneyMode).toHaveBeenCalledWith("loop");
+	});
+
 	it("labels the optional out-and-back waypoint and renders distinct alternatives", async () => {
 		const first = outAndBackRoute("route-1", "Canal junction");
 		const second = outAndBackRoute("route-2", "Canal junction");
@@ -322,6 +342,34 @@ describe("trip planning interface", () => {
 		expect(screen.getAllByRole("button", { name: /canal junction/i })).toHaveLength(2);
 		fireEvent.click(screen.getAllByRole("button", { name: /canal junction/i })[1]);
 		expect(store.selectBranchRoute).toHaveBeenCalledWith("route-2");
+	});
+
+	it("renders loop alternatives with circuit and connection metrics", async () => {
+		const first = loopRoute("loop-1", 18, 0);
+		const second = loopRoute("loop-2", 11, 2);
+		const fixture = setup({ journeyMode: "loop" });
+		const inner = writable({
+			...get(fixture.store),
+			canalRoute: first.journey,
+			loopRoutes: [first, second],
+			defaultLoopRouteId: first.route_id,
+			selectedLoopRouteId: first.route_id,
+		});
+		const store = { ...fixture.store, subscribe: inner.subscribe };
+		render(App, { props: { dependencies: { ...fixture.dependencies, store } } });
+
+		expect(screen.getByRole("region", { name: "Loop routes" })).toBeVisible();
+		const options = within(screen.getByRole("region", { name: "Loop routes" })).getAllByRole("button");
+		expect(options).toHaveLength(2);
+		expect(options[0]).toHaveTextContent("Route 1");
+		expect(options[0]).toHaveTextContent("Circuit through base");
+		expect(options[0]).toHaveTextContent("18.0 km circuit");
+		expect(options[0]).toHaveTextContent("0.0 km one-way connection");
+		expect(options[1]).toHaveTextContent("Circuit with return connection");
+		expect(options[1]).toHaveTextContent("Route 2");
+		expect(options[1]).toHaveTextContent("2.0 km one-way connection");
+		await fireEvent.click(options[1]);
+		expect(store.selectBranchRoute).toHaveBeenCalledWith("loop-2");
 	});
 
 	it("preserves schedule inputs while visiting settings and marks the active page", async () => {

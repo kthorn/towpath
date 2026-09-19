@@ -245,3 +245,12 @@ def test_branch_choices_have_user_facing_names():
     routes = discover_round_trips(request(), graph=graph).routes
     assert {r.branch_choices[0].continuation_name for r in routes} == {"North canal", "South canal"}
     assert all(r.branch_choices[0].junction_name == "Canal junction" for r in routes)
+
+
+def test_schedule_accepts_exact_fractional_boundary_despite_float_accumulation():
+    from pound.route.round_trip import _schedule
+
+    ranges, minutes, fits = _schedule([0.1, 0.1, 0.1], 0.3 / 60)
+    assert ranges == [(0, 3)]
+    assert minutes == pytest.approx(0.3)
+    assert fits

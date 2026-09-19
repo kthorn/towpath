@@ -5,6 +5,10 @@ import type {
   CanalNetworkResponse,
   CanalRouteRequest,
   CanalRouteResponse,
+  LoopCandidatesRequest,
+  LoopCandidatesResponse,
+  LoopRoute,
+  LoopRouteRequest,
   TurnaroundCandidatesRequest,
   TurnaroundCandidatesResponse,
   TurnaroundRejection,
@@ -102,6 +106,12 @@ export function createPoundApi(fetchFn: typeof fetch = fetch) {
     },
     turnaroundCandidates(request: TurnaroundCandidatesRequest): Promise<TurnaroundCandidatesResponse> {
       return postJson(fetchFn, '/api/turnaround-candidates', request);
+    },
+    loopCandidates(request: LoopCandidatesRequest): Promise<LoopCandidatesResponse> {
+      return postJson(fetchFn, '/api/loop-candidates', request);
+    },
+    loopRoute(request: LoopRouteRequest): Promise<LoopRoute> {
+      return postJson(fetchFn, '/api/loop-route', request);
     },
     routePois(request: RoutePoisRequest): Promise<RoutePoisResponse> {
       return postJson(fetchFn, '/api/route-pois', request);

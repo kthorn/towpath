@@ -275,7 +275,7 @@ export interface CanalRouteRequest {
   movable_bridge_delay_min?: number | null;
 }
 
-export type JourneyMode = 'point_to_point' | 'out_and_back';
+export type JourneyMode = 'point_to_point' | 'out_and_back' | 'loop';
 
 export interface TurnaroundSource {
   [key: string]: unknown;
@@ -346,6 +346,38 @@ export interface TurnaroundCandidatesResponse {
   request_id: string;
   default_route_id: string;
   routes: OutAndBackRoute[];
+  rejections: TurnaroundRejection[];
+}
+
+export type LoopCandidatesRequest = TurnaroundCandidatesRequest;
+
+export type LoopRouteRequest =
+  | (TurnaroundCandidatesRequest & { route_id?: never; request_id?: never })
+  | (TurnaroundCandidatesRequest & { route_id: string; request_id: string });
+
+export interface LoopRoute {
+  journey_type: 'loop';
+  artifact_revision: string;
+  request_id: string;
+  route_id: string;
+  branch_choices: Array<{
+    junction_uid: number;
+    next_uid: number;
+    junction_name?: string | null;
+    continuation_name?: string | null;
+  }>;
+  loop_distance_km: number;
+  connecting_distance_km: number;
+  selection_basis: 'longest_feasible' | 'user_selected';
+  budget: OutAndBackBudget;
+  journey: CanalRouteResponse;
+}
+
+export interface LoopCandidatesResponse {
+  artifact_revision: string;
+  request_id: string;
+  default_route_id: string;
+  routes: LoopRoute[];
   rejections: TurnaroundRejection[];
 }
 

@@ -8,6 +8,8 @@ import type {
   CanalPointHandle,
   CanalRouteResponse,
   HealthResponse,
+  LoopCandidatesResponse,
+  LoopRoute,
   TurnaroundCandidatesResponse,
   PlacesRequest,
   PlacesResponse,
@@ -78,6 +80,68 @@ const routeResponse: CanalRouteResponse = {
 };
 
 describe('createPoundApi', () => {
+  it('posts loop discovery constraints', async () => {
+    const response: LoopCandidatesResponse = {
+      artifact_revision: 'artifact-123',
+      request_id: 'request-loop-1',
+      default_route_id: 'loop-1',
+      routes: [],
+      rejections: [],
+    };
+    const request = {
+      artifact_revision: 'artifact-123',
+      start: { edge: [42, 43] as [number, number], fraction: 0.5 },
+      waypoint: null,
+      days: 3,
+      hours_per_day: 6,
+      boat_length_m: 17.5,
+      boat_beam_m: null,
+      boat_draft_m: null,
+      boat_height_m: null,
+      movable_bridge_delay_min: 0,
+    };
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    await expect(createPoundApi(fetchFn).loopCandidates(request)).resolves.toEqual(response);
+    expect(fetchFn).toHaveBeenCalledWith('/api/loop-candidates', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
+    });
+  });
+
+  it('posts a selected loop route request when the endpoint is available', async () => {
+    const response = {
+      journey_type: 'loop' as const,
+      artifact_revision: 'artifact-123',
+      request_id: 'request-loop-1',
+      route_id: 'loop-1',
+      branch_choices: [],
+      loop_distance_km: 12,
+      connecting_distance_km: 2,
+      selection_basis: 'user_selected' as const,
+      budget: { available_minutes: 720, used_minutes: 420, remaining_minutes: 300, days_used: 1 },
+      journey: routeResponse,
+    } satisfies LoopRoute;
+    const request = {
+      artifact_revision: 'artifact-123',
+      start: { edge: [42, 43] as [number, number], fraction: 0.5 },
+      waypoint: null,
+      days: 3,
+      hours_per_day: 6,
+      route_id: 'loop-1',
+      request_id: 'request-loop-1',
+    };
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    await expect(createPoundApi(fetchFn).loopRoute(request)).resolves.toEqual(response);
+    expect(fetchFn).toHaveBeenCalledWith('/api/loop-route', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
+    });
+  });
+
   it('posts turnaround discovery constraints', async () => {
     const response: TurnaroundCandidatesResponse = {
       artifact_revision: 'artifact-123',

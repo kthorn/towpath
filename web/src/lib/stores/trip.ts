@@ -28,6 +28,9 @@ import type {
   GeoJSONLineString,
   HealthResponse,
   LatLon,
+  LoopCandidatesRequest,
+  LoopCandidatesResponse,
+  LoopRoute,
   MapBounds,
   RoutePoisRequest,
   RoutePoisResponse,
@@ -42,6 +45,7 @@ interface PoundApi {
   canalNetwork(request: CanalNetworkRequest): Promise<CanalNetworkResponse>;
   canalRoute(request: CanalRouteRequest): Promise<CanalRouteResponse>;
   turnaroundCandidates?: (request: TurnaroundCandidatesRequest) => Promise<TurnaroundCandidatesResponse>;
+  loopCandidates?: (request: LoopCandidatesRequest) => Promise<LoopCandidatesResponse>;
   routePois(request: RoutePoisRequest): Promise<RoutePoisResponse>;
   health?: () => Promise<HealthResponse>;
   places?: (request: PlacesRequest) => Promise<PlacesResponse>;
@@ -91,6 +95,11 @@ export interface TripState {
   outAndBackRequestId?: string | null;
   defaultOutAndBackRouteId?: string | null;
   selectedOutAndBackRouteId?: string | null;
+  loopRoutes?: LoopRoute[];
+  loopRejections?: TurnaroundRejection[];
+  loopRequestId?: string | null;
+  defaultLoopRouteId?: string | null;
+  selectedLoopRouteId?: string | null;
 }
 
 export type CanalConstraints = Omit<CanalRouteRequest, 'start' | 'end' | 'artifact_revision'>;
@@ -189,6 +198,7 @@ export function createTripStore(dependencies: {
     placesStatus: 'unknown', placesResultLimitExceeded: false,
     journeyMode: 'point_to_point', outAndBackRoutes: [], outAndBackRejections: [],
     outAndBackRequestId: null, defaultOutAndBackRouteId: null, selectedOutAndBackRouteId: null,
+    loopRoutes: [], loopRejections: [], loopRequestId: null, defaultLoopRouteId: null, selectedLoopRouteId: null,
   };
   const inner = writable(initial);
   let state = initial;
@@ -449,6 +459,8 @@ export function createTripStore(dependencies: {
       ...current, canalRoute: null, routeError: null, routing: false,
       outAndBackRoutes: [], outAndBackRejections: [], outAndBackRequestId: null,
       defaultOutAndBackRouteId: null, selectedOutAndBackRouteId: null,
+      loopRoutes: [], loopRejections: [], loopRequestId: null,
+      defaultLoopRouteId: null, selectedLoopRouteId: null,
     }));
     clearRouteOverlays();
     mapCall(slot, () => mapView?.canal(null));
@@ -557,6 +569,87 @@ export function createTripStore(dependencies: {
     if (state[slot].requiresManualConfirmation) updateEndpoint(slot, { confirmed: true });
   }
 
+  async function planLoop(constraints: CanalConstraints): Promise<CanalRouteResponse> {
+    const { origin, destination } = state;
+    if (origin.selectedHandle === null) throw new Error('Select an origin canal endpoint before routing');
+    if (origin.requiresManualConfirmation && !origin.confirmed) {
+      throw new Error('Confirm geometric fallback candidates before canal routing');
+    }
+    if (destination.place && destination.selectedHandle === null) {
+      throw new Error('Select a canal waypoint or clear the optional visit-on-the-way field');
+    }
+    if (destination.selectedHandle !== null &&
+        (destination.requiresManualConfirmation && !destination.confirmed)) {
+      throw new Error('Confirm geometric fallback candidates before canal routing');
+    }
+    if (!origin.artifactRevision ||
+        (destination.selectedHandle !== null && origin.artifactRevision !== destination.artifactRevision)) {
+      throw new Error('Endpoint artifact revisions do not match');
+    }
+    if (!poundApi.loopCandidates) throw new Error('Loop routing is unavailable');
+    if (typeof constraints.days !== 'number' || !Number.isInteger(constraints.days) || constraints.days < 1) {
+      throw new Error('Days must be a whole number from 1 through 365.');
+    }
+    const hoursPerDay = constraints.hours_per_day ?? 6;
+    if (typeof hoursPerDay !== 'number' || !Number.isFinite(hoursPerDay) || hoursPerDay <= 0) {
+      throw new Error('Hours per day must be greater than 0.');
+    }
+    const request: LoopCandidatesRequest = {
+      artifact_revision: origin.artifactRevision,
+      start: origin.selectedHandle,
+      waypoint: destination.selectedHandle,
+      ...constraints,
+      days: constraints.days,
+      hours_per_day: hoursPerDay,
+    };
+    const endpointGeneration = routeGeneration;
+    const requestSequence = ++routeRequest;
+    const hadCanalRoute = state.canalRoute !== null;
+    clearRouteOverlays();
+    inner.update((current) => ({
+      ...current, canalRoute: null, routing: true, routeError: null,
+      loopRoutes: [], loopRejections: [], loopRequestId: null,
+      defaultLoopRouteId: null, selectedLoopRouteId: null,
+    }));
+    if (hadCanalRoute) mapCall('origin', () => mapView?.canal(null));
+    try {
+      const result = await poundApi.loopCandidates(request);
+      if (endpointGeneration === routeGeneration && requestSequence === routeRequest) {
+        const selected = result.routes.find(({ route_id }) => route_id === result.default_route_id) ?? result.routes[0];
+        const defaultRouteId = result.default_route_id ?? selected?.route_id ?? null;
+        inner.update((current) => ({
+          ...current,
+          routing: false,
+          canalRoute: selected?.journey ?? null,
+          loopRoutes: result.routes,
+          loopRejections: result.rejections,
+          loopRequestId: result.request_id,
+          defaultLoopRouteId: defaultRouteId,
+          selectedLoopRouteId: selected?.route_id ?? null,
+          routeError: selected || result.rejections.length === 0 ? null : result.rejections[0].message,
+        }));
+        if (selected) {
+          mapCall('origin', () => mapView?.canal(selected.journey.geometry));
+          mapCall('origin', () => mapView?.locks?.(selected.journey.locks ?? []));
+          if (state.enabledPoiKinds.length && lastViewportBounds) schedulePoiRefresh(lastViewportBounds);
+          if (state.places.enabledKinds.length && lastViewportBounds) schedulePlacesRefresh(lastViewportBounds);
+        }
+      }
+      const selected = result.routes.find(({ route_id }) => route_id === result.default_route_id) ?? result.routes[0];
+      if (!selected) throw new Error(result.rejections[0]?.message ?? 'No feasible loop route found');
+      return selected.journey;
+    } catch (error) {
+      if (endpointGeneration === routeGeneration && requestSequence === routeRequest) {
+        const rejections = error instanceof PoundApiError ? error.rejections : [];
+        const detail = rejections.length
+          ? `${message(error)} ${rejections.map(({ message: rejectionMessage, fields }) => `${rejectionMessage}${fields.length ? ` (${fields.join(', ')})` : ''}`).join(' ')}`
+          : message(error);
+        inner.update((current) => ({ ...current, routing: false, routeError: detail, loopRejections: rejections }));
+      }
+      throw error;
+    }
+  }
+
   async function planOutAndBack(constraints: CanalConstraints): Promise<CanalRouteResponse> {
     const { origin, destination } = state;
     if (origin.selectedHandle === null) throw new Error('Select an origin canal endpoint before routing');
@@ -640,6 +733,7 @@ export function createTripStore(dependencies: {
 
   async function planCanalRoute(constraints: CanalConstraints): Promise<CanalRouteResponse> {
     if (state.journeyMode === 'out_and_back') return planOutAndBack(constraints);
+    if (state.journeyMode === 'loop') return planLoop(constraints);
     const { origin, destination } = state;
     if (origin.selectedCandidateId === null || destination.selectedCandidateId === null ||
         origin.selectedHandle === null || destination.selectedHandle === null) {
@@ -688,10 +782,16 @@ export function createTripStore(dependencies: {
   }
 
   function selectBranchRoute(routeId: string): void {
-    const selected = (state.outAndBackRoutes ?? []).find(({ route_id }) => route_id === routeId);
-    if (!selected) throw new Error(`Unknown out-and-back route ${routeId}`);
+    const loop = state.journeyMode === 'loop';
+    const selected = (loop ? state.loopRoutes : state.outAndBackRoutes)?.find(({ route_id }) => route_id === routeId);
+    if (!selected) throw new Error(`Unknown ${loop ? 'loop' : 'out-and-back'} route ${routeId}`);
     clearRouteOverlays();
-    inner.update((current) => ({ ...current, canalRoute: selected.journey, selectedOutAndBackRouteId: routeId, routeError: null }));
+    inner.update((current) => ({
+      ...current,
+      canalRoute: selected.journey,
+      ...(loop ? { selectedLoopRouteId: routeId } : { selectedOutAndBackRouteId: routeId }),
+      routeError: null,
+    }));
     mapCall('origin', () => mapView?.canal(selected.journey.geometry));
     mapCall('origin', () => mapView?.locks?.(selected.journey.locks ?? []));
     if (state.enabledPoiKinds.length && lastViewportBounds) schedulePoiRefresh(lastViewportBounds);
