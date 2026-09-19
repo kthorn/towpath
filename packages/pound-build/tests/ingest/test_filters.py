@@ -93,6 +93,23 @@ def test_extract_dimensions_first_alias_wins():
     assert d.max_beam_m == pytest.approx(2.1)
 
 
+def test_extract_dimensions_parses_supported_units():
+    d = extract_dimensions(
+        {"maxlength": "22 m", "maxwidth": "8 ft", "maxdraft": "0.9m", "maxheight": "2.1 metres"}
+    )
+    assert d.max_length_m == pytest.approx(22.0)
+    assert d.max_beam_m == pytest.approx(2.4384)
+    assert d.max_draft_m == pytest.approx(0.9)
+    assert d.max_height_m == pytest.approx(2.1)
+
+
+def test_extract_dimensions_ignores_unsupported_units():
+    d = extract_dimensions({"maxlength": "22 chains", "maxwidth": "2.1 m", "maxdraft": "0"})
+    assert d.max_length_m is None
+    assert d.max_beam_m == pytest.approx(2.1)
+    assert d.max_draft_m is None
+
+
 # --- classify_node ---
 
 

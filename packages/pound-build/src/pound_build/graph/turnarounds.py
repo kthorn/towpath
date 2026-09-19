@@ -27,6 +27,7 @@ from shapely.geometry import LineString, Point
 from shapely.strtree import STRtree
 
 from pound_build.graph.pois import _routing_eligible
+from pound_build.ingest.filters import parse_dimension_m
 from pound_build.ingest.ir import NodeKind, WaterwayFeatures, WaterwayNode
 
 __all__ = [
@@ -236,11 +237,8 @@ def _positive_limit(tags: dict[str, str], aliases: tuple[str, ...]) -> float | N
     for alias in aliases:
         if alias not in tags:
             continue
-        try:
-            value = float(tags[alias])
-        except (TypeError, ValueError):
-            continue
-        if math.isfinite(value) and value > 0:
+        value = parse_dimension_m(tags[alias])
+        if value is not None:
             return value
     return None
 
