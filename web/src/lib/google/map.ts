@@ -672,12 +672,13 @@ export function createGoogleMapView(
     },
     candidates(slot, candidates: CanalCandidate[], selectedCandidateId?: string) {
       removeMarkers(candidateMarkers[slot]);
-      for (const candidate of candidates) {
+      const candidate = candidates.find(({ candidate_id }) => candidate_id === selectedCandidateId);
+      if (candidate) {
         candidateMarkers[slot].push(
           facade.createMarker({
             map,
             position: toGoogleLatLng(candidate.coordinate),
-            title: candidate.candidate_id === selectedCandidateId ? `${candidate.display_name} (selected)` : candidate.display_name,
+            title: `${candidate.display_name} (selected)`,
           }),
         );
       }
