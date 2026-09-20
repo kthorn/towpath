@@ -50,7 +50,7 @@ corresponding artifact-redeploy procedure below. Source-only checks and inputs a
 required here, not for configuration-only releases:
 
 ```bash
-uv sync --all-packages --extra bulk
+uv sync --all-packages --extra bulk --extra climate
 uv run pytest --run-bulk
 uv run ruff check .
 (cd web && npm ci && npm run check && npm test -- --run)
