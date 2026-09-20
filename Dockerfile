@@ -1,4 +1,4 @@
-FROM node:24-alpine AS web-builder
+FROM node:25-alpine AS web-builder
 
 WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
