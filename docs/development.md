@@ -218,6 +218,24 @@ rebuilding only when its code or `VITE_*` configuration changes, not merely
 because the backend artifact revision changed. Rebuild an artifact whenever
 its source data or graph-building rules change.
 
+Every curated boat-hire seed must project within 250 m of a routing-eligible
+edge; the web server enforces this at startup and refuses to start otherwise.
+To check a manually built artifact before deploying, pass it as both sides of
+the snap comparison, where exit status 0 and empty `threshold_breaches` mean
+every curated seed is within its limit:
+
+```bash
+uv run python -m scripts.verify_boat_hire_snaps \
+  --before artifacts/great-britain.pkl \
+  --after artifacts/great-britain.pkl \
+  --boat-hire-enrichment data/boat-hire-enrichment.csv
+```
+
+`scripts/verify_boat_hire_snaps.py` compares two artifacts when the before and
+after paths differ, and reports each seed's projection distance either way.
+Artifacts are gitignored, so this check needs a locally built artifact and
+cannot run in CI.
+
 If Maps or Places is unavailable, each endpoint also accepts latitude and
 longitude. This non-map coordinate fallback still finds canal candidates and
 plans a canal route; Google land-transfer overlays may remain unavailable.
