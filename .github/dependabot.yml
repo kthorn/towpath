@@ -3,6 +3,10 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: /web
+    ignore:
+      # Remove when svelte-check supports TypeScript 7.
+      - dependency-name: typescript
+        versions: [">=7"]
     groups:
       vite-tooling:
         patterns:
