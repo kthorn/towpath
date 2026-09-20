@@ -3,6 +3,11 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: /web
+    groups:
+      vite-tooling:
+        patterns:
+          - vite
+          - "@sveltejs/vite-plugin-svelte"
     schedule:
       interval: weekly
     cooldown:
