@@ -12,9 +12,9 @@ def test_container_configuration_stages_only_runtime_packages_and_data():
     deploy_runbook = (ROOT / "docs" / "fly-runbook.md").read_text()
     dockerignore = (ROOT / ".dockerignore").read_text().splitlines()
 
-    assert "FROM node:24-alpine AS web-builder" in dockerfile
+    assert "FROM node:25-alpine AS web-builder" in dockerfile
     assert "FROM python:3.14-slim AS runtime" in dockerfile
-    assert 'node-version: "24"' in workflow
+    assert 'node-version: "25"' in workflow
     assert 'python-version: "3.14"' in workflow
     assert 'UV_PYTHON: "3.14"' in workflow
     assert "uv sync --locked --all-packages --extra bulk" in workflow
