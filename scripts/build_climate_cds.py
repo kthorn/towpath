@@ -16,6 +16,7 @@ from pound_build.ingest.climate_cds import (
     CdsStore,
     acquire_cells,
     cache_endpoint,
+    open_readonly_group,
     summer_hours,
 )
 from pound_build.ingest.climate_grid import build_climate_grid, load_grid_manifest
@@ -36,11 +37,9 @@ def main(argv: list[str] | None = None) -> int:
     chunks = args.cache_dir / "chunks"
     annual = args.cache_dir / "annual"
     if args.command == "acquire":
-        import zarr
-
         store = CdsStore(chunks)
         fingerprint = store.verify_snapshot(historical_end=summer_hours(args.end_year)[-1])
-        group = zarr.open_consolidated(store, mode="r")
+        group = open_readonly_group(store)
         for report in acquire_cells(locations, group, annual, args.end_year, fingerprint):
             print(
                 json.dumps(

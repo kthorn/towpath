@@ -3,7 +3,19 @@ import json
 
 import numpy as np
 import pytest
-from pound_build.ingest.climate_cds import daily_extrema, summer_hours
+from pound_build.ingest.climate_cds import daily_extrema, open_readonly_group, summer_hours
+
+
+def sync_fetch(store):
+    """Per-key byte fetch with v2 mapping semantics (KeyError when absent)."""
+
+    def fetch(key: str) -> bytes:
+        value = store.get_sync(key)
+        if value is None:
+            raise KeyError(key)
+        return value.to_bytes()
+
+    return fetch
 
 
 def test_summer_hours_follow_london_local_midnight():
@@ -78,19 +90,19 @@ def test_store_decodes_real_zarr_chunks_and_resumes_offline(tmp_path):
     zarr = pytest.importorskip("zarr")
     from pound_build.ingest.climate_cds import CdsStore
 
-    memory = zarr.MemoryStore()
-    root = zarr.group(store=memory)
+    memory = zarr.storage.MemoryStore()
+    root = zarr.group(store=memory, zarr_format=2)
     expected = np.arange(48, dtype="float32").reshape(6, 2, 4)
-    root.create_dataset("t2m", data=expected, chunks=(3, 2, 2))
+    root.create_array("t2m", data=expected, chunks=(3, 2, 2))
     zarr.consolidate_metadata(memory)
-    store = CdsStore(tmp_path, fetch=memory.__getitem__)
-    result = zarr.open_consolidated(store, mode="r")["t2m"][:]
+    store = CdsStore(tmp_path, fetch=sync_fetch(memory))
+    result = open_readonly_group(store)["t2m"][:]
     np.testing.assert_array_equal(result, expected)
 
     def no_network(key):
         pytest.fail("cached Zarr array must not download again")
 
-    resumed = zarr.open_consolidated(CdsStore(tmp_path, fetch=no_network), mode="r")
+    resumed = open_readonly_group(CdsStore(tmp_path, fetch=no_network))
     np.testing.assert_array_equal(resumed["t2m"][:], expected)
 
 
@@ -144,16 +156,16 @@ def test_acquire_point_writes_complete_annual_cache_for_grid_builder(tmp_path, m
     from pound_build.ingest.climate_cds import acquire_cells, cache_endpoint
 
     fingerprint = hashlib.sha256(b"{}").hexdigest()
-    store = zarr.MemoryStore()
+    store = zarr.storage.MemoryStore()
     root = zarr.group(store=store)
     times = np.arange(
         np.datetime64("2001-04-30T23"), np.datetime64("2025-09-03T23"), np.timedelta64(1, "h")
     )
-    root.create_dataset("time", data=times.astype("datetime64[h]").astype("int64"))
+    root.create_array("time", data=times.astype("datetime64[h]").astype("int64"))
     root["time"].attrs["units"] = "hours since 1970-01-01"
-    root.create_dataset("latitude", data=np.array([51.7]))
-    root.create_dataset("longitude", data=np.array([358.8]))
-    root.create_dataset(
+    root.create_array("latitude", data=np.array([51.7]))
+    root.create_array("longitude", data=np.array([358.8]))
+    root.create_array(
         "t2m",
         data=(273.15 + (np.arange(len(times)) % 997) / 100).astype("float32")[:, None, None],
         chunks=(33792, 1, 1),
@@ -313,28 +325,31 @@ def test_append_only_archive_growth_checks_historical_overlap(tmp_path):
     zarr = pytest.importorskip("zarr")
     from pound_build.ingest.climate_cds import CdsStore
 
-    memory = zarr.MemoryStore()
-    root = zarr.group(store=memory)
+    memory = zarr.storage.MemoryStore()
+    root = zarr.group(store=memory, zarr_format=2)
     first = np.datetime64("2025-01-01T00", "h").astype("int64")
-    root.create_dataset(
-        "time", data=np.arange(first, first + 4), chunks=(8,), dimension_separator="."
+    root.create_array(
+        "time",
+        data=np.arange(first, first + 4),
+        chunks=(8,),
+        chunk_key_encoding={"name": "v2", "separator": "."},
     )
     root["time"].attrs["units"] = "hours since 1970-01-01"
-    root.create_dataset(
+    root.create_array(
         "t2m",
         data=np.arange(280, 284, dtype="float32")[:, None, None],
         chunks=(8, 1, 1),
-        dimension_separator=".",
+        chunk_key_encoding={"name": "v2", "separator": "."},
     )
     zarr.consolidate_metadata(memory)
-    store = CdsStore(tmp_path, fetch=memory.__getitem__)
+    store = CdsStore(tmp_path, fetch=sync_fetch(memory))
     original_fingerprint = store.verify_snapshot()
-    cached = zarr.open_consolidated(store, mode="r")
+    cached = open_readonly_group(store)
     cached["time"][:]
     cached["t2m"][:]
-    root["time"].resize(6)
+    root["time"].resize((6,))
     root["time"][4:] = np.arange(first + 4, first + 6)
-    root["t2m"].resize(6, 1, 1)
+    root["t2m"].resize((6, 1, 1))
     root["t2m"][4:] = np.array([284, 285], dtype="float32")[:, None, None]
     zarr.consolidate_metadata(memory)
     assert (
@@ -352,17 +367,27 @@ def test_append_verification_rejects_nested_chunk_keys(tmp_path):
     from pound_build.ingest.climate_cds import CdsStore
 
     zarr = pytest.importorskip("zarr")
-    memory = zarr.MemoryStore()
-    root = zarr.group(store=memory)
-    root.create_dataset("time", data=np.arange(4), chunks=(8,), dimension_separator="/")
+    memory = zarr.storage.MemoryStore()
+    root = zarr.group(store=memory, zarr_format=2)
+    root.create_array(
+        "time", data=np.arange(4), chunks=(8,), chunk_key_encoding={"name": "v2", "separator": "/"}
+    )
     root["time"].attrs["units"] = "hours since 1970-01-01"
-    root.create_dataset("t2m", data=np.ones((4, 1, 1)), chunks=(8, 1, 1), dimension_separator="/")
+    root.create_array(
+        "t2m",
+        data=np.ones((4, 1, 1)),
+        chunks=(8, 1, 1),
+        chunk_key_encoding={"name": "v2", "separator": "/"},
+    )
     zarr.consolidate_metadata(memory)
-    store = CdsStore(tmp_path, fetch=memory.__getitem__)
+    store = CdsStore(tmp_path, fetch=sync_fetch(memory))
     store.verify_snapshot()
-    new = json.loads(memory[".zmetadata"])
+    new = json.loads(memory.get_sync(".zmetadata").to_bytes())
     for name in ("time", "t2m"):
         new["metadata"][name + "/.zarray"]["shape"][0] = 6
-    memory[".zmetadata"] = json.dumps(new).encode()
+    from zarr.core.buffer import default_buffer_prototype
+
+    buffer = default_buffer_prototype().buffer.from_bytes(json.dumps(new).encode())
+    memory.set_sync(".zmetadata", buffer)
     with pytest.raises(ValueError, match="chunk encoding"):
         store.verify_snapshot(historical_end=np.datetime64("1970-01-01T02"))

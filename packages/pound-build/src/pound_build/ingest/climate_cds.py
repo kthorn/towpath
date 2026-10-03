@@ -66,6 +66,40 @@ CDS_ZARR_URL = (
 )
 
 
+def open_readonly_group(store: Mapping[str, bytes]):
+    """Open a consolidated, v2-format Zarr group through a read-only byte mapping.
+
+    Zarr 3 rejects plain mappings as StoreLike and requires an async Store, while
+    CDS serves v2-format Zarr over plain HTTPS GETs. The adapter delegates every
+    key to the store's synchronous mapping interface and never buffers writes.
+    """
+    from zarr.storage import MemoryStore
+
+    if not isinstance(store, MutableMapping):
+        raise TypeError("CDS store must be a MutableMapping")
+
+    class MappingStore(MemoryStore):
+        supports_writes = False
+        supports_deletes = False
+
+        async def get(self, key, prototype=None, byte_range=None):
+            if byte_range is not None:
+                raise NotImplementedError("partial reads are not supported for CDS Zarr")
+            try:
+                data = bytes(store[key])
+            except KeyError:
+                return None
+            if prototype is None:
+                from zarr.core.buffer import default_buffer_prototype
+
+                prototype = default_buffer_prototype()
+            return prototype.buffer.from_bytes(data)
+
+    import zarr
+
+    return zarr.open_consolidated(MappingStore(store), mode="r", zarr_format=2)
+
+
 class CdsStore(MutableMapping[str, bytes]):
     """Read-only HTTP Zarr mapping with atomic, resumable local chunk caching.
 
@@ -112,7 +146,6 @@ class CdsStore(MutableMapping[str, bytes]):
         """
         import copy
 
-        import zarr
         from numcodecs import get_codec
 
         old = json.loads(original)
@@ -134,7 +167,7 @@ class CdsStore(MutableMapping[str, bytes]):
                 raise ValueError("CDS metadata changed beyond an append-only extension")
         except (KeyError, TypeError, IndexError):
             raise ValueError("unsupported changed CDS metadata") from None
-        group = zarr.open_consolidated(self, mode="r")
+        group = open_readonly_group(self)
         if group["time"].attrs.get("units") != "hours since 1970-01-01":
             raise ValueError("unsupported CDS time encoding")
         hours = np.asarray(group["time"][:]).astype("datetime64[h]")
