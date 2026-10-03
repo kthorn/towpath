@@ -42,6 +42,7 @@ from pound_build.ingest.osm import (
     stream_linear_pois,
 )
 from pound_build.ingest.overpass import fetch_oxford
+from pound_build.ingest.overrides import DEFAULT_OVERRIDES_PATH, load_overrides
 from pound_build.ingest.profile import BuildProfiler
 from pound_build.ingest.summarize import summarize, summarize_pois
 from pound_build.validate.connectivity import validate_graph
@@ -280,8 +281,9 @@ def _build_great_britain_multipass(
     pbf_path: Path, args, profiler: BuildProfiler | None = None
 ) -> int:
     profiler = profiler or BuildProfiler()
-    filtered = prepare_great_britain_pbf(pbf_path, profiler)
-    features = read_great_britain_waterways(filtered, profiler)
+    overrides = load_overrides(DEFAULT_OVERRIDES_PATH)
+    filtered = prepare_great_britain_pbf(pbf_path, profiler, overrides=overrides)
+    features = read_great_britain_waterways(filtered, profiler, overrides=overrides)
     graph, lock_report = _build_graph_phases(features, profiler)
     source = features.source
     fetched_at = features.fetched_at

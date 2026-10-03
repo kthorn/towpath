@@ -24,6 +24,8 @@ htmlcov/
 data/*
 # Curated, editable boat-hire enrichment input.
 !data/boat-hire-enrichment.csv
+# Curated build-time tag overrides for confirmed upstream OSM problems.
+!data/overrides.json
 
 # Build artifacts — serialized graph outputs (design §4.4)
 artifacts/

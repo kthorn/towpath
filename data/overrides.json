@@ -1,0 +1,7 @@
+{
+  "_readme": "Build-time tag overrides for confirmed upstream OSM data problems (loaded by pound-ingest build great-britain). Keys are 'w<way_id>' or 'n<node_id>' with the tags injected before ingest classification. Remove an entry once the upstream OSM data is fixed.",
+  "w4571379": {
+    "reason": "Grand Union Canal through Milton Keynes (Fenny Stratford to Wolverton): OSM way 4571379 v77 (changeset 187488255, 2026-08-15) accidentally removed waterway=canal; every prior version since 2012 carried it. Without this override the section vanishes from the graph and MK loses its canal. Remove once restored upstream.",
+    "tags": {"waterway": "canal"}
+  }
+}

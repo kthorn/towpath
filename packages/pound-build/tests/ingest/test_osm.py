@@ -524,3 +524,67 @@ def test_read_pbf_aligns_node_ids_with_geometry_when_one_ref_lacks_location(tmp_
     assert way.node_ids == [1, 3]
     expected_geom = [(51.75, -1.26), (51.752, -1.262)]
     assert way.geometry == expected_geom
+
+
+def test_load_overrides_parses_entries_and_ignores_comments(tmp_path):
+    from pound_build.ingest.overrides import load_overrides
+
+    path = tmp_path / "overrides.json"
+    path.write_text(
+        json.dumps(
+            {
+                "_readme": "documented",
+                "w4571379": {
+                    "reason": "upstream accidental deletion",
+                    "tags": {"waterway": "canal"},
+                },
+            }
+        )
+    )
+    assert load_overrides(path) == {"w4571379": {"waterway": "canal"}}
+
+    missing = tmp_path / "nope.json"
+    assert load_overrides(missing) == {}
+
+
+def test_overrides_restore_way_dropped_by_tags_filter(tmp_path):
+    """way 1001 lost its waterway tag upstream; the tags filter drops it, and the
+    overrides machinery must re-add it from the raw extract and inject the tag
+    at read time so it classifies as a routable canal."""
+    from pound.models import WaterwayKind  # pyright: ignore[reportMissingImports]
+    from pound_build.ingest import osm as _osm
+    from pound_build.ingest.overrides import load_overrides
+
+    src = tmp_path / "src.osm"
+    src.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="overrides fixture">
+  <node id="1" lat="51.7500000" lon="-1.2600000" version="1"/>
+  <node id="2" lat="51.7510000" lon="-1.2610000" version="1"/>
+  <way id="1001" version="1">
+    <nd ref="1"/><nd ref="2"/>
+    <tag k="name" v="Restored Canal"/><tag k="boat" v="yes"/>
+  </way>
+</osm>
+"""
+    )
+    overrides_path = tmp_path / "overrides.json"
+    overrides_path.write_text(
+        json.dumps({"w1001": {"reason": "test", "tags": {"waterway": "canal"}}})
+    )
+    overrides = load_overrides(overrides_path)
+    assert overrides == {"w1001": {"waterway": "canal"}}
+
+    filtered = tmp_path / "filtered.osm.pbf"
+    _osm.run_tags_filter(src, filtered)
+    dropped = _osm.read_waterway_features(filtered)
+    assert 1001 not in {w.osm_id for w in dropped.ways}
+
+    merged = _osm.merge_way_overrides(
+        src, filtered, tmp_path / "merged.osm.pbf", tuple(overrides)
+    )
+    restored = _osm.read_waterway_features(merged, overrides=overrides)
+    ways = [w for w in restored.ways if w.osm_id == 1001]
+    assert len(ways) == 1
+    assert ways[0].kind == WaterwayKind.CANAL
+    assert ways[0].name == "Restored Canal"

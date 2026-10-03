@@ -32,6 +32,8 @@ from pound_build.ingest.pois import classify_poi, normalize_source_tags
 from pound_build.ingest.profile import BuildProfiler
 from pound_build.ingest.prune import prune_non_navigable_infra
 
+WayOverrides = dict[str, dict[str, str]]
+
 # Pinned OSM-filter expression (design §3.1, Scope D OQ-D1).
 TAGS_FILTER_EXPR = r"""w/waterway=canal,river,fairway,lock,derelict_canal
 w/disused:waterway
@@ -118,12 +120,63 @@ def run_tags_filter(in_pbf: Path, out_pbf: Path) -> None:
     )
 
 
+def merge_way_overrides(
+    raw_pbf: Path, filtered_pbf: Path, out_pbf: Path, way_ids: tuple[str, ...]
+) -> Path:
+    """Re-add ways the tags filter dropped (see overrides.py): copy the untouched
+    OSM objects from the raw extract and merge them into the filtered PBF. The
+    tags themselves are overridden later, at read time. Returns ``out_pbf``.
+    Requires ``osmium`` (documented system prereq, same as ``run_tags_filter``)."""
+    if not way_ids:
+        return filtered_pbf
+    out_pbf = Path(out_pbf)
+    out_pbf.parent.mkdir(parents=True, exist_ok=True)
+    supplied = out_pbf.with_suffix(".sup.pbf")
+    subprocess.run(
+        [
+            "osmium",
+            "getid",
+            "-r",
+            "-f",
+            "pbf",
+            "-O",
+            "-o",
+            str(supplied),
+            str(raw_pbf),
+            *way_ids,
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "osmium",
+            "merge",
+            str(filtered_pbf),
+            str(supplied),
+            "-f",
+            "pbf",
+            "-O",
+            "-o",
+            str(out_pbf),
+        ],
+        check=True,
+    )
+    supplied.unlink(missing_ok=True)
+    return out_pbf
+
+
 def read_waterway_features(
-    pbf_path: Path, *, profile_counts: dict | None = None
+    pbf_path: Path,
+    *,
+    profile_counts: dict | None = None,
+    overrides: WayOverrides | None = None,
 ) -> WaterwayFeatures:
-    """Read only graph-building waterways and infrastructure from a filtered PBF."""
+    """Read only graph-building waterways and infrastructure from a filtered PBF.
+    ``overrides`` injects build-time tag corrections (keyed ``w<id>``/``n<id>``)
+    before classification."""
     import osmium
 
+    overrides = overrides or {}
     ways: list[WaterwayWay] = []
     nodes: list[WaterwayNode] = []
     pbf_path = Path(pbf_path)
@@ -131,8 +184,13 @@ def read_waterway_features(
 
     for obj in osmium.FileProcessor(str(pbf_path)).with_locations():
         scanned += 1
-        tags = {tag.k: tag.v for tag in obj.tags}
         object_name = type(obj).__name__
+        tags = {tag.k: tag.v for tag in obj.tags}
+        override = overrides.get(
+            f"{'w' if object_name == 'Way' else 'n'}{obj.id}"
+        )
+        if override:
+            tags.update(override)
         if object_name == "Way":
             if filters.is_derelict(tags):
                 continue
@@ -532,8 +590,12 @@ def read_pbf(pbf_path: Path, *, profile_counts: dict | None = None) -> WaterwayF
     )
 
 
-def prepare_great_britain_pbf(pbf_path: Path, profiler: BuildProfiler) -> Path:
-    """Create the immutable filtered PBF consumed by all Great Britain passes."""
+def prepare_great_britain_pbf(
+    pbf_path: Path, profiler: BuildProfiler, overrides: WayOverrides | None = None
+) -> Path:
+    """Create the one immutable filtered PBF consumed by all Great Britain passes.
+    Ways named in ``overrides`` (keyed ``w<osm_id>``) are merged back in from the
+    raw extract after the tags filter drops them; see overrides.py."""
     pbf_path = Path(pbf_path)
     base = pbf_path.name.split(".")[0]
     filtered = pbf_path.parent / (base + "_waterways.osm.pbf")
@@ -544,14 +606,23 @@ def prepare_great_britain_pbf(pbf_path: Path, profiler: BuildProfiler) -> Path:
         run_tags_filter(pbf_path, filtered)
         if profiler.enabled:
             counts["output_bytes"] = filtered.stat().st_size
+    if overrides:
+        way_ids = tuple(key for key in overrides if key.startswith("w"))
+        if way_ids:
+            final = filtered.parent / (base + "_waterways_overrides.osm.pbf")
+            filtered = merge_way_overrides(pbf_path, filtered, final, way_ids)
     return filtered
 
 
-def read_great_britain_waterways(filtered_pbf: Path, profiler: BuildProfiler) -> WaterwayFeatures:
+def read_great_britain_waterways(
+    filtered_pbf: Path,
+    profiler: BuildProfiler,
+    overrides: WayOverrides | None = None,
+) -> WaterwayFeatures:
     """Read, prune, and navigability-filter Great Britain graph inputs."""
     counts = {}
     with profiler.phase("waterway_processing", counts=lambda: counts):
-        features = read_waterway_features(filtered_pbf, profile_counts=counts)
+        features = read_waterway_features(filtered_pbf, profile_counts=counts, overrides=overrides)
         counts.update(input_nodes=len(features.nodes), input_ways=len(features.ways))
         features = prune_non_navigable_infra(features)
         features = filter_navigable_ways(features)

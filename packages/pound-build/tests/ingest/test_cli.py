@@ -316,11 +316,13 @@ def test_build_great_britain_writes_artifact_and_passes_gate(monkeypatch, tmp_pa
     filtered = tmp_path / "great-britain_waterways.osm.pbf"
     filtered.write_bytes(b"filtered")
     seen_paths = []
-    monkeypatch.setattr(cli, "prepare_great_britain_pbf", lambda _pbf, _profiler: filtered)
+    monkeypatch.setattr(
+        cli, "prepare_great_britain_pbf", lambda _pbf, _profiler, **_kwargs: filtered
+    )
     monkeypatch.setattr(
         cli,
         "read_great_britain_waterways",
-        lambda path, _profiler: seen_paths.append(path) or graph_features,
+        lambda path, _profiler, **_kwargs: seen_paths.append(path) or graph_features,
     )
 
     def stream_linear(path, consume, _diagnostics, _counts):
@@ -370,11 +372,11 @@ def test_build_great_britain_profile_reports_multi_pass_phase_order(monkeypatch,
     filtered = tmp_path / "great-britain_waterways.osm.pbf"
     filtered.write_bytes(b"filtered")
 
-    def prepare(_pbf, profiler):
+    def prepare(_pbf, profiler, **_kwargs):
         with profiler.phase("tags_filter"):
             return filtered
 
-    def read_waterways(_path, profiler):
+    def read_waterways(_path, profiler, **_kwargs):
         with profiler.phase("waterway_processing"):
             return features
 
@@ -418,8 +420,12 @@ def test_build_great_britain_stream_failure_reports_failed_phase_and_does_not_wr
     source.write_bytes(b"source")
     filtered = tmp_path / "great-britain_waterways.osm.pbf"
     filtered.write_bytes(b"filtered")
-    monkeypatch.setattr(cli, "prepare_great_britain_pbf", lambda _pbf, _profiler: filtered)
-    monkeypatch.setattr(cli, "read_great_britain_waterways", lambda _path, _profiler: features)
+    monkeypatch.setattr(
+        cli, "prepare_great_britain_pbf", lambda _pbf, _profiler, **_kwargs: filtered
+    )
+    monkeypatch.setattr(
+        cli, "read_great_britain_waterways", lambda _path, _profiler, **_kwargs: features
+    )
     monkeypatch.setattr(
         cli,
         "stream_linear_pois",
