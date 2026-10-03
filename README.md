@@ -4,6 +4,9 @@ Canal-trip planning for UK inland waterways, powered by the deterministic Pound 
 engine. The web app supports point-to-point, out-and-back, and loop journeys, hire bases,
 nearby places, and optional historical temperature overlays.
 
+Production: <https://towpath.thornlab.dev> (Fly.io app `towpath-4772e4a8`; DNS is a
+DNS-only CNAME in the thornlab.dev Cloudflare zone, certificate managed by Fly).
+
 ## Local development
 
 Requires Python 3.12+, `uv`, and Node/npm for the frontend. Install dependencies:
