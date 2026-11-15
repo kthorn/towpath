@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-bulk = ["osmium>=3.7"]
+bulk = ["osmium>=4.3.2"]
 climate = ["zarr>=3.4.0,<4"]
 
 [project.scripts]
